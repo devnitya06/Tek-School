@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from datetime import timedelta,datetime,timezone
 from jose import JWTError
 from app.db.session import get_db
-from app.models.users import User,Token
+from app.models.users import User,Token,Otp
 from app.schemas.users import TokenResponse
+from app.utils.email_utility import generate_otp,send_dynamic_email
 from app.core.security import (
     verify_password,
     create_access_token,
@@ -156,3 +157,57 @@ async def logout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+@router.post("/forgot-password/")
+async def forgot_password(
+    email: str,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    otp = generate_otp()
+
+    # Either update or create new OTP
+    existing_otp = db.query(Otp).filter(Otp.user_id == user.id).order_by(Otp.created_at.desc()).first()
+
+    if existing_otp and not existing_otp.is_verified:
+        raise HTTPException(status_code=400, detail="OTP already sent and pending verification")
+
+    if existing_otp:
+        # Reuse entry
+        existing_otp.otp = otp
+        existing_otp.is_verified = False
+        existing_otp.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        existing_otp.created_at = datetime.now(timezone.utc)
+    else:
+        # Create new OTP
+        new_otp = Otp(
+            user_id=user.id,
+            otp=otp,
+            is_verified=False,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(new_otp)
+
+    db.commit()
+
+    try:
+        send_dynamic_email(
+            context_key="OTP_VERIFY",
+            recipient_email=user.email,
+            context_data={
+                "email": user.email,
+                "OTP": otp,
+            },
+            db=db
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to send email: {str(e)}"
+        ) from e
+
+    return {"message": "OTP has been sent to your email."} 
+     

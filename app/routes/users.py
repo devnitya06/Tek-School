@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status,BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks,Query
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
-from app.schemas.users import UserCreate, UserResponse,UserRole,OtpVerify,SignupResponse
+from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse
 from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
-from sqlalchemy.exc import IntegrityError
 from app.utils.email_utility import generate_otp,send_dynamic_email,generate_password
 from datetime import datetime,timezone,timedelta
+from app.core.security import verify_verification_token
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -72,16 +73,17 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     )
     db.add(otp_entry)
     db.commit()
-
-    context = {
-        "otp": otp,
-        "email": user.email,
-        "name": user.name or "User"
-    }
-
     # Use BackgroundTasks to send mail asynchronously
-    # background_tasks = BackgroundTasks()
-    # background_tasks.add_task(send_dynamic_email, db, "otp_verification", user.email, context)
+    background_tasks = BackgroundTasks()
+    background_tasks.add_task(send_dynamic_email(
+            context_key="OTP_VERIFY",
+            recipient_email=user.email,
+            context_data={
+                "email": user.email,
+                "OTP": otp,
+            },
+            db=db
+        ))
 
     return {
         "message": "OTP sent to your email. Please verify to complete signup.",
@@ -105,25 +107,48 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=400, detail="OTP has expired")
     raw_password = generate_password()
-    print("password🔐",raw_password)
     user.hashed_password = get_password_hash(raw_password)
     otp_entry.is_verified = True
     db.add(user)
     db.commit()
-
-    # Step 6: Send credentials via email
-    # send_dynamic_email(
-    #     to=user.email,
-    #     subject="Your Login Credentials",
-    #     context={"email": user.email, "password": raw_password},
-    #     template_name="credentials"
-    # )
-
-    # Step 7: Return response
+    send_dynamic_email(
+            context_key="CREDENTIAL",
+            recipient_email=user.email,
+            context_data={
+                "email": user.email,
+                "password": raw_password,
+            },
+            db=db
+        )
     return {
         "message": "OTP verified successfully. Get your credentials from your email."
     }
-    
+
+@router.get("/verify-teacher")
+def verify_teacher(token: str = Query(...), db: Session = Depends(get_db)):
+    user_id = verify_verification_token(token,settings.SECRET_KEY,settings.ALGORITHM)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired token.")
+
+    if user.is_verified:
+        return {"message": "Account is already verified."}
+    raw_password = generate_password()
+    print("✍️✍️✍️✍️✍️✍️✍️✍️",raw_password)
+    user.hashed_password = get_password_hash(raw_password)
+    user.is_verified = True
+    db.commit()
+    send_dynamic_email(
+        context_key="CREDENTIAL",
+        recipient_email=user.email,
+        context_data={
+                "email": user.email,
+                "password": raw_password,
+            },
+            db=db
+    )
+
+    return {"message": "Account verified. Password sent to registered email."}    
 @router.post("/resend-otp")
 def resend_otp(email: str, db: Session = Depends(get_db)):
     # Step 1: Get user by email

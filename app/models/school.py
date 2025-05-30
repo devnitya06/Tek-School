@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 import uuid
@@ -36,6 +36,8 @@ class School(Base):
     establishment_year = Column(Integer, nullable=True)
     
     # Address Information
+    profile_pic_url = Column(String, nullable=True)
+    banner_pic_url = Column(String, nullable=True)
     pin_code = Column(String(10), nullable=True)
     block_division = Column(String)
     district = Column(String, nullable=True)
@@ -56,49 +58,52 @@ class School(Base):
 
     user = relationship("User", backref="school")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
+    classes = relationship("Class", back_populates="school")
+    subjects = relationship("Subject", back_populates="school")
+    extra_activities = relationship("ExtraCurricularActivity", back_populates="school")
+    sections = relationship("Section", back_populates="school")
+    transports = relationship("Transport", back_populates="school")
+    students = relationship("Student", back_populates="school")
+    timetable_days = relationship("TimetableDay", back_populates="school", cascade="all, delete")
+    timetable_periods = relationship("TimetablePeriod", back_populates="school", cascade="all, delete")
+
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"SCH-{str(uuid.uuid4().int)[:6]}"
             
-class_mandatory_subjects = Table(
-    "class_mandatory_subjects",
+class_subjects = Table(
+    "class_subjects",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
-    Column("subject_id", Integer, ForeignKey("mandatory_subjects.id")),
-    Column("school_id", Integer, ForeignKey("schools.id"))
+    Column("subject_id", Integer, ForeignKey("subjects.id")),
+    Column("school_id", String, ForeignKey("schools.id"))
 )
 
-class_optional_subjects = Table(
-    "class_optional_subjects",
-    Base.metadata,
-    Column("class_id", Integer, ForeignKey("classes.id")),
-    Column("subject_id", Integer, ForeignKey("optional_subjects.id")),
-    Column("school_id", Integer, ForeignKey("schools.id"))
-)
+
 
 class_extra_curricular = Table(
     "class_extra_curricular",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("activity_id", Integer, ForeignKey("extra_curricular_activities.id")),
-    Column("school_id", Integer, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id"))
 )
 
 class_assigned_teachers = Table(
     "class_assigned_teachers",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
-    Column("teacher_id", Integer, ForeignKey("teachers.id")),
-    Column("school_id", Integer, ForeignKey("schools.id"))
+    Column("teacher_id", String, ForeignKey("teachers.id")),
+    Column("school_id", String, ForeignKey("schools.id"))
 )
 class_section = Table(
     "class_section",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("section_id", Integer, ForeignKey("sections.id")),
-    Column("school_id", Integer, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id"))
 )
 
 class Section(Base):
@@ -106,41 +111,39 @@ class Section(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50))
-    school_id = Column(Integer, ForeignKey("schools.id"))
+    school_id = Column(String, ForeignKey("schools.id"))
     
-    school = relationship("School", back_populates="mandatory_subjects")
-    classes = relationship("Class", secondary="class_section", back_populates="class_section")
+    school = relationship("School", back_populates="sections")
+    classes = relationship("Class", secondary=class_section, back_populates="sections")
+    students = relationship("Student", back_populates="section")
+    attendances = relationship("Attendance", back_populates="section")
+
 
 # Subject Models
-class MandatorySubject(Base):
-    __tablename__ = "mandatory_subjects"
+class Subject(Base):
+    __tablename__ = "subjects"
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
-    school_id = Column(Integer, ForeignKey("schools.id"))
+    school_id = Column(String, ForeignKey("schools.id"))
     
-    school = relationship("School", back_populates="mandatory_subjects")
-    classes = relationship("Class", secondary=class_mandatory_subjects, back_populates="mandatory_subjects")
+    school = relationship("School", back_populates="subjects")
+    classes = relationship("Class", secondary=class_subjects, back_populates="subjects")
+    attendances = relationship("Attendance", back_populates="subject")
 
-class OptionalSubject(Base):
-    __tablename__ = "optional_subjects"
+class class_optional_subjects(Base):
+    __tablename__ = 'class_optional_subjects'
     
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100))
-    school_id = Column(Integer, ForeignKey("schools.id"))
-    
-    school = relationship("School", back_populates="optional_subjects")
-    classes = relationship("Class", secondary=class_optional_subjects, back_populates="optional_subjects")
-
-# Extra Curricular Activity Model
+    class_id = Column(Integer, ForeignKey('classes.id', ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey('subjects.id', ondelete="CASCADE"), primary_key=True)
 class ExtraCurricularActivity(Base):
     __tablename__ = "extra_curricular_activities"
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
-    school_id = Column(Integer, ForeignKey("schools.id"))
+    school_id = Column(String, ForeignKey("schools.id"))
     
-    school = relationship("School", back_populates="extra_curricular_activities")
+    school = relationship("School", back_populates="extra_activities")
     classes = relationship("Class", secondary=class_extra_curricular, back_populates="extra_curricular_activities")
 
 # Class Model (main table)
@@ -155,18 +158,20 @@ class Class(Base):
     
     # Relationships
     school = relationship("School", back_populates="classes")
+    students = relationship("Student", back_populates="classes")
     
     # Many-to-many relationships
-    mandatory_subjects = relationship(
-        "MandatorySubject", 
-        secondary=class_mandatory_subjects,
+    subjects = relationship(
+        "Subject", 
+        secondary=class_subjects,
         back_populates="classes"
     )
     optional_subjects = relationship(
-        "OptionalSubject", 
-        secondary=class_optional_subjects,
+        "Subject",
+        secondary="class_optional_subjects",
         back_populates="classes"
     )
+    
     assigned_teachers = relationship(
         "Teacher", 
         secondary=class_assigned_teachers,
@@ -177,68 +182,112 @@ class Class(Base):
         secondary=class_extra_curricular,
         back_populates="classes"
     )
-    class_section = relationship(
-        "Class", 
+    sections = relationship(
+        "Section", 
         secondary=class_section,
         back_populates="classes"
     )
+    attendances = relationship("Attendance", back_populates="class_")
     
     # Unique constraint to prevent duplicate class names within a school
     __table_args__ = (
         UniqueConstraint('name', 'school_id', name='uq_class_name_school'),
     )            
             
-# class_mandatory_subjects = Table(
-#     'class_mandatory_subjects',
-#     Base.metadata,
-#     Column('class_id', Integer, ForeignKey('classes.id')),
-#     Column('subject_id', Integer, ForeignKey('subjects.id'))
-# )
+class Transport(Base):
+    __tablename__ = "transports"
 
-# class_optional_subjects = Table(
-#     'class_optional_subjects',
-#     Base.metadata,
-#     Column('class_id', Integer, ForeignKey('classes.id')),
-#     Column('subject_id', Integer, ForeignKey('subjects.id'))
-# )
+    id = Column(Integer, primary_key=True, index=True)
+    vechicle_name = Column(String(50), nullable=False)
+    vechicle_number = Column(String(50), nullable=False)
+    driver_name = Column(String(100), nullable=False)
+    phone_no = Column(String(20), nullable=False)
+    duty_start_time = Column(Time, nullable=False)
+    duty_end_time = Column(Time, nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    pickup_stops = relationship("PickupStop", back_populates="transport", cascade="all, delete-orphan")
+    drop_stops = relationship("DropStop", back_populates="transport", cascade="all, delete-orphan")
 
-# class_extra_curriculums = Table(
-#     'class_extra_curriculums',
-#     Base.metadata,
-#     Column('class_id', Integer, ForeignKey('classes.id')),
-#     Column('extra_id', Integer, ForeignKey('extra_curriculums.id'))
-# )                  
-# class_teachers = Table(
-#     'class_teachers',
-#     Base.metadata,
-#     Column('class_id', Integer, ForeignKey('classes.id')),
-#     Column('teacher_id', String, ForeignKey('teachers.id'))
-# )                  
+    # Relationship to students
+    students = relationship("Student", back_populates="driver")
+    school = relationship("School", back_populates="transports")
+    
+class PickupStop(Base):
+    __tablename__ = "pickup_stops"
 
-# class Subject(Base):
-#     __tablename__ = 'subjects'
+    id = Column(Integer, primary_key=True, index=True)
+    transport_id = Column(Integer, ForeignKey("transports.id"), nullable=False)
+    stop_name = Column(String(100), nullable=False)
+    stop_time = Column(Time, nullable=False)
 
-#     id = Column(Integer, primary_key=True)
-#     name = Column(String, unique=True, nullable=False)
+    transport = relationship("Transport", back_populates="pickup_stops")
 
+class DropStop(Base):
+    __tablename__ = "drop_stops"
 
-# class ExtraCurriculum(Base):
-#     __tablename__ = 'extra_curriculums'
+    id = Column(Integer, primary_key=True, index=True)
+    transport_id = Column(Integer, ForeignKey("transports.id"), nullable=False)
+    stop_name = Column(String(100), nullable=False)
+    stop_time = Column(Time, nullable=False)
 
-#     id = Column(Integer, primary_key=True)
-#     name = Column(String, unique=True, nullable=False)
+    transport = relationship("Transport", back_populates="drop_stops")
+    
 
-# class Class(Base):
-#     __tablename__ = 'classes'
+class Attendance(Base):
+    __tablename__ = "attendances"
+    id = Column(Integer, primary_key=True, index=True)
 
-#     id = Column(Integer, primary_key=True, index=True)
-#     class_name = Column(String, nullable=False)      # e.g., "10th"
-#     section = Column(String, nullable=False)         # e.g., "A", "B"
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
+    teachers_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    date = Column(Date, nullable=False)
+    status = Column(String(1), nullable=False)
 
-#     start_time = Column(Time, nullable=True)
-#     end_time = Column(Time, nullable=True)
+    student = relationship("Student", back_populates="attendances")
+    teacher = relationship("Teacher", back_populates="attendances")
+    class_ = relationship("Class", back_populates="attendances")
+    section = relationship("Section", back_populates="attendances")
+    subject = relationship("Subject", back_populates="attendances")
 
-#     assigned_teachers = relationship("Teacher",secondary=class_teachers)
-#     mandatory_subjects = relationship("Subject", secondary=class_mandatory_subjects)
-#     optional_subjects = relationship("Subject", secondary=class_optional_subjects)
-#     extra_curriculums = relationship("ExtraCurriculum", secondary=class_extra_curriculums)
+    __table_args__ = (
+        UniqueConstraint('student_id', 'subject_id', 'date', name='uq_student_attendance'),
+        UniqueConstraint('teachers_id', 'subject_id', 'class_id', 'section_id', 'date', name='uq_teacher_attendance'),
+    )
+
+class WeekDay(Enum):
+    MONDAY = "Monday"
+    TUESDAY = "Tuesday"
+    WEDNESDAY = "Wednesday"
+    THURSDAY = "Thursday"
+    FRIDAY = "Friday"
+    SATURDAY = "Saturday"
+class TimetableDay(Base):
+    __tablename__ = "timetable_days"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
+    day = Column(SQLEnum(WeekDay, name="weekday"), nullable=False) 
+
+    periods = relationship("TimetablePeriod", back_populates="day", cascade="all, delete-orphan")
+    school = relationship("School", back_populates="timetable_days")    
+    
+class TimetablePeriod(Base):
+    __tablename__ = "timetable_periods"
+
+    id = Column(Integer, primary_key=True)
+    day_id = Column(Integer, ForeignKey("timetable_days.id"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    period_number = Column(Integer, nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+
+    day = relationship("TimetableDay", back_populates="periods")
+    school = relationship("School", back_populates="timetable_periods")
+    teacher = relationship("Teacher",back_populates="timetable_periods")    
+    subject = relationship("Subject")

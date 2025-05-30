@@ -8,6 +8,7 @@ from app.db.session import Base
 from app.models import users
 from app.models import school
 from app.models import teachers
+from app.models import students
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

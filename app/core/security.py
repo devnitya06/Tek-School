@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta,timezone
 from typing import Optional,Dict,Any
-
+from fastapi import HTTPException
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -27,6 +27,23 @@ def create_access_token(
     )
     return encoded_jwt
 
+def create_verification_token(user_id: int):
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    payload = {"sub": str(user_id), "exp": expire}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+def verify_verification_token(token: str, secret_key: str, algorithm: str) -> int:
+    try:
+        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
+        user_id = int(payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Invalid token payload.")
+        
+        return user_id
+
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired token.")
 def create_refresh_token(
     data: Dict[str, Any],  # Changed to accept data dict like create_access_token
     expires_delta: Optional[timedelta] = None
@@ -39,7 +56,7 @@ def create_refresh_token(
     to_encode.update({"exp": expire, "token_type": "refresh"})
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.SECRET_KEY,  # Use refresh secret key
+        settings.SECRET_KEY,
         algorithm=settings.ALGORITHM
     )
     return encoded_jwt

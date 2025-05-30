@@ -19,12 +19,15 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False)
     created_at = Column(DateTime, default=func.now())
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+
     
     
     tokens = relationship("Token", back_populates="user",cascade="all,delete-orphan")
     otps = relationship("Otp", back_populates="user", cascade="all, delete-orphan")
     school_profile = relationship("School", back_populates="user", uselist=False, cascade="all, delete-orphan")
     teacher_profile = relationship("Teacher", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    student_profile = relationship("Student", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     # Add unique constraint for school name and location
     __table_args__ = (
