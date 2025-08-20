@@ -5,7 +5,7 @@ from datetime import timedelta,datetime,timezone
 from jose import JWTError
 from app.db.session import get_db
 from app.models.users import User,Token,Otp
-from app.schemas.users import TokenResponse
+from app.schemas.users import TokenResponse,LoginRequest
 from app.utils.email_utility import generate_otp,send_dynamic_email
 from app.core.security import (
     verify_password,
@@ -18,17 +18,16 @@ from app.core.config import settings
 
 router = APIRouter(tags=["auth"])
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login/", response_model=TokenResponse)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    form_data: LoginRequest,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == form_data.username).first()
+    user = db.query(User).filter(User.email == form_data.email).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Incorrect email or password"
         )
     
     if not user.is_active:
@@ -57,6 +56,7 @@ async def login(
     db.refresh(db_refresh_token)
     
     return {
+        "message": "Login successful",
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
@@ -196,7 +196,8 @@ async def forgot_password(
 
     try:
         send_dynamic_email(
-            context_key="OTP_VERIFY",
+            context_key="otp_verify.html",
+            subject="Your OTP for Password Reset",
             recipient_email=user.email,
             context_data={
                 "email": user.email,

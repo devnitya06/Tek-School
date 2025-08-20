@@ -3,7 +3,12 @@ from pydantic import BaseModel, EmailStr,field_validator
 from typing import Optional
 from enum import Enum
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
 class UserRole(str,Enum):
+    SUPERADMIN = "superadmin"
     ADMIN = "admin"
     SCHOOL = "school"
     TEACHER = "teacher"
@@ -67,6 +72,7 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str
     role: str
+    message: str
 
 # OTP schema for OTP-related actions
 class OtpCreate(BaseModel):

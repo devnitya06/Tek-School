@@ -1,7 +1,13 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Time, Date
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date,DateTime,Enum
 from sqlalchemy.orm import relationship
 from app.db.session import Base
+from sqlalchemy.sql import func
+from enum import Enum as PyEnum
 
+# class StudentStatus(PyEnum):
+#     TRIAL = "Trial"
+#     ACTIVE = "Active"
+#     INACTIVE = "Inactive"
 class Student(Base):
     __tablename__ = "students"
 
@@ -19,6 +25,9 @@ class Student(Base):
     driver_id = Column(Integer, ForeignKey("transports.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     school_id = Column(String, ForeignKey("schools.id"), nullable=True)
+    # status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL)
+    # status_expiry_date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=func.now())
 
     # Relationships
     classes = relationship("Class", back_populates="students")
@@ -30,6 +39,8 @@ class Student(Base):
     present_address = relationship("PresentAddress", back_populates="student", uselist=False)
     permanent_address = relationship("PermanentAddress", back_populates="student", uselist=False)
     attendances = relationship("Attendance", back_populates="student")
+    exam_data = relationship("StudentExamData", back_populates="student")
+
 
 class Parent(Base):
     __tablename__ = "parents"

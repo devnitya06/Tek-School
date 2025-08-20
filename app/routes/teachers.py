@@ -16,6 +16,7 @@ from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 router = APIRouter()
 
+
 @router.post("/create-teacher/", status_code=status.HTTP_201_CREATED)
 def create_teacher(
     data: TeacherCreateRequest,
@@ -78,10 +79,10 @@ def create_teacher(
 
         db.commit()
         token = create_verification_token(user.id)
-        verification_link = f"http://localhost:8000/users/verify-teacher?token={token}"
-        print("Verification link:🧑🏻‍🏭🧑🏻‍🏭🧑🏻‍🏭🧑🏻‍🏭🧑🏻‍🏭🧑🏻‍🏭🧑🏻‍🏭", verification_link)
+        verification_link = f"http://localhost:8000/users/verify-account?token={token}"
         send_dynamic_email(
-            context_key="TEACHER_VERIFICATION",
+            context_key="account_verification.html",
+            subject="Teacher Account Verification",
             recipient_email=user.email,
             context_data={
                 "name": f"{data.first_name} {data.last_name}",
@@ -144,6 +145,45 @@ def get_all_teachers_for_school(
         }
         for index, (teacher,attendance_count) in enumerate(teachers_query)
     ]
+    
+@router.get("/teacher/profile")
+def get_teacher_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers can access their profile.")
+
+    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher profile not found.")
+
+    assignments = (
+        db.query(TeacherClassSectionSubject)
+        .filter(TeacherClassSectionSubject.teacher_id == teacher.id)
+        .all()
+    )
+
+    # Build detailed assignment info
+    detailed_assignments = []
+    for a in assignments:
+        detailed_assignments.append({
+            "class_id": a.class_id,
+            "class_name": a.class_.name if a.class_ else None,
+            "section_id": a.section_id,
+            "section_name": a.section.name if a.section else None,
+            "subject_id": a.subject_id,
+            "subject_name": a.subject.name if a.subject else None,
+        })
+
+    return {
+        "id": teacher.id,
+        "name": f"{teacher.first_name} {teacher.last_name}",
+        "email": teacher.email,
+        "phone": teacher.phone,
+        "created_at": teacher.created_at,
+        "assignments": detailed_assignments
+    }    
 
 @router.get("/teacher/{teacher_id}")
 def get_teacher_by_id(
@@ -189,6 +229,70 @@ def get_teacher_by_id(
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
+        "created_at": teacher.created_at,
         "assignments": detailed_assignments
     }
 
+@router.get("/classes")
+def get_teacher_classes(
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
+
+    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    # Sirf assigned classes nikalna
+    assignments = db.query(TeacherClassSectionSubject).filter(
+        TeacherClassSectionSubject.teacher_id == teacher.id
+    ).all()
+
+    class_ids = {a.class_id for a in assignments}
+    classes = db.query(Class).filter(Class.id.in_(class_ids)).all()
+
+    return [{"id": c.id, "name": c.name} for c in classes]
+
+@router.get("/sections")
+def get_teacher_sections(
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
+
+    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    assignments = db.query(TeacherClassSectionSubject).filter(
+        TeacherClassSectionSubject.teacher_id == teacher.id
+    ).all()
+
+    section_ids = {a.section_id for a in assignments}
+    sections = db.query(Section).filter(Section.id.in_(section_ids)).all()
+
+    return [{"id": s.id, "name": s.name} for s in sections]
+
+@router.get("/subjects")
+def get_teacher_subjects(
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
+
+    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    assignments = db.query(TeacherClassSectionSubject).filter(
+        TeacherClassSectionSubject.teacher_id == teacher.id
+    ).all()
+
+    subject_ids = {a.subject_id for a in assignments}
+    subjects = db.query(Subject).filter(Subject.id.in_(subject_ids)).all()
+
+    return [{"id": sub.id, "name": sub.name} for sub in subjects]

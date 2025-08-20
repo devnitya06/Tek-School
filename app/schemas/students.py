@@ -11,11 +11,9 @@ class StudentCreateRequest(BaseModel):
     roll_no: int
     class_id: int
     section_id: int
-    # prayer_time: Optional[time] = None
-    # break_fast_time: Optional[time] = None
     is_transport: bool = True
     driver_id: Optional[int] = None
-    school_id: str
+    # school_id: str
     
 class AddressBase(BaseModel):
     enter_pin: str

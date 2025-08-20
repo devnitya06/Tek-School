@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str
     AWS_REGION: str
     S3_BUCKET_NAME: str
+    
+    #Razorpay
+    RAZORPAY_KEY_ID: str
+    RAZORPAY_KEY_SECRET: str
+    
     # CORS
     BACKEND_CORS_ORIGINS: list = ["*"]
 

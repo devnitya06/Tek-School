@@ -4,7 +4,7 @@ from sqlalchemy.orm import relationship
 from app.db.session import Base
 from enum import Enum
 import uuid
-from datetime import timedelta,datetime,timezone
+from sqlalchemy.sql import func
 
 # Define Python Enum for teacher_type
 class TeacherTypeEnum(str, Enum):
@@ -21,16 +21,16 @@ class Teacher(Base):
     university = Column(String, nullable=False)
     phone = Column(String(10), nullable=False)
     email = Column(String, unique=True, nullable=False)
-    teacher_in_classes = Column(ARRAY(String), nullable=False)  # ["5th", "7th"]
-    subjects = Column(ARRAY(String), nullable=False)            # ["Math", "Sci"]
-    start_duty = Column(Time, nullable=False)                   # 10:30 AM
-    end_duty = Column(Time, nullable=False)                    # 5:00 PM
+    teacher_in_classes = Column(ARRAY(String), nullable=False)
+    subjects = Column(ARRAY(String), nullable=False)            
+    start_duty = Column(Time, nullable=False)
+    end_duty = Column(Time, nullable=False)
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)
-    present_in = Column(ARRAY(String), nullable=False)          # ["Mon", "Wed", "Fri"]
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    present_in = Column(ARRAY(String), nullable=False)
+    created_at = Column(DateTime, default=func.now())
     # Foreign keys
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable until account is created
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Relationships
     school = relationship("School", back_populates="teachers")
@@ -38,6 +38,7 @@ class Teacher(Base):
     assigned_classes = relationship("Class", secondary="class_assigned_teachers", back_populates="assigned_teachers")
     attendances = relationship("Attendance", back_populates="teacher")
     timetable_periods = relationship("TimetablePeriod", back_populates="teacher")
+    created_exams = relationship("Exam", back_populates="teacher")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users,auth,school,teachers,students
+from app.routes import users,auth,school,teachers,students,admin
 from app.core.config import settings
 
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -19,6 +19,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(school.router, prefix="/school", tags=["schools"])
 app.include_router(teachers.router, prefix="/teacher", tags=["Teacher"])
 app.include_router(students.router, prefix="/student", tags=["Students"])
+app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 
 
 @app.get("/")

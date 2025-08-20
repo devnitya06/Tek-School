@@ -4,11 +4,13 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
+
 from app.db.session import Base
 from app.models import users
 from app.models import school
 from app.models import teachers
 from app.models import students
+from app.models import admin
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

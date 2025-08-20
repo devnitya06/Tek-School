@@ -1,9 +1,11 @@
-from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date
+from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 import uuid
 from enum import Enum
 from sqlalchemy import Enum as SQLEnum
+from datetime import datetime
+from sqlalchemy.sql import func
 
 class SchoolType(str, Enum):
     PVT = "private"
@@ -23,6 +25,14 @@ class SchoolBoard(str, Enum):
     STATE = "stateboard"
     IB = "ib"
     OTHER = "other"
+class ExamTypeEnum(str, Enum):
+    MOCK = "mock"
+    RANK = "rank"
+class ExamStatusEnum(str, Enum):
+    ACTIVE = "active"
+    PENDING = "pending"
+    EXPIRED = "expired"
+    DECLINED = "declined"
 class School(Base):
     __tablename__ = "schools"
 
@@ -55,6 +65,9 @@ class School(Base):
     principal_designation = Column(String)
     principal_email = Column(String)
     principal_phone = Column(String(15))
+    is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=func.now())
 
     user = relationship("User", backref="school")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
@@ -66,6 +79,11 @@ class School(Base):
     students = relationship("Student", back_populates="school")
     timetable_days = relationship("TimetableDay", back_populates="school", cascade="all, delete")
     timetable_periods = relationship("TimetablePeriod", back_populates="school", cascade="all, delete")
+    school_margins = relationship("SchoolMarginConfiguration", back_populates="school", cascade="all, delete-orphan")
+    transaction_history = relationship("TransactionHistory", back_populates="school", cascade="all, delete-orphan")
+    exams = relationship("Exam", back_populates="school")
+    exam_data = relationship("StudentExamData", back_populates="school")
+
 
     
     def __init__(self, **kwargs):
@@ -106,17 +124,19 @@ class_section = Table(
     Column("school_id", String, ForeignKey("schools.id"))
 )
 
-class Section(Base):
-    __tablename__ = "sections"
+# class Section(Base):
+#     __tablename__ = "sections"
     
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50))
-    school_id = Column(String, ForeignKey("schools.id"))
+#     id = Column(Integer, primary_key=True, index=True)
+#     name = Column(String(50))
+#     school_id = Column(String, ForeignKey("schools.id"))
     
-    school = relationship("School", back_populates="sections")
-    classes = relationship("Class", secondary=class_section, back_populates="sections")
-    students = relationship("Student", back_populates="section")
-    attendances = relationship("Attendance", back_populates="section")
+#     school = relationship("School", back_populates="sections")
+#     classes = relationship("Class", secondary=class_section, back_populates="sections")
+#     students = relationship("Student", back_populates="section")
+#     attendances = relationship("Attendance", back_populates="section")
+#     exams = relationship("Exam",back_populates="sections")
+
 
 
 # Subject Models
@@ -188,6 +208,8 @@ class Class(Base):
         back_populates="classes"
     )
     attendances = relationship("Attendance", back_populates="class_")
+    school_margins = relationship("SchoolMarginConfiguration", back_populates="class_")
+    exams = relationship("Exam", back_populates="class_obj")
     
     # Unique constraint to prevent duplicate class names within a school
     __table_args__ = (
@@ -244,6 +266,8 @@ class Attendance(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     date = Column(Date, nullable=False)
     status = Column(String(1), nullable=False)
+    is_verified = Column(Boolean, nullable=True)
+    remarks = Column(String(255), nullable=True)
 
     student = relationship("Student", back_populates="attendances")
     teacher = relationship("Teacher", back_populates="attendances")
@@ -281,7 +305,7 @@ class TimetablePeriod(Base):
     id = Column(Integer, primary_key=True)
     day_id = Column(Integer, ForeignKey("timetable_days.id"), nullable=False)
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    period_number = Column(Integer, nullable=False)
+    # period_number = Column(Integer, nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
     start_time = Column(Time, nullable=False)
@@ -291,3 +315,135 @@ class TimetablePeriod(Base):
     school = relationship("School", back_populates="timetable_periods")
     teacher = relationship("Teacher",back_populates="timetable_periods")    
     subject = relationship("Subject")
+
+
+class SchoolMarginConfiguration(Base):
+    __tablename__ = "school_margin_configuration"
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String,ForeignKey("schools.id"), nullable=False)
+    class_id = Column(Integer,ForeignKey("classes.id"), nullable=False)
+    credit_configuration_id = Column(Integer, ForeignKey("credit_configuration.id"))
+    margin_value = Column(Integer, nullable=False)
+    
+    school= relationship("School", back_populates="school_margins")
+    class_ = relationship("Class", back_populates="school_margins")
+    credit_configuration = relationship("CreditConfiguration", back_populates="school_margins")
+
+class TransactionHistory(Base):
+    __tablename__ = "transaction_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    transaction_id = Column(String, nullable=False, unique=True)
+    order_id = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="SUCCESS")
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    school= relationship("School", back_populates="transaction_history")
+
+exam_sections = Table(
+    "exam_sections",
+    Base.metadata,
+    Column("exam_id", String, ForeignKey("exams.id"), primary_key=True),
+    Column("section_id", Integer, ForeignKey("sections.id"), primary_key=True),
+)
+
+class Exam(Base):
+    __tablename__ = "exams"
+
+    id = Column(String, primary_key=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    chapters = Column(ARRAY(Integer), nullable=False)
+    exam_type = Column(SQLEnum(ExamTypeEnum), nullable=False)
+    no_of_questions = Column(Integer, nullable=False)
+    pass_percentage = Column(Integer, nullable=False)
+    exam_activation_date = Column(DateTime, nullable=False)
+    inactive_date = Column(DateTime, nullable=True)
+    max_repeat = Column(Integer, nullable=False, default=1)
+    status = Column(SQLEnum(ExamStatusEnum), nullable=False, default=ExamStatusEnum.PENDING)
+    no_students_appeared = Column(Integer, default=0)
+    created_by = Column(String, ForeignKey("teachers.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    is_published = Column(Boolean, default=False)
+
+    # Relationships
+    school = relationship("School", back_populates="exams")
+    teacher = relationship("Teacher", back_populates="created_exams")
+    class_obj = relationship("Class", back_populates="exams")
+    sections = relationship("Section", secondary=exam_sections, back_populates="exams")
+    mcqs = relationship("McqBank", back_populates="exam")
+    student_exam_data = relationship("StudentExamData", back_populates="exam")
+
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            self.id = f"EXM-{str(uuid.uuid4().int)[:6]}"
+
+
+class Section(Base):
+    __tablename__ = "sections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50))
+    school_id = Column(String, ForeignKey("schools.id"))
+    
+    school = relationship("School", back_populates="sections")
+    classes = relationship("Class", secondary=class_section, back_populates="sections")
+    students = relationship("Student", back_populates="section")
+    attendances = relationship("Attendance", back_populates="section")
+    exams = relationship("Exam", secondary=exam_sections, back_populates="sections")
+
+class McqBank(Base):
+    __tablename__ = "mcq_bank"
+
+    id = Column(Integer, primary_key=True, index=True)
+    exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"))
+    question = Column(Text, nullable=False)
+    mcq_type = Column(String(1), nullable=False, default="1")  # '1' = Single, '2' = Multiple
+    image = Column(String, nullable=True)
+
+    option_a = Column(String(100), nullable=False)
+    option_b = Column(String(100), nullable=False)
+    option_c = Column(String(100), nullable=False)
+    option_d = Column(String(100), nullable=False)
+
+    # For storing multiple correct answers → ARRAY of strings
+    correct_option = Column(ARRAY(String), nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationship with Exam
+    exam = relationship("Exam", back_populates="mcqs")
+
+class ExamStatus(str,Enum):
+    pass_ = "pass"
+    fail = "fail"
+
+
+class StudentExamData(Base):
+    __tablename__ = "student_exam_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
+    exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
+
+    attempt_no = Column(Integer, default=1)  # 1st attempt, 2nd attempt, etc.
+
+    # JSON format example:
+    # {"6": ["option_a"], "7": ["option_a", "option_b"], "8": ["option_b"]}
+    answers = Column(JSON, nullable=False)
+
+    result = Column(Integer, nullable=True)  # can store marks/score
+    status = Column(SQLEnum(ExamStatus), nullable=True)  # pass/fail
+
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships (optional, if you want ORM navigation)
+    student = relationship("Student", back_populates="exam_data")
+    school = relationship("School", back_populates="exam_data")
+    exam = relationship("Exam", back_populates="student_exam_data")

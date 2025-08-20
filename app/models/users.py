@@ -25,8 +25,9 @@ class User(Base):
     
     tokens = relationship("Token", back_populates="user",cascade="all,delete-orphan")
     otps = relationship("Otp", back_populates="user", cascade="all, delete-orphan")
-    school_profile = relationship("School", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    admin_profile = relationship("Admin", back_populates="user", uselist=False, cascade="all, delete-orphan")
     teacher_profile = relationship("Teacher", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    school_profile = relationship("School", back_populates="user", uselist=False, cascade="all, delete-orphan")
     student_profile = relationship("Student", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     # Add unique constraint for school name and location

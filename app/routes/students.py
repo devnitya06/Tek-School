@@ -1,15 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException,status
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress
-from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,class_extra_curricular,class_section,class_subjects,class_optional_subjects
+from app.models.school import School,Class,Section,Attendance,Transport
 from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
 from sqlalchemy.orm import Session,joinedload
-from sqlalchemy import delete, insert
+from sqlalchemy import func
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
+from app.core.security import create_verification_token
+from app.utils.email_utility import send_dynamic_email
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -17,7 +19,6 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    print("Incoming student creation data:", data)
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can create students.")
 
@@ -27,9 +28,17 @@ def create_student(
         raise HTTPException(status_code=400, detail="Email already exists.")
 
     # Get the school profile for the current user
-    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
+    school = getattr(current_user, "school_profile", None)
     if not school:
         raise HTTPException(status_code=400, detail="School profile not found.")
+
+    # Validate transport requirement
+    if data.is_transport:
+        if not data.driver_id:
+            raise HTTPException(status_code=400, detail="Driver ID is required when transport is enabled.")
+        driver = db.query(Transport).filter(Transport.id == data.driver_id, Transport.school_id == school.id).first()
+        if not driver:
+            raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
 
     # Step 1: Create User for the student
     user = User(
@@ -53,7 +62,7 @@ def create_student(
         is_transport=data.is_transport,
         driver_id=data.driver_id,
         user_id=user.id,
-        school_id=school.id,   #next time when i will create a student account i have to check
+        school_id=school.id
     )
     db.add(student)
     db.commit()
@@ -65,8 +74,19 @@ def create_student(
     db.add(otp_entry)
     db.commit()
 
-    # Step 4: Send OTP
-    # send_otp_email(user.email, otp)
+    token = create_verification_token(user.id)
+    verification_link = f"http://localhost:8000/users/verify-account?token={token}"
+
+    send_dynamic_email(
+        context_key="account_verification.html",
+        subject="Student Account Verification",
+        recipient_email=user.email,
+        context_data={
+            "name": f"{data.first_name} {data.last_name}",
+            "verification_link": verification_link,
+        },
+        db=db
+    )
 
     return {"message": "OTP sent to student's email for verification"}
 
@@ -153,8 +173,22 @@ def get_students(
     else:
         school_id = current_user.teacher_profile.school_id
 
+    # Subquery to count attendance per student
+    attendance_subquery = (
+        db.query(
+            Attendance.student_id,
+            func.count(Attendance.id).label("attendance_count")
+        )
+        .group_by(Attendance.student_id)
+        .subquery()
+    )
+
     students_query = (
-        db.query(Student)
+        db.query(
+            Student,
+            attendance_subquery.c.attendance_count
+        )
+        .outerjoin(attendance_subquery, Student.id == attendance_subquery.c.student_id)
         .join(Class, Student.class_id == Class.id)
         .join(Section, Student.section_id == Section.id)
         .filter(Class.school_id == school_id)
@@ -175,8 +209,9 @@ def get_students(
             "roll_no": student.roll_no,
             "class_name": student.classes.name,
             "section_name": student.section.name,
+            "attendance_count": attendance_count or 0  # Default to 0 if None
         }
-        for index, student in enumerate(students_query)
+        for index, (student, attendance_count) in enumerate(students_query)
     ]
 
 @router.get("/students/{student_id}")
@@ -190,7 +225,7 @@ def get_student(
     else:
         school_id = current_user.teacher_profile.school_id
 
-    if student := (
+    student = (
         db.query(Student)
         .filter(Student.id == student_id, Student.school_id == school_id)
         .options(
@@ -201,41 +236,44 @@ def get_student(
             joinedload(Student.permanent_address),
         )
         .first()
-    ):
-        return {
-            "student_id": student.id,
-            "student_name": f"{student.first_name} {student.last_name}",
-            "roll_no": student.roll_no,
-            "class_name": student.classes.name,
-            "section_name": student.section,
-            "parent": {
-                "parent_name": student.parent.parent_name,
-                "relation": student.parent.relation,
-                "phone": student.parent.phone,
-                "email": student.parent.email,
-                "occupation": student.parent.occupation,
-                "organization": student.parent.organization
-            },
-            "present_address": {
-                "enter_pin": student.present_address.enter_pin,
-                "division": student.present_address.division,
-                "district": student.present_address.district,
-                "state": student.present_address.state,
-                "country": student.present_address.country,
-                "building": student.present_address.building,
-                "house_no": student.present_address.house_no,
-                "floor_name": student.present_address.floor_name
-            },
-            "permanent_address": {
-                "enter_pin": student.permanent_address.enter_pin,
-                "division": student.permanent_address.division,
-                "district": student.permanent_address.district,
-                "state": student.permanent_address.state,
-                "country": student.permanent_address.country,
-                "building": student.permanent_address.building,
-                "house_no": student.permanent_address.house_no,
-                "floor_name": student.permanent_address.floor_name
-            }
-        }
-    else:
-        raise HTTPException(status_code=404, detail="Student not found.")    
+    )
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    return {
+        "student_id": student.id,
+        "student_name": f"{student.first_name} {student.last_name}",
+        "roll_no": student.roll_no,
+        "class_name": student.classes.name,
+        "section_name": student.section.name if student.section else None,
+        "created_at": student.created_at,
+        "parent": {
+            "parent_name": student.parent.parent_name,
+            "relation": student.parent.relation,
+            "phone": student.parent.phone,
+            "email": student.parent.email,
+            "occupation": student.parent.occupation,
+            "organization": student.parent.organization
+        } if student.parent else None,
+        "present_address": {
+            "enter_pin": student.present_address.enter_pin,
+            "division": student.present_address.division,
+            "district": student.present_address.district,
+            "state": student.present_address.state,
+            "country": student.present_address.country,
+            "building": student.present_address.building,
+            "house_no": student.present_address.house_no,
+            "floor_name": student.present_address.floor_name
+        } if student.present_address else None,
+        "permanent_address": {
+            "enter_pin": student.permanent_address.enter_pin,
+            "division": student.permanent_address.division,
+            "district": student.permanent_address.district,
+            "state": student.permanent_address.state,
+            "country": student.permanent_address.country,
+            "building": student.permanent_address.building,
+            "house_no": student.permanent_address.house_no,
+            "floor_name": student.permanent_address.floor_name
+        } if student.permanent_address else None
+    }
