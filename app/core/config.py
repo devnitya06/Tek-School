@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import EmailStr
-
+from typing import Optional
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Tek School"
     API_V1_STR: str = "/api/v1"
@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str
     
     #Razorpay
-    RAZORPAY_KEY_ID: str
-    RAZORPAY_KEY_SECRET: str
+    RAZORPAY_KEY_ID: Optional[str] = None
+    RAZORPAY_KEY_SECRET: Optional[str] = None
     
     # CORS
     BACKEND_CORS_ORIGINS: list = ["*"]
