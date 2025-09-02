@@ -40,6 +40,10 @@ class SignupResponse(BaseModel):
     message: str
     user_id: int    
 
+class ResendOtpRequest(BaseModel):
+    email: EmailStr
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
 # Output schema for the User model (including role, timestamps, etc.)
 class UserResponse(UserBase):
     id: int

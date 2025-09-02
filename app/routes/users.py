@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks,Query
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
-from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse
+from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest
 from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
@@ -87,7 +87,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
         # Final commit after all steps succeed
         db.commit()
         return {
-            "message": "OTP sent to your email. Please verify to complete signup.",
+            "detail": "OTP sent to your email. Please verify to complete signup.",
             "user_id": user.id
         }
 
@@ -126,7 +126,7 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
             db=db
         )
     return {
-        "message": "OTP verified successfully. Get your credentials from your email."
+        "detail": "OTP verified successfully. Get your credentials from your email."
     }
 
 @router.get("/verify-account")
@@ -137,7 +137,7 @@ def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid or expired token.")
 
     if user.is_verified:
-        return {"message": "Account is already verified."}
+        return {"detail": "Account is already verified."}
     raw_password = generate_password()
     user.hashed_password = get_password_hash(raw_password)
     user.is_verified = True
@@ -153,11 +153,11 @@ def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
             db=db
     )
 
-    return {"message": "Account verified. Password sent to registered email."}    
+    return {"detail": "Account verified. Password sent to registered email."}    
 @router.post("/resend-otp")
-def resend_otp(email: str, db: Session = Depends(get_db)):
+def resend_otp(data:ResendOtpRequest, db: Session = Depends(get_db)):
     # Step 1: Get user by email
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == data.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User with this email not found")
 
@@ -185,5 +185,5 @@ def resend_otp(email: str, db: Session = Depends(get_db)):
             db=db
         )
 
-    return {"message": "A new OTP has been sent to your email."}
+    return {"detail": "A new OTP has been sent to your email."}
     

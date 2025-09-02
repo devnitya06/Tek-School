@@ -43,7 +43,7 @@ def create_account_credit_config(
             db.add(credit_config)
 
         db.commit()
-        return {"message": "Configurations saved successfully."}
+        return {"detail": "Configurations saved successfully."}
 
     except SQLAlchemyError as e:
         db.rollback()
@@ -143,7 +143,7 @@ def verify_school(
             )
             db.add(credit_master)
         db.commit()
-        return {"message": "School verified successfully."}
+        return {"detail": "School verified successfully."}
 
     except SQLAlchemyError as e:
         db.rollback()

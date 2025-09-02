@@ -91,7 +91,7 @@ def create_teacher(
             db=db
         )
         return {
-            "message": "Teacher account created. Verification email sent.",
+            "detail": "Teacher account created. Verification email sent.",
             "teacher_id": teacher.id,
             "user_id": user.id,
         }

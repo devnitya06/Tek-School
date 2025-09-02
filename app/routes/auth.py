@@ -5,7 +5,7 @@ from datetime import timedelta,datetime,timezone
 from jose import JWTError
 from app.db.session import get_db
 from app.models.users import User,Token,Otp
-from app.schemas.users import TokenResponse,LoginRequest
+from app.schemas.users import TokenResponse,LoginRequest,ForgotPasswordRequest
 from app.utils.email_utility import generate_otp,send_dynamic_email
 from app.core.security import (
     verify_password,
@@ -56,7 +56,7 @@ async def login(
     db.refresh(db_refresh_token)
     
     return {
-        "message": "Login successful",
+        "detail": "Login successful",
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
@@ -144,7 +144,7 @@ async def logout(
         db.query(Token).filter(Token.user_id == user_id).delete()
         db.commit()
         
-        return {"message": "Successfully logged out"}
+        return {"detail": "Successfully logged out"}
     
     except JWTError:
         raise HTTPException(
@@ -160,10 +160,10 @@ async def logout(
 
 @router.post("/forgot-password/")
 async def forgot_password(
-    email: str,
+    data: ForgotPasswordRequest,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == data.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -210,5 +210,5 @@ async def forgot_password(
             status_code=500, detail=f"Failed to send email: {str(e)}"
         ) from e
 
-    return {"message": "OTP has been sent to your email."} 
+    return {"detail": "OTP has been sent to your email."} 
      

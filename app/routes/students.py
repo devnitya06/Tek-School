@@ -88,7 +88,7 @@ def create_student(
         db=db
     )
 
-    return {"message": "OTP sent to student's email for verification"}
+    return {"detail": "OTP sent to student's email for verification"}
 
 @router.post("/students/{student_id}/add-parent-info")
 def add_parent_and_address(
@@ -159,7 +159,7 @@ def add_parent_and_address(
 
     db.commit()
 
-    return {"message": "Parent and address data added successfully."}
+    return {"detail": "Parent and address data added successfully."}
 
 @router.get("/students/")
 def get_students(

@@ -126,7 +126,7 @@ async def update_school_profile(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
 
-    return {"message": "School profile updated successfully"}
+    return {"detail": "School profile updated successfully"}
 
 
 @router.get("/school")
@@ -284,7 +284,7 @@ def create_class(
     db.commit()
     
     return {
-        "message": "Class created successfully with all associated data",
+        "detail": "Class created successfully with all associated data",
         "class_id": new_class.id,
         "class_name": new_class.name
     }
@@ -357,7 +357,7 @@ def update_class_section_fields(
 
     db.commit()
     db.refresh(class_obj)
-    return {"message": "Class section details updated successfully"}
+    return {"detail": "Class section details updated successfully"}
 
 @router.get("/school-classes/")
 def get_school_classes(
@@ -694,7 +694,7 @@ def create_transport(
     db.commit()
     db.refresh(transport)        
 
-    return {"message": "Transport created successfully", "transport_id": transport.id}
+    return {"detail": "Transport created successfully", "transport_id": transport.id}
 
 @router.get("/transports-list/", response_model=List[TransportResponse])
 def get_transports_list(
@@ -860,7 +860,7 @@ def create_attendance(
 
         end = timer()
         return {
-            "message": "Attendance recorded successfully",
+            "detail": "Attendance recorded successfully",
             "id": attendance.id,
             "time_taken": round(end - start, 4)
         }
@@ -893,7 +893,7 @@ def verify_teacher_attendance(
     db.commit()
     db.refresh(attendance)
 
-    return {"message": "Teacher attendance verified successfully."}   
+    return {"detail": "Teacher attendance verified successfully."}   
 @router.get("/attendance/monthly-summary/")
 def get_attendance_summary(
     student_id: int = Query(None),
@@ -1038,7 +1038,7 @@ def create_timetable(
         db.add(period_entry)
 
     db.commit()
-    return {"message": "Timetable created successfully."}   
+    return {"detail": "Timetable created successfully."}   
 
 @router.get("/account-credit/configuration/")
 def get_account_credit_configuration(
@@ -1134,7 +1134,7 @@ def create_school_credit_configuration(
         db.refresh(new_config)
 
         return {
-            "message": f"Credit configuration created successfully for {admin_credit_config.standard_name}"
+            "detail": f"Credit configuration created successfully for {admin_credit_config.standard_name}"
         }
 
     except IntegrityError as e:
@@ -1240,7 +1240,7 @@ def verify_payment(
 
     db.commit()
 
-    return {"message": "Payment verified and credit added successfully."}    
+    return {"detail": "Payment verified and credit added successfully."}    
 # @router.post("/school-credit/add/")
 # def add_school_credit(
 #     data: AddSchoolCredit,
@@ -1263,7 +1263,7 @@ def verify_payment(
 #     # Add self-added credit
 #     credit_master.self_added_credit += data.self_added_credit
 #     db.commit()
-#     return {"message": "Credit added successfully."}
+#     return {"detail": "Credit added successfully."}
 
 @router.post("/school-credit/transfer/")
 def transfer_school_credit(
@@ -1301,7 +1301,7 @@ def transfer_school_credit(
     # receiver_credit.available_credit += data.credit_amount
     db.commit()
 
-    return {"message": "Credit transferred successfully."}
+    return {"detail": "Credit transferred successfully."}
 
 
 #Exam Modules
@@ -1347,7 +1347,7 @@ def create_exam(
         db.refresh(exam)
 
         return {
-            "message": "Exam created successfully.",
+            "detail": "Exam created successfully.",
             "exam_id": exam.id
         }
 
@@ -1479,7 +1479,7 @@ def delete_exam(
     try:
         db.delete(exam)
         db.commit()
-        return {"message": "Exam deleted successfully."}
+        return {"detail": "Exam deleted successfully."}
     except SQLAlchemyError as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1622,7 +1622,7 @@ def delete_mcq_endpoint(
     success = delete_mcq(db, mcq_id)
     if not success:
         raise HTTPException(status_code=404, detail="MCQ not found")
-    return {"message": "MCQ deleted successfully"}
+    return {"detail": "MCQ deleted successfully"}
 @router.get("/exam/{exam_id}")
 def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = Depends(get_current_user)):
     if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER,UserRole.STUDENT]:
@@ -1708,7 +1708,7 @@ def submit_exam(
     db.refresh(student_exam_data)
 
     return {
-        "message": "Exam submitted successfully",
+        "detail": "Exam submitted successfully",
         "exam_id": exam_id,
         "attempt_no": next_attempt_no,
         "result": result_percentage,
