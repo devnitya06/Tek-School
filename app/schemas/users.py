@@ -37,7 +37,7 @@ class UserCreate(UserBase):
     pass
     
 class SignupResponse(BaseModel):
-    message: str
+    detail: str
     user_id: int    
 
 class ResendOtpRequest(BaseModel):
@@ -76,7 +76,7 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str
     role: str
-    message: str
+    detail: str
 
 # OTP schema for OTP-related actions
 class OtpCreate(BaseModel):
