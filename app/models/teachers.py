@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -11,6 +11,15 @@ class TeacherTypeEnum(str, Enum):
     full_time = "full_time"
     part_time = "part_time"
 
+
+class DayOfWeek(str, Enum):
+    mon = "Mon"
+    tue = "Tue"
+    wed = "Wed"
+    thu = "Thu"
+    fri = "Fri"
+    sat = "Sat"
+    sun = "Sun"
 class Teacher(Base):
     __tablename__ = "teachers"
 
@@ -31,6 +40,7 @@ class Teacher(Base):
     # Foreign keys
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_active = Column(Boolean, default=True)
 
     # Relationships
     school = relationship("School", back_populates="teachers")

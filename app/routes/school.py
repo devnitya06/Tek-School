@@ -173,6 +173,7 @@ async def get_school_profile(
         "principal_designation": school.principal_designation,
         "principal_email": school.principal_email,
         "principal_phone": school.principal_phone,
+        "created_at": school.created_at,
     }
 
 @router.post("/create-class-with-subjects/")
@@ -458,6 +459,18 @@ def get_classes(
 
             teacher_names = [f"{teacher.first_name}" for teacher in teacher_assignments]
 
+            # exam count for this class + section
+            exam_count = (
+                db.query(func.count(Exam.id))
+                .join(Exam.sections)   # join exam_sections association
+                .filter(
+                    Exam.class_id == class_.id,
+                    Section.id == section.id,
+                    Exam.school_id == school_id
+                )
+                .scalar()
+            )
+
             response.append({
                 "sl_no": sl_no,
                 "class_id": class_.id,
@@ -466,6 +479,7 @@ def get_classes(
                 "subjects": [subject.name for subject in class_.subjects],
                 "teachers": teacher_names,
                 "students": student_count,
+                "exams":exam_count,
                 "start_time": class_.start_time.strftime("%H:%M") if class_.start_time else None,
                 "end_time": class_.end_time.strftime("%H:%M") if class_.end_time else None,
             })
@@ -483,10 +497,13 @@ def get_time_table(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    
     # Get the school associated with the current user
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
         raise HTTPException(status_code=404, detail="School not found for this user.")
+    
+    # Get classes with sections for this school
     classes = (
         db.query(Class)
         .options(joinedload(Class.sections))
@@ -497,33 +514,102 @@ def get_time_table(
     )
 
     response = []
-    sl_no = offset + 1
 
     for class_ in classes:
         for section in class_.sections:
+            # Count students
             student_count = db.query(func.count(Student.id)).filter(
                 Student.class_id == class_.id,
                 Student.section_id == section.id,
                 Student.school_id == school.id
             ).scalar()
             
+            # Get teachers assigned
             teacher_assignments = db.query(Teacher).join(TeacherClassSectionSubject).filter(
                 TeacherClassSectionSubject.class_id == class_.id,
                 TeacherClassSectionSubject.section_id == section.id,
                 TeacherClassSectionSubject.school_id == school.id
             ).all()
-            response.append({
-                "sl_no": sl_no,
-                "class_id": class_.id,
-                "class_name": class_.name,
-                "section_name": section.name,
-                "teachers": len(teacher_assignments),
-                "students":student_count,
-                "is_published": "pending",
-                "published_at":"pending"
-            })
-            sl_no += 1
-    return response       
+
+            # Get ALL timetables for this class-section
+            timetable_days = (
+                db.query(TimetableDay)
+                .filter(
+                    TimetableDay.class_id == class_.id,
+                    TimetableDay.section_id == section.id,
+                    TimetableDay.school_id == school.id
+                )
+                .all()
+            )
+            
+            for timetable_day in timetable_days:
+                response.append({
+                    "timetable_id": timetable_day.id,
+                    "class_id": class_.id,
+                    "class_name": class_.name,
+                    "section_id": section.id,
+                    "section_name": section.name,
+                    "teachers": len(teacher_assignments),
+                    "students": student_count,
+                    "is_published": timetable_day.is_published,
+                    "published_at": timetable_day.published_at,
+                })
+    
+    return response
+
+
+
+@router.put("/time-table/{timetable_id}/publish")
+def publish_timetable(
+    timetable_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    
+    # Get the school associated with the current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found for this user.")
+    print("School found:", school)
+    # Fetch the timetable day
+    timetable_day = (
+        db.query(TimetableDay)
+        .filter(
+            TimetableDay.id == timetable_id,
+            TimetableDay.school_id == school.id
+        )
+        .first()
+    )
+    timetable_day = db.query(TimetableDay).filter(TimetableDay.id == timetable_id).first()
+    print("Found timetable:", timetable_day)
+
+    
+    if not timetable_day:
+        raise HTTPException(status_code=404, detail="Timetable not found.")
+    
+    # Publish timetable
+    timetable_day.is_published = True
+    timetable_day.published_at = func.now()  # DB-side timestamp
+
+    try:
+        db.commit()
+        db.refresh(timetable_day)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to publish timetable: {str(e)}")
+    
+    return {
+        "detail": "Timetable published successfully",
+        "timetable_id": timetable_day.id,
+        "class_id": timetable_day.class_id,
+        "section_id": timetable_day.section_id,
+        "day": timetable_day.day.name if timetable_day.day else None,
+        "is_published": timetable_day.is_published,
+        "published_at": timetable_day.published_at
+    }
+          
 @router.get("/class/{class_id}/timetable/{section_id}/periods/")
 def get_class_timetable_periods(
     class_id: int,
@@ -546,14 +632,15 @@ def get_class_timetable_periods(
         .filter(
             TimetableDay.class_id == class_id,
             TimetableDay.section_id == section_id,
-            TimetableDay.school_id == school.id
+            TimetableDay.school_id == school.id,
+            TimetableDay.is_published == True
         )
         .order_by(TimetableDay.day)
         .all()
     )
 
     if not timetable_days:
-        raise HTTPException(status_code=404, detail="No timetable found for this class and section.")
+        raise HTTPException(status_code=404, detail="No published timetable found for this class and section.")
 
     response = []
     for day in timetable_days:
@@ -785,12 +872,14 @@ def get_school_dashboard(
     teacher_count = db.query(Teacher).filter(Teacher.school_id == school_id).count()
     class_count = db.query(Class).filter(Class.school_id == school_id).count()
     transport_count = db.query(Transport).filter(Transport.school_id == school_id).count()
+    exam_count=db.query(Exam).filter(Exam.school_id==school_id).count()
 
     return {
         "school_name": school.school_name,
         "student_count": student_count,
         "teacher_count": teacher_count,
         "class_count": class_count,
+        "exam_count": exam_count,
         "transport_count": transport_count,
     }
     
@@ -801,8 +890,8 @@ def create_attendance(
     current_user=Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
 ):
     start = timer()
-
     try:
+        # Teacher Attendance
         if data.teachers_id:
             if current_user.role == UserRole.SCHOOL:
                 teacher = db.query(Teacher).filter(
@@ -818,22 +907,20 @@ def create_attendance(
 
             existing = db.query(Attendance).filter_by(
                 teachers_id=data.teachers_id,
-                subject_id=data.subject_id,
-                class_id=data.class_id,
-                section_id=data.section_id,
                 date=data.date
             ).first()
             if existing:
-                raise HTTPException(status_code=400, detail="Attendance already recorded for this teacher on this subject, class, section, and date.")
-            
-            data.is_verified = False
-        if data.student_id:
+                raise HTTPException(status_code=400, detail="Attendance already recorded for this teacher on this date.")
+
+            is_verified = False  # must be verified later by school
+
+        # Student Attendance
+        elif data.student_id:
             school_id = (
                 current_user.school_profile.id if current_user.role == UserRole.SCHOOL
                 else current_user.teacher_profile.school_id if current_user.role == UserRole.TEACHER
                 else None
             )
-
             if not school_id:
                 raise HTTPException(status_code=403, detail="Unauthorized user.")
 
@@ -846,14 +933,20 @@ def create_attendance(
 
             existing = db.query(Attendance).filter_by(
                 student_id=data.student_id,
-                subject_id=data.subject_id,
                 date=data.date
             ).first()
             if existing:
-                raise HTTPException(status_code=400, detail="Attendance already recorded for this student for this subject and date.")
-            data.is_verified = True
+                raise HTTPException(status_code=400, detail="Attendance already recorded for this student on this date.")
 
-        attendance = Attendance(**data.model_dump())
+            is_verified = True  # student attendance does not need verification
+
+        attendance = Attendance(
+            student_id=data.student_id,
+            teachers_id=data.teachers_id,
+            date=data.date,
+            status=data.status,
+            is_verified=is_verified
+        )
         db.add(attendance)
         db.commit()
         db.refresh(attendance)
@@ -865,26 +958,25 @@ def create_attendance(
             "time_taken": round(end - start, 4)
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     
-@router.post("/attendance/teacher-attendance/verify/") 
+@router.post("/attendance/teacher-attendance/verify/{attendance_id}") 
 def verify_teacher_attendance(
     attendance_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can verify teacher attendance.")
-
     attendance = db.query(Attendance).filter(
         Attendance.id == attendance_id,
         Attendance.teachers_id.isnot(None)
     ).first()
 
     if not attendance:
-        raise HTTPException(status_code=404, detail="Attendance record not found or not a teacher's attendance.")
+        raise HTTPException(status_code=404, detail="Teacher attendance not found.")
 
     if attendance.is_verified:
         raise HTTPException(status_code=400, detail="Attendance already verified.")
@@ -894,93 +986,75 @@ def verify_teacher_attendance(
     db.refresh(attendance)
 
     return {"detail": "Teacher attendance verified successfully."}   
-@router.get("/attendance/monthly-summary/")
-def get_attendance_summary(
-    student_id: int = Query(None),
-    teachers_id: str = Query(None),
-    subject_id: int = Query(None),
-    class_id: int = Query(None),
-    section_id: int = Query(None),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+@router.get("/student/{student_id}/month/{year}/{month}")
+def get_student_attendance_monthwise(student_id: int, year: int, month: int, db: Session = Depends(get_db)):
+    import calendar
+    from datetime import date, datetime
+
+    today = datetime.today().date()
+    days_in_month = calendar.monthrange(year, month)[1]
+
+    # End date should be min(last day of month, today)
+    end_day = days_in_month if (year, month) < (today.year, today.month) else min(today.day, days_in_month)
+
+    start_date = date(year, month, 1)
+    end_date = date(year, month, end_day)
+
+    records = db.query(Attendance).filter(
+        Attendance.student_id == student_id,
+        Attendance.date.between(start_date, end_date)
+    ).all()
+
+    record_map = {r.date: r.status for r in records}
+
+    status_list = [
+        record_map.get(date(year, month, day), "A")
+        for day in range(1, end_day + 1)
+    ]
+
+    return {
+        "student_id": student_id,
+        "month": f"{year}-{month:02}",
+        "attendance": status_list
+    }
+@router.get("/teacher/{teacher_id}/month/{year}/{month}")
+def get_teacher_attendance_monthwise(
+    teacher_id: str,  # string to allow codes like "TCH-116102"
+    year: int,
+    month: int,
+    db: Session = Depends(get_db)
 ):
-    if not student_id and not teachers_id:
-        raise HTTPException(status_code=400, detail="Provide either student_id or teachers_id.")
+    import calendar
+    from datetime import date, datetime
 
-    school_id = None
-    if current_user.role == UserRole.SCHOOL:
-        school_id = current_user.school_profile.id
-    elif current_user.role == UserRole.TEACHER:
-        school_id = current_user.teacher_profile.school_id
-    else:
-        raise HTTPException(status_code=403, detail="Unauthorized user.")
+    today = datetime.today().date()
+    days_in_month = calendar.monthrange(year, month)[1]
 
-    # Month map (1–12 → January–December)
-    month_map = {i: month_name[i] for i in range(1, 13)}
-    status_per_month = {month_map[i]: [] for i in range(1, 13)}  # initialize empty lists
+    # End date should be min(last day of month, today)
+    end_day = days_in_month if (year, month) < (today.year, today.month) else min(today.day, days_in_month)
 
-    # === Student Attendance ===
-    if student_id:
-        student = db.query(Student).filter(
-            Student.id == student_id,
-            Student.school_id == school_id
-        ).first()
-        if not student:
-            raise HTTPException(status_code=404, detail="Student not found or not in your school.")
-        
-        if not subject_id:
-            raise HTTPException(status_code=400, detail="subject_id is required with student_id")
+    start_date = date(year, month, 1)
+    end_date = date(year, month, end_day)
 
-        records = db.query(
-            extract('month', Attendance.date).label('month'),
-            Attendance.status
-        ).filter(
-            Attendance.student_id == student_id,
-            Attendance.subject_id == subject_id
-        ).all()
+    # Fetch attendance records
+    records = db.query(Attendance).filter(
+        Attendance.teachers_id == teacher_id,
+        Attendance.date.between(start_date, end_date)
+    ).all()
 
-        for month, status in records:
-            month_name_str = month_map[month]
-            status_per_month[month_name_str].append(status)
+    record_map = {r.date: r.status for r in records}
 
-        return {
-            "student_id": student_id,
-            "subject_id": subject_id,
-            "monthly_status": status_per_month
-        }
+    # Build day-wise status list
+    status_list = [
+        record_map.get(date(year, month, day), "A")  # default "A" if no record
+        for day in range(1, end_day + 1)
+    ]
 
-    # === Teacher Attendance ===
-    if teachers_id:
-        teacher = db.query(Teacher).filter(
-            Teacher.id == teachers_id,
-            Teacher.school_id == school_id
-        ).first()
-        if not teacher:
-            raise HTTPException(status_code=404, detail="Teacher not found or not in your school.")
-
-        if not class_id or not section_id:
-            raise HTTPException(status_code=400, detail="class_id and section_id required for teacher attendance")
-
-        records = db.query(
-            extract('month', Attendance.date).label('month'),
-            Attendance.status
-        ).filter(
-            Attendance.teachers_id == teachers_id,
-            Attendance.class_id == class_id,
-            Attendance.section_id == section_id
-        ).all()
-
-        for month, status in records:
-            month_name_str = month_map[month]
-            status_per_month[month_name_str].append(status)
-
-        return {
-            "teachers_id": teachers_id,
-            "class_id": class_id,
-            "section_id": section_id,
-            "monthly_status": status_per_month
-        }
-
+    return {
+        "teacher_id": teacher_id,
+        "month": f"{year}-{month:02}",
+        "attendance": status_list
+    }
 @router.post("/create-time-table/")
 def create_timetable(
     data: TimetableCreate,
@@ -1333,13 +1407,14 @@ def create_exam(
             chapters=data.chapters,
             exam_type=data.exam_type,
             no_of_questions=data.no_of_questions,
+            question_time=data.question_time,
             pass_percentage=data.pass_percentage,
             exam_activation_date=data.exam_activation_date,
             inactive_date=data.inactive_date,
             max_repeat=max_repeat,
             status=data.status,
             created_by=teacher.id,
-            sections=section_objs   # ✅ assign objects not IDs
+            sections=section_objs
         )
 
         db.add(exam)
@@ -1411,6 +1486,7 @@ def list_exams(
             chapters=exam.chapters,
             no_of_chapters=len(exam.chapters),
             no_of_questions=exam.no_of_questions,
+            exam_time=exam.no_of_questions * exam.question_time if exam.no_of_questions and exam.question_time else 0,
             pass_percentage=exam.pass_percentage,
             exam_activation_date=exam.exam_activation_date,
             inactive_date=exam.inactive_date,

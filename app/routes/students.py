@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException,status
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress
-from app.models.school import School,Class,Section,Attendance,Transport
+from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
 from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
 from sqlalchemy.orm import Session,joinedload
@@ -75,7 +75,7 @@ def create_student(
     db.commit()
 
     token = create_verification_token(user.id)
-    verification_link = f"http://localhost:8000/users/verify-account?token={token}"
+    verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
 
     send_dynamic_email(
         context_key="account_verification.html",
@@ -234,12 +234,19 @@ def get_student(
             joinedload(Student.parent),
             joinedload(Student.present_address),
             joinedload(Student.permanent_address),
+            joinedload(Student.exam_data)
         )
         .first()
     )
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found.")
+    last_exam = (
+    db.query(StudentExamData)
+    .filter(StudentExamData.student_id == student.id)
+    .order_by(StudentExamData.submitted_at.desc())
+    .first()
+       )
 
     return {
         "student_id": student.id,
@@ -248,6 +255,78 @@ def get_student(
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
         "created_at": student.created_at,
+        "last_appeared_exam":last_exam.submitted_at if last_exam else None,
+        "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
+        "exam_result":last_exam.result if last_exam else None,
+        "parent": {
+            "parent_name": student.parent.parent_name,
+            "relation": student.parent.relation,
+            "phone": student.parent.phone,
+            "email": student.parent.email,
+            "occupation": student.parent.occupation,
+            "organization": student.parent.organization
+        } if student.parent else None,
+        "present_address": {
+            "enter_pin": student.present_address.enter_pin,
+            "division": student.present_address.division,
+            "district": student.present_address.district,
+            "state": student.present_address.state,
+            "country": student.present_address.country,
+            "building": student.present_address.building,
+            "house_no": student.present_address.house_no,
+            "floor_name": student.present_address.floor_name
+        } if student.present_address else None,
+        "permanent_address": {
+            "enter_pin": student.permanent_address.enter_pin,
+            "division": student.permanent_address.division,
+            "district": student.permanent_address.district,
+            "state": student.permanent_address.state,
+            "country": student.permanent_address.country,
+            "building": student.permanent_address.building,
+            "house_no": student.permanent_address.house_no,
+            "floor_name": student.permanent_address.floor_name
+        } if student.permanent_address else None
+    }
+
+@router.get("/students/profile/")
+def get_own_student_profile(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.STUDENT))
+):
+    student = (
+        db.query(Student)
+        .filter(Student.user_id == current_user.id)
+        .options(
+            joinedload(Student.classes),
+            joinedload(Student.section),
+            joinedload(Student.parent),
+            joinedload(Student.present_address),
+            joinedload(Student.permanent_address),
+            joinedload(Student.exam_data)
+        )
+        .first()
+    )
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+    last_exam = (
+    db.query(StudentExamData)
+    .filter(StudentExamData.student_id == student.id)
+    .order_by(StudentExamData.submitted_at.desc())
+    .first()
+       )
+
+    return {
+        "student_id": student.id,
+        "student_name": f"{student.first_name} {student.last_name}",
+        "roll_no": student.roll_no,
+        "class_name": student.classes.name,
+        "section_name": student.section.name if student.section else None,
+        "created_at": student.created_at,
+        "total_attendance": len(student.attendances) if student.attendances else 0,
+        "total_exams": len(student.exam_data) if student.exam_data else 0,
+        "last_appeared_exam":last_exam.submitted_at if last_exam else None,
+        # "exam_given": sum(1 for exam in student.exam_data if exam.is_exam_given) if student.exam_data else 0,
         "parent": {
             "parent_name": student.parent.parent_name,
             "relation": student.parent.relation,

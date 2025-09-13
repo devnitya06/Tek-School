@@ -1,11 +1,13 @@
 from pydantic import BaseModel, EmailStr
 from typing import List, Literal
 from datetime import time
+from app.models.teachers import DayOfWeek
 
 class Assignment(BaseModel):
     class_id: int
     section_id: int
     subject_id: int
+
 class TeacherCreateRequest(BaseModel):
     first_name: str
     last_name: str
@@ -18,7 +20,7 @@ class TeacherCreateRequest(BaseModel):
     start_duty: time
     end_duty: time
     teacher_type: Literal["full_time", "part_time"]
-    present_in: List[str]
+    present_in: List[DayOfWeek]
     assignments: List[Assignment]
 class TeacherResponse(BaseModel):
     id: str
@@ -33,7 +35,7 @@ class TeacherResponse(BaseModel):
     start_duty: time
     end_duty: time
     teacher_type: Literal["full_time", "part_time"]
-    present_in: List[str]
+    present_in: DayOfWeek
     model_config = {
         "from_attributes": True
     }

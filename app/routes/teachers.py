@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject
-from app.models.school import School,Attendance,Class,Section,Subject
+from app.models.school import School,Attendance,Class,Section,Subject,Exam
 from app.schemas.users import UserRole
 from app.schemas.teachers import TeacherCreateRequest,TeacherResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -79,7 +79,7 @@ def create_teacher(
 
         db.commit()
         token = create_verification_token(user.id)
-        verification_link = f"http://localhost:8000/users/verify-account?token={token}"
+        verification_link = f"http://127.0.0.1:8000/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Teacher Account Verification",
@@ -110,7 +110,6 @@ def get_all_teachers_for_school(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can access this resource.")
-    # print("my school id😊",current_user.school_profile.id)
 
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
@@ -124,9 +123,23 @@ def get_all_teachers_for_school(
         .group_by(Attendance.teachers_id)
         .subquery()
     )
+    # Subquery for exam count
+    exam_subq = (
+        db.query(
+            Exam.created_by.label("teacher_id"),
+            func.count(Exam.id).label("exam_count")
+        )
+        .group_by(Exam.created_by)
+        .subquery()
+    )
     teachers_query = (
-        db.query(Teacher, attendance_subq.c.attendance_count)
+        db.query(
+            Teacher,
+            attendance_subq.c.attendance_count,
+            exam_subq.c.exam_count
+        )
         .outerjoin(attendance_subq, Teacher.id == attendance_subq.c.teachers_id)
+        .outerjoin(exam_subq, Teacher.id == exam_subq.c.teacher_id)
         .filter(Teacher.school_id == school.id)
         .offset(offset)
         .limit(limit)
@@ -139,11 +152,13 @@ def get_all_teachers_for_school(
             "teacher_id": teacher.id,
             "teacher_name": f"{teacher.first_name} {teacher.last_name}",
             "email": teacher.email,
+            "status": "active" if teacher.is_active else "inactive",
             "classes":len(teacher.teacher_in_classes) if teacher.teacher_in_classes else 0,
             "subjects": len(teacher.subjects),
-            "attendance_count": attendance_count or 0
+            "attendance_count": attendance_count or 0,
+            "exam_count": exam_count or 0
         }
-        for index, (teacher,attendance_count) in enumerate(teachers_query)
+        for index, (teacher,attendance_count,exam_count) in enumerate(teachers_query)
     ]
     
 @router.get("/teacher/profile")
@@ -182,7 +197,8 @@ def get_teacher_profile(
         "email": teacher.email,
         "phone": teacher.phone,
         "created_at": teacher.created_at,
-        "assignments": detailed_assignments
+        "assignments": detailed_assignments,
+        "status": "active" if teacher.is_active else "inactive"
     }    
 
 @router.get("/teacher/{teacher_id}")
@@ -229,9 +245,46 @@ def get_teacher_by_id(
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
+        "status": "active" if teacher.is_active else "inactive",
         "created_at": teacher.created_at,
         "assignments": detailed_assignments
     }
+
+@router.put("/teacher/{teacher_id}/inactive")
+def inactive_teacher(
+    teacher_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Only school users can perform this action
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only schools can perform this action.")
+
+    # Get current user's school profile
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    # Fetch teacher by ID within the same school
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id,
+        Teacher.school_id == school.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
+
+    # Mark teacher as inactive
+    teacher.is_active = False
+    db.commit()
+    db.refresh(teacher)
+
+    return {
+        "detail": "Teacher has been marked as inactive successfully.",
+        "teacher_id": teacher.id,
+        "status": "inactive"
+    }
+
 
 @router.get("/classes")
 def get_teacher_classes(

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: Optional[str] = None
     
     # CORS
-    BACKEND_CORS_ORIGINS: list = ["*"]
+    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000","http://localhost:3001","http://localhost:3002",]
 
     class Config:
         env_file = ".env"

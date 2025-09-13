@@ -121,14 +121,10 @@ class TransportResponse(BaseModel):
 
 class AttendanceCreate(BaseModel):
     student_id: Optional[int]=None
-    teachers_id: Optional[str]
-    class_id: int
-    section_id: Optional[int] = None
-    subject_id: int
+    teachers_id: Optional[str]=None
     date: date
     status: str = Field(..., max_length=1)
     is_verified:bool =Field(default=True)
-    remarks: Optional[str] = None
 
     model_config = {
         "from_attributes": True
@@ -140,11 +136,11 @@ class WeekDay(str,Enum):
     WEDNESDAY = "WEDNESDAY"
     THURSDAY = "THURSDAY"
     FRIDAY = "FRIDAY"
-    SATURDAY = "SATURDAY"    
+    SATURDAY = "SATURDAY" 
 
 class PeriodCreate(BaseModel):
     # period_number: int
-    subject_id: str
+    subject_id: int
     teacher_id: Optional[str] = None
     start_time: time
     end_time: time
@@ -187,6 +183,7 @@ class ExamCreateRequest(BaseModel):
     chapters: List[int]
     exam_type: ExamTypeEnum
     no_of_questions: int
+    question_time: int
     pass_percentage: int
     exam_activation_date: datetime
     inactive_date: Optional[datetime] = None
@@ -216,6 +213,7 @@ class ExamListResponse(BaseModel):
     chapters: List[int]
     no_of_chapters: int
     no_of_questions: int
+    exam_time : Optional[int] = None
     pass_percentage: int
     exam_activation_date: datetime
     inactive_date: Optional[datetime]

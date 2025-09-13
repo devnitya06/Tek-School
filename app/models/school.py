@@ -123,22 +123,6 @@ class_section = Table(
     Column("section_id", Integer, ForeignKey("sections.id")),
     Column("school_id", String, ForeignKey("schools.id"))
 )
-
-# class Section(Base):
-#     __tablename__ = "sections"
-    
-#     id = Column(Integer, primary_key=True, index=True)
-#     name = Column(String(50))
-#     school_id = Column(String, ForeignKey("schools.id"))
-    
-#     school = relationship("School", back_populates="sections")
-#     classes = relationship("Class", secondary=class_section, back_populates="sections")
-#     students = relationship("Student", back_populates="section")
-#     attendances = relationship("Attendance", back_populates="section")
-#     exams = relationship("Exam",back_populates="sections")
-
-
-
 # Subject Models
 class Subject(Base):
     __tablename__ = "subjects"
@@ -149,7 +133,6 @@ class Subject(Base):
     
     school = relationship("School", back_populates="subjects")
     classes = relationship("Class", secondary=class_subjects, back_populates="subjects")
-    attendances = relationship("Attendance", back_populates="subject")
 
 class class_optional_subjects(Base):
     __tablename__ = 'class_optional_subjects'
@@ -207,7 +190,6 @@ class Class(Base):
         secondary=class_section,
         back_populates="classes"
     )
-    attendances = relationship("Attendance", back_populates="class_")
     school_margins = relationship("SchoolMarginConfiguration", back_populates="class_")
     exams = relationship("Exam", back_populates="class_obj")
     
@@ -261,23 +243,15 @@ class Attendance(Base):
 
     student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
     teachers_id = Column(String, ForeignKey("teachers.id"), nullable=True)
-    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
-    section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
-    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     date = Column(Date, nullable=False)
     status = Column(String(1), nullable=False)
     is_verified = Column(Boolean, nullable=True)
-    remarks = Column(String(255), nullable=True)
-
     student = relationship("Student", back_populates="attendances")
     teacher = relationship("Teacher", back_populates="attendances")
-    class_ = relationship("Class", back_populates="attendances")
-    section = relationship("Section", back_populates="attendances")
-    subject = relationship("Subject", back_populates="attendances")
 
     __table_args__ = (
-        UniqueConstraint('student_id', 'subject_id', 'date', name='uq_student_attendance'),
-        UniqueConstraint('teachers_id', 'subject_id', 'class_id', 'section_id', 'date', name='uq_teacher_attendance'),
+        UniqueConstraint('student_id','date', name='uq_student_attendance'),
+        UniqueConstraint('teachers_id','date', name='uq_teacher_attendance'),
     )
 
 class WeekDay(Enum):
@@ -294,7 +268,9 @@ class TimetableDay(Base):
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
     section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
-    day = Column(SQLEnum(WeekDay, name="weekday"), nullable=False) 
+    day = Column(SQLEnum(WeekDay, name="weekday"), nullable=False)
+    is_published = Column(Boolean, default=False)
+    published_at = Column(DateTime, nullable=True)
 
     periods = relationship("TimetablePeriod", back_populates="day", cascade="all, delete-orphan")
     school = relationship("School", back_populates="timetable_days")    
@@ -358,6 +334,7 @@ class Exam(Base):
     chapters = Column(ARRAY(Integer), nullable=False)
     exam_type = Column(SQLEnum(ExamTypeEnum), nullable=False)
     no_of_questions = Column(Integer, nullable=False)
+    question_time = Column(Integer, nullable=True)
     pass_percentage = Column(Integer, nullable=False)
     exam_activation_date = Column(DateTime, nullable=False)
     inactive_date = Column(DateTime, nullable=True)
@@ -393,7 +370,6 @@ class Section(Base):
     school = relationship("School", back_populates="sections")
     classes = relationship("Class", secondary=class_section, back_populates="sections")
     students = relationship("Student", back_populates="section")
-    attendances = relationship("Attendance", back_populates="section")
     exams = relationship("Exam", secondary=exam_sections, back_populates="sections")
 
 class McqBank(Base):
@@ -432,14 +408,11 @@ class StudentExamData(Base):
     school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
     exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
 
-    attempt_no = Column(Integer, default=1)  # 1st attempt, 2nd attempt, etc.
-
-    # JSON format example:
-    # {"6": ["option_a"], "7": ["option_a", "option_b"], "8": ["option_b"]}
+    attempt_no = Column(Integer, default=1)
     answers = Column(JSON, nullable=False)
 
-    result = Column(Integer, nullable=True)  # can store marks/score
-    status = Column(SQLEnum(ExamStatus), nullable=True)  # pass/fail
+    result = Column(Integer, nullable=True)
+    status = Column(SQLEnum(ExamStatus), nullable=True)
 
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
 

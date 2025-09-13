@@ -121,7 +121,8 @@ async def refresh_token(
             "access_token": new_access_token,
             "refresh_token": new_refresh_token,
             "token_type": "bearer",
-            "role": user.role
+            "role": user.role,
+            "detail": "Token refreshed successfully"
         }
         
     except JWTError:
