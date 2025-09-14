@@ -105,7 +105,7 @@ class StopResponse(StopBase):
     stop_time: str
 
 class TransportResponse(BaseModel):
-    id: int
+    driver_id: int
     vehicle_number: str
     vehicle_name: str
     driver_name: str

@@ -4,14 +4,15 @@ from app.db.session import Base
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 
-# class StudentStatus(PyEnum):
-#     TRIAL = "Trial"
-#     ACTIVE = "Active"
-#     INACTIVE = "Inactive"
+class StudentStatus(PyEnum):
+    TRIAL = "TRIAL"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 class Student(Base):
     __tablename__ = "students"
 
     id = Column(Integer, primary_key=True, index=True)
+    profile_image = Column(String, nullable=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     gender = Column(String(10), nullable=False)
@@ -25,8 +26,8 @@ class Student(Base):
     driver_id = Column(Integer, ForeignKey("transports.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     school_id = Column(String, ForeignKey("schools.id"), nullable=True)
-    # status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL)
-    # status_expiry_date = Column(DateTime, nullable=False)
+    status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False)
+    status_expiry_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
     # Relationships

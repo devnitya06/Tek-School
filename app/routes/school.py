@@ -800,7 +800,7 @@ def get_transports_list(
 
     return [
         TransportResponse(
-            id=t.id,
+            driver_id=t.id,
             vehicle_number=t.vechicle_number,
             vehicle_name=t.vechicle_name,
             driver_name=t.driver_name,
@@ -822,7 +822,7 @@ def get_transports_list(
 
 @router.get("/transports/")
 def get_transports(
-    vechicle_number: str,
+    driver_id: int,
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
 ):
@@ -832,7 +832,7 @@ def get_transports(
         school_id = current_user.teacher_profile.school_id
 
     transport = db.query(Transport).filter(
-        Transport.vechicle_number == vechicle_number,
+        Transport.id == driver_id,
         Transport.school_id == school_id
     ).first()
 
@@ -843,6 +843,7 @@ def get_transports(
         )
 
     return {
+        "driver_id": transport.id,
         "vehicle_number": transport.vechicle_number,
         "driver_name": transport.driver_name,
         "phone_no": transport.phone_no,

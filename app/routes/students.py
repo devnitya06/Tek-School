@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException,status
 from app.models.users import User,Otp
-from app.models.students import Student,Parent,PresentAddress,PermanentAddress
+from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
 from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
+from datetime import timezone
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import func
 from app.db.session import get_db
@@ -12,6 +13,7 @@ from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
+from datetime import datetime, timedelta
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -20,7 +22,10 @@ def create_student(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can create students.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only schools can create students."
+        )
 
     # Ensure email doesn't already exist
     existing = db.query(User).filter(User.email == data.email).first()
@@ -36,60 +41,89 @@ def create_student(
     if data.is_transport:
         if not data.driver_id:
             raise HTTPException(status_code=400, detail="Driver ID is required when transport is enabled.")
-        driver = db.query(Transport).filter(Transport.id == data.driver_id, Transport.school_id == school.id).first()
+        driver = db.query(Transport).filter(
+            Transport.id == data.driver_id,
+            Transport.school_id == school.id
+        ).first()
         if not driver:
             raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
 
-    # Step 1: Create User for the student
-    user = User(
-        name=f"{data.first_name} {data.last_name}",
-        email=data.email,
-        role=UserRole.STUDENT
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        # Step 1: Create User for the student
+        user = User(
+            name=f"{data.first_name} {data.last_name}",
+            email=data.email,
+            role=UserRole.STUDENT
+        )
+        db.add(user)
 
-    # Step 2: Create Student profile
-    student = Student(
-        first_name=data.first_name,
-        last_name=data.last_name,
-        gender=data.gender,
-        dob=data.dob,
-        roll_no=data.roll_no,
-        class_id=data.class_id,
-        section_id=data.section_id,
-        is_transport=data.is_transport,
-        driver_id=data.driver_id,
-        user_id=user.id,
-        school_id=school.id
-    )
-    db.add(student)
+        # Step 2: Create Student profile
+        student = Student(
+            first_name=data.first_name,
+            last_name=data.last_name,
+            gender=data.gender,
+            dob=data.dob,
+            roll_no=data.roll_no,
+            class_id=data.class_id,
+            section_id=data.section_id,
+            is_transport=data.is_transport,
+            driver_id=data.driver_id,
+            user_id=user.id,
+            school_id=school.id,
+            status=StudentStatus.TRIAL,
+            status_expiry_date=datetime.utcnow() + timedelta(days=15)
+        )
+        db.add(student)
+
+        # Step 3: Generate and store OTP
+        otp = generate_otp()
+        otp_entry = Otp(user=user, otp=otp)
+        db.add(otp_entry)
+
+        # Commit once at the end
+        db.commit()
+        db.refresh(user)
+        db.refresh(student)
+
+        # Email sending after commit (to avoid rollback issues)
+        token = create_verification_token(user.id)
+        verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
+
+        send_dynamic_email(
+            context_key="account_verification.html",
+            subject="Student Account Verification",
+            recipient_email=user.email,
+            context_data={
+                "name": f"{data.first_name} {data.last_name}",
+                "verification_link": verification_link,
+            },
+            db=db
+        )
+
+        return {"detail": "OTP sent to student's email for verification"}
+
+    except Exception as e:
+        db.rollback()  # undo partial inserts
+        raise HTTPException(status_code=500, detail=f"Failed to create student: {str(e)}")
+
+@router.post("/students/{student_id}/activate")
+def activate_student(student_id: int, db: Session = Depends(get_db)):
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    now = datetime.now(timezone.utc)
+    if student.status in [StudentStatus.TRIAL, StudentStatus.INACTIVE]:
+        student.status = StudentStatus.ACTIVE
+        student.status_expiry_date = now + timedelta(days=90)
+    elif student.status == StudentStatus.ACTIVE:
+        # renewal payment → extend expiry
+        student.status_expiry_date = (student.status_expiry_date or now) + timedelta(days=90)
+
     db.commit()
     db.refresh(student)
 
-    # Step 3: Generate and store OTP
-    otp = generate_otp()
-    otp_entry = Otp(user_id=user.id, otp=otp)
-    db.add(otp_entry)
-    db.commit()
-
-    token = create_verification_token(user.id)
-    verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
-
-    send_dynamic_email(
-        context_key="account_verification.html",
-        subject="Student Account Verification",
-        recipient_email=user.email,
-        context_data={
-            "name": f"{data.first_name} {data.last_name}",
-            "verification_link": verification_link,
-        },
-        db=db
-    )
-
-    return {"detail": "OTP sent to student's email for verification"}
-
+    return {"detail": f"Student activated until {student.status_expiry_date}"}
 @router.post("/students/{student_id}/add-parent-info")
 def add_parent_and_address(
     student_id: int,
@@ -209,7 +243,9 @@ def get_students(
             "roll_no": student.roll_no,
             "class_name": student.classes.name,
             "section_name": student.section.name,
-            "attendance_count": attendance_count or 0  # Default to 0 if None
+            "attendance_count": attendance_count or 0,
+            "status": student.status.value,
+            "status_expiry_date": student.status_expiry_date,
         }
         for index, (student, attendance_count) in enumerate(students_query)
     ]
@@ -255,6 +291,8 @@ def get_student(
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
         "created_at": student.created_at,
+        "status": student.status.value,
+        "status_expiry_date": student.status_expiry_date,
         "last_appeared_exam":last_exam.submitted_at if last_exam else None,
         "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
         "exam_result":last_exam.result if last_exam else None,

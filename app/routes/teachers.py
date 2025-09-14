@@ -34,7 +34,7 @@ def create_teacher(
         raise HTTPException(status_code=400, detail="School profile not found.")
 
     try:
-        # No need to use 'with db.begin()' here
+        # Use one transaction
         user = User(
             name=f"{data.first_name} {data.last_name}",
             email=data.email,
@@ -44,7 +44,7 @@ def create_teacher(
             role=UserRole.TEACHER
         )
         db.add(user)
-        db.flush()  # This assigns user.id
+        db.flush()  # assign user.id before commit
 
         teacher = Teacher(
             first_name=data.first_name,
@@ -53,8 +53,6 @@ def create_teacher(
             university=data.university,
             phone=data.phone,
             email=data.email,
-            teacher_in_classes=data.teacher_in_classes,
-            subjects=data.subjects,
             start_duty=data.start_duty,
             end_duty=data.end_duty,
             teacher_type=data.teacher_type,
@@ -63,7 +61,7 @@ def create_teacher(
             user_id=user.id
         )
         db.add(teacher)
-        db.flush()  # Assigns teacher.id
+        db.flush()  # assign teacher.id
 
         assignments = [
             TeacherClassSectionSubject(
@@ -77,9 +75,12 @@ def create_teacher(
         ]
         db.bulk_save_objects(assignments)
 
-        db.commit()
+        db.commit()  # ✅ commit only once, after all inserts
+        db.refresh(user)
+        db.refresh(teacher)
+
         token = create_verification_token(user.id)
-        verification_link = f"http://127.0.0.1:8000/users/verify-account?token={token}"
+        verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Teacher Account Verification",
@@ -97,9 +98,8 @@ def create_teacher(
         }
 
     except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
+        db.rollback()  # ✅ rollback cleans partial user/teacher if something fails
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/all-teacher/")
 def get_all_teachers_for_school(
@@ -153,8 +153,6 @@ def get_all_teachers_for_school(
             "teacher_name": f"{teacher.first_name} {teacher.last_name}",
             "email": teacher.email,
             "status": "active" if teacher.is_active else "inactive",
-            "classes":len(teacher.teacher_in_classes) if teacher.teacher_in_classes else 0,
-            "subjects": len(teacher.subjects),
             "attendance_count": attendance_count or 0,
             "exam_count": exam_count or 0
         }
@@ -196,6 +194,8 @@ def get_teacher_profile(
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
+        "present_in": teacher.present_in,
+        "teacher_type": teacher.teacher_type,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
         "status": "active" if teacher.is_active else "inactive"
@@ -246,6 +246,8 @@ def get_teacher_by_id(
         "email": teacher.email,
         "phone": teacher.phone,
         "status": "active" if teacher.is_active else "inactive",
+        "present_in": teacher.present_in,
+        "teacher_type": teacher.teacher_type,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments
     }
