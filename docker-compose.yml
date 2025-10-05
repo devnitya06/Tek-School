@@ -38,7 +38,7 @@ services:
     container_name: redis
     restart: always
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   db:
     image: postgres:15
