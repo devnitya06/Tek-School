@@ -77,8 +77,9 @@ class School(Base):
     sections = relationship("Section", back_populates="school")
     transports = relationship("Transport", back_populates="school")
     students = relationship("Student", back_populates="school")
-    timetable_days = relationship("TimetableDay", back_populates="school", cascade="all, delete")
-    timetable_periods = relationship("TimetablePeriod", back_populates="school", cascade="all, delete")
+    timetables = relationship("Timetable", back_populates="school", cascade="all, delete")
+    # timetable_periods = relationship("TimetablePeriod", back_populates="school")
+    # school = relationship("School", back_populates="timetable_periods")
     school_margins = relationship("SchoolMarginConfiguration", back_populates="school", cascade="all, delete-orphan")
     transaction_history = relationship("TransactionHistory", back_populates="school", cascade="all, delete-orphan")
     exams = relationship("Exam", back_populates="school")
@@ -164,34 +165,14 @@ class Class(Base):
     students = relationship("Student", back_populates="classes")
     
     # Many-to-many relationships
-    subjects = relationship(
-        "Subject", 
-        secondary=class_subjects,
-        back_populates="classes"
-    )
-    optional_subjects = relationship(
-        "Subject",
-        secondary="class_optional_subjects",
-        back_populates="classes"
-    )
-    
-    assigned_teachers = relationship(
-        "Teacher", 
-        secondary=class_assigned_teachers,
-        back_populates="assigned_classes"
-    )
-    extra_curricular_activities = relationship(
-        "ExtraCurricularActivity", 
-        secondary=class_extra_curricular,
-        back_populates="classes"
-    )
-    sections = relationship(
-        "Section", 
-        secondary=class_section,
-        back_populates="classes"
-    )
+    subjects = relationship("Subject", secondary=class_subjects,back_populates="classes")
+    optional_subjects = relationship("Subject",secondary="class_optional_subjects",back_populates="classes")
+    assigned_teachers = relationship("Teacher", secondary=class_assigned_teachers,back_populates="assigned_classes")
+    extra_curricular_activities = relationship("ExtraCurricularActivity", secondary=class_extra_curricular,back_populates="classes")
+    sections = relationship("Section", secondary=class_section,back_populates="classes")
     school_margins = relationship("SchoolMarginConfiguration", back_populates="class_")
     exams = relationship("Exam", back_populates="class_obj")
+    timetables = relationship("Timetable", back_populates="class_")
     
     # Unique constraint to prevent duplicate class names within a school
     __table_args__ = (
@@ -261,37 +242,54 @@ class WeekDay(Enum):
     THURSDAY = "Thursday"
     FRIDAY = "Friday"
     SATURDAY = "Saturday"
+
+class Timetable(Base):
+    __tablename__ = "timetables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    section_id = Column(Integer, ForeignKey("sections.id"), nullable=False)
+    is_published = Column(Boolean, default=False)
+    published_at = Column(DateTime, nullable=True)
+    # A timetable belongs to a school/class/section
+    school = relationship("School", back_populates="timetables")
+    days = relationship("TimetableDay", back_populates="timetable", cascade="all, delete-orphan")
+    class_ = relationship("Class", back_populates="timetables")
+    section = relationship("Section", back_populates="timetables")
+
+    __table_args__ = (
+        UniqueConstraint("school_id", "class_id", "section_id", name="uq_timetable_class_section"),
+    )
+
 class TimetableDay(Base):
     __tablename__ = "timetable_days"
 
     id = Column(Integer, primary_key=True)
-    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
-    section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
+    timetable_id = Column(Integer, ForeignKey("timetables.id"), nullable=False)
     day = Column(SQLEnum(WeekDay, name="weekday"), nullable=False)
-    is_published = Column(Boolean, default=False)
-    published_at = Column(DateTime, nullable=True)
 
+    timetable = relationship("Timetable", back_populates="days")
     periods = relationship("TimetablePeriod", back_populates="day", cascade="all, delete-orphan")
-    school = relationship("School", back_populates="timetable_days")    
-    
+
+    __table_args__ = (
+        UniqueConstraint("timetable_id", "day", name="uq_timetable_day"),
+    )
+      
 class TimetablePeriod(Base):
     __tablename__ = "timetable_periods"
 
     id = Column(Integer, primary_key=True)
     day_id = Column(Integer, ForeignKey("timetable_days.id"), nullable=False)
-    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    # period_number = Column(Integer, nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
-    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
 
     day = relationship("TimetableDay", back_populates="periods")
-    school = relationship("School", back_populates="timetable_periods")
-    teacher = relationship("Teacher",back_populates="timetable_periods")    
+    # school = relationship("School", back_populates="timetable_periods")
+    teacher = relationship("Teacher", back_populates="timetable_periods")    
     subject = relationship("Subject")
-
 
 class SchoolMarginConfiguration(Base):
     __tablename__ = "school_margin_configuration"
@@ -371,6 +369,7 @@ class Section(Base):
     classes = relationship("Class", secondary=class_section, back_populates="sections")
     students = relationship("Student", back_populates="section")
     exams = relationship("Exam", secondary=exam_sections, back_populates="sections")
+    timetables = relationship("Timetable", back_populates="section")
 
 class McqBank(Base):
     __tablename__ = "mcq_bank"
@@ -407,13 +406,12 @@ class StudentExamData(Base):
     student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
     school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
     exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
-
     attempt_no = Column(Integer, default=1)
     answers = Column(JSON, nullable=False)
-
-    result = Column(Integer, nullable=True)
+    result = Column(Float, nullable=True)
     status = Column(SQLEnum(ExamStatus), nullable=True)
-
+    appeared_count = Column(Integer, default=0)
+    class_rank = Column(Integer, nullable=True)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships (optional, if you want ORM navigation)

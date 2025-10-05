@@ -1,7 +1,10 @@
-from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event
+from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
+from app.models.school import SchoolBoard,SchoolMedium
+from enum import Enum
+from sqlalchemy import Enum as SQLEnum
 class Admin(Base):
     __tablename__ = "admins"
 
@@ -50,4 +53,94 @@ def calculate_available_before_insert(mapper, connection, target):
 
 @event.listens_for(CreditMaster, "before_update")
 def calculate_available_before_update(mapper, connection, target):
-    target.calculate_available_credit()        
+    target.calculate_available_credit()
+
+class SchoolClassSubject(Base):
+    __tablename__ = "school_classes_subjects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_board = Column(SQLEnum(SchoolBoard), nullable=True)
+    school_medium = Column(SQLEnum(SchoolMedium), nullable=True)
+    class_name = Column(String, nullable=True)
+    subject = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # ✅ Relationships
+    chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
+
+
+class Chapter(Base):
+    __tablename__ = "chapters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+
+    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id", ondelete="CASCADE"))
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # ✅ Relationships
+    school_class_subject = relationship("SchoolClassSubject", back_populates="chapters")
+    videos = relationship("ChapterVideo", back_populates="chapter", cascade="all, delete-orphan")
+    images = relationship("ChapterImage", back_populates="chapter", cascade="all, delete-orphan")
+    pdfs = relationship("ChapterPDF", back_populates="chapter", cascade="all, delete-orphan")
+    qnas = relationship("ChapterQnA", back_populates="chapter", cascade="all, delete-orphan")
+    student_progress = relationship("StudentChapterProgress", back_populates="chapter")
+
+
+
+class ChapterVideo(Base):
+    __tablename__ = "chapter_videos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String, nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+
+    chapter = relationship("Chapter", back_populates="videos")
+
+
+class ChapterImage(Base):
+    __tablename__ = "chapter_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String, nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+
+    chapter = relationship("Chapter", back_populates="images")
+
+
+class ChapterPDF(Base):
+    __tablename__ = "chapter_pdfs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String, nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+
+    chapter = relationship("Chapter", back_populates="pdfs")
+
+
+class ChapterQnA(Base):
+    __tablename__ = "chapter_qnas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(Text, nullable=True)
+    answer = Column(Text, nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+
+    chapter = relationship("Chapter", back_populates="qnas")
+
+
+class StudentChapterProgress(Base):
+    __tablename__ = "student_chapter_progress"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"))
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+    last_read_at = Column(DateTime, default=func.now())
+
+    student = relationship("Student", back_populates="chapter_progress")
+    chapter = relationship("Chapter", back_populates="student_progress")    

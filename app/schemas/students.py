@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import date, time
 
 class StudentCreateRequest(BaseModel):
+    profile_image:Optional[str]=None
     first_name: str
     last_name: str
     gender: str

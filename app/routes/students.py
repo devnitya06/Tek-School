@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException,status
+from fastapi import APIRouter, Depends, HTTPException,status,Query
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
 from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
 from datetime import timezone
-from sqlalchemy.orm import Session,joinedload
+from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
@@ -14,6 +14,9 @@ from app.utils.permission import require_roles
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from datetime import datetime, timedelta
+from app.utils.s3 import upload_base64_to_s3
+from app.services.pagination import PaginationParams
+from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -49,15 +52,24 @@ def create_student(
             raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
 
     try:
-        # Step 1: Create User for the student
+        # Step 1: Upload student profile image if provided
+        profile_pic_url = None
+        if data.profile_image:
+            try:
+                profile_pic_url =upload_base64_to_s3(data.profile_image, f"students/{school.id}/profile")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
+
+        # Step 2: Create User for the student
         user = User(
             name=f"{data.first_name} {data.last_name}",
             email=data.email,
             role=UserRole.STUDENT
         )
         db.add(user)
+        db.flush()  # ensures user.id is available
 
-        # Step 2: Create Student profile
+        # Step 3: Create Student profile
         student = Student(
             first_name=data.first_name,
             last_name=data.last_name,
@@ -70,22 +82,17 @@ def create_student(
             driver_id=data.driver_id,
             user_id=user.id,
             school_id=school.id,
+            profile_image=profile_pic_url,
             status=StudentStatus.TRIAL,
             status_expiry_date=datetime.utcnow() + timedelta(days=15)
         )
         db.add(student)
-
-        # Step 3: Generate and store OTP
-        otp = generate_otp()
-        otp_entry = Otp(user=user, otp=otp)
-        db.add(otp_entry)
-
         # Commit once at the end
         db.commit()
         db.refresh(user)
         db.refresh(student)
 
-        # Email sending after commit (to avoid rollback issues)
+        # Step 5: Send verification email
         token = create_verification_token(user.id)
         verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
 
@@ -100,11 +107,17 @@ def create_student(
             db=db
         )
 
-        return {"detail": "OTP sent to student's email for verification"}
+        return {
+            "detail": "Student account created. OTP sent to student's email.",
+            "student_id": student.id,
+            "user_id": user.id,
+            "profile_pic_url": profile_pic_url
+        }
 
     except Exception as e:
-        db.rollback()  # undo partial inserts
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create student: {str(e)}")
+
 
 @router.post("/students/{student_id}/activate")
 def activate_student(student_id: int, db: Session = Depends(get_db)):
@@ -197,17 +210,20 @@ def add_parent_and_address(
 
 @router.get("/students/")
 def get_students(
-    limit: int = 10,
-    offset: int = 0,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
+    roll_no: int | None = Query(None, description="Filter by roll number"),
+    name: str | None = Query(None, description="Filter by student name"),
+    class_name: str | None = Query(None, description="Filter by class name"),
 ):
+    # Determine school_id
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
     else:
         school_id = current_user.teacher_profile.school_id
 
-    # Subquery to count attendance per student
+    # --- Subqueries ---
     attendance_subquery = (
         db.query(
             Attendance.student_id,
@@ -217,12 +233,35 @@ def get_students(
         .subquery()
     )
 
-    students_query = (
+    exam_count_subquery = (
+        db.query(
+            StudentExamData.student_id,
+            func.count(StudentExamData.id).label("exam_count")
+        )
+        .group_by(StudentExamData.student_id)
+        .subquery()
+    )
+
+    rank_subquery = (
+        db.query(
+            StudentExamData.student_id,
+            func.max(StudentExamData.class_rank).label("latest_rank")
+        )
+        .group_by(StudentExamData.student_id)
+        .subquery()
+    )
+
+    # --- Base Query ---
+    base_query = (
         db.query(
             Student,
-            attendance_subquery.c.attendance_count
+            attendance_subquery.c.attendance_count,
+            exam_count_subquery.c.exam_count,
+            rank_subquery.c.latest_rank,
         )
         .outerjoin(attendance_subquery, Student.id == attendance_subquery.c.student_id)
+        .outerjoin(exam_count_subquery, Student.id == exam_count_subquery.c.student_id)
+        .outerjoin(rank_subquery, Student.id == rank_subquery.c.student_id)
         .join(Class, Student.class_id == Class.id)
         .join(Section, Student.section_id == Section.id)
         .filter(Class.school_id == school_id)
@@ -230,25 +269,42 @@ def get_students(
             joinedload(Student.classes),
             joinedload(Student.section)
         )
-        .offset(offset)
-        .limit(limit)
-        .all()
     )
 
-    return [
+    # --- Apply Filters ---
+    if roll_no:
+        base_query = base_query.filter(Student.roll_no==roll_no)
+    if name:
+        base_query = base_query.filter(
+            func.concat(Student.first_name, " ", Student.last_name).ilike(f"%{name}%")
+        )
+    if class_name:
+        base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
+
+    # --- Count & Pagination ---
+    total_count = base_query.count()
+    students = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
+
+    # --- Format Response ---
+    data = [
         {
-            "sl_no": index + 1 + offset,
+            "sl_no": index + 1 + pagination.offset(),
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
             "roll_no": student.roll_no,
             "class_name": student.classes.name,
             "section_name": student.section.name,
             "attendance_count": attendance_count or 0,
+            "exam_count": exam_count or 0,
+            "rank": rank or None,
             "status": student.status.value,
             "status_expiry_date": student.status_expiry_date,
         }
-        for index, (student, attendance_count) in enumerate(students_query)
+        for index, (student, attendance_count, exam_count, rank) in enumerate(students)
     ]
+
+    return pagination.format_response(data, total_count)
+
 
 @router.get("/students/{student_id}")
 def get_student(
@@ -393,4 +449,159 @@ def get_own_student_profile(
             "house_no": student.permanent_address.house_no,
             "floor_name": student.permanent_address.floor_name
         } if student.permanent_address else None
+    }
+
+@router.get("/e-book/chapters/")
+def get_student_chapter_list(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT)),
+):
+    # 1️⃣ Load student with classes and school
+    student = (
+        db.query(Student)
+        .filter(Student.user_id == current_user.id)
+        .options(
+            joinedload(Student.classes).joinedload(Class.school),
+            joinedload(Student.section),
+        )
+        .first()
+    )
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    if not student.classes:
+        raise HTTPException(status_code=400, detail="Student class details not found")
+
+    school = student.classes.school
+    class_name = student.classes.name
+    school_board = getattr(school, "school_board", None)
+    school_medium = getattr(school, "school_medium", None)
+
+    if not school_board or not school_medium:
+        raise HTTPException(
+            status_code=400,
+            detail="School board or medium not found for this student's class."
+        )
+
+    # 2️⃣ Find class-subject mapping
+    school_class_subject = (
+        db.query(SchoolClassSubject)
+        .filter(
+            SchoolClassSubject.school_board == school_board,
+            SchoolClassSubject.school_medium == school_medium,
+            SchoolClassSubject.class_name == class_name,
+        )
+        .first()
+    )
+
+    if not school_class_subject:
+        raise HTTPException(
+            status_code=404,
+            detail="No class-subject mapping found for this student's class."
+        )
+
+    # 3️⃣ Alias for StudentChapterProgress
+    progress_alias = aliased(StudentChapterProgress)
+
+    # 4️⃣ Get chapters with video counts and last_read_at
+    chapters_data = (
+        db.query(
+            Chapter.id.label("chapter_id"),
+            Chapter.title.label("chapter_title"),
+            func.count(ChapterVideo.id).label("video_count"),
+            progress_alias.last_read_at.label("last_read_at")
+        )
+        .outerjoin(ChapterVideo, Chapter.id == ChapterVideo.chapter_id)
+        .outerjoin(
+            progress_alias,
+            (progress_alias.chapter_id == Chapter.id) & (progress_alias.student_id == student.id)
+        )
+        .filter(Chapter.school_class_subject_id == school_class_subject.id)
+        .group_by(Chapter.id, progress_alias.last_read_at)
+        .all()
+    )
+
+    # 5️⃣ Format response
+    return [
+        {
+            "chapter_id": c.chapter_id,
+            "chapter_title": c.chapter_title,
+            "number_of_videos": c.video_count,
+            "last_read_at": c.last_read_at.isoformat() if c.last_read_at else None
+        }
+        for c in chapters_data
+    ]
+
+@router.get("/e-books/chapter/{chapter_id}/")
+def get_chapter_details(
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT)),
+):
+    # 1️⃣ Get student profile
+    student = (
+        db.query(Student)
+        .filter(Student.user_id == current_user.id)
+        .options(joinedload(Student.classes))
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 2️⃣ Fetch chapter
+    chapter = (
+        db.query(Chapter)
+        .options(
+            joinedload(Chapter.videos),
+            joinedload(Chapter.images),
+            joinedload(Chapter.pdfs),
+            joinedload(Chapter.qnas),
+        )
+        .filter(Chapter.id == chapter_id)
+        .first()
+    )
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    # 3️⃣ Check student's class matches chapter
+    class_subject = chapter.school_class_subject
+    if student.classes.name != class_subject.class_name:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to view chapters from another class.",
+        )
+
+    # 4️⃣ Update or create progress
+    progress = (
+        db.query(StudentChapterProgress)
+        .filter_by(student_id=student.id, chapter_id=chapter.id)
+        .first()
+    )
+
+    now = datetime.utcnow()
+    if progress:
+        progress.last_read_at = now
+    else:
+        progress = StudentChapterProgress(
+            student_id=student.id, chapter_id=chapter.id, last_read_at=now
+        )
+        db.add(progress)
+
+    db.commit()
+    db.refresh(progress)
+
+    # 5️⃣ Return chapter with last_read_at
+    return {
+        "chapter_id": chapter.id,
+        "title": chapter.title,
+        "description": chapter.description,
+        "last_read_at": progress.last_read_at,
+        "total_videos": len(chapter.videos),
+        "total_images": len(chapter.images),
+        "total_pdfs": len(chapter.pdfs),
+        "total_qnas": len(chapter.qnas),
+        "videos": [{"id": v.id, "url": v.url} for v in chapter.videos],
+        "images": [{"id": i.id, "url": i.url} for i in chapter.images],
+        "pdfs": [{"id": p.id, "url": p.url} for p in chapter.pdfs],
+        "qnas": [{"id": q.id, "question": q.question, "answer": q.answer} for q in chapter.qnas],
     }

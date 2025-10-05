@@ -7,13 +7,14 @@ from app.models.users import User
 from app.models.teachers import Teacher
 from app.models.students import Student
 from app.schemas.admin import (
-    ConfigurationCreateSchema,
+    ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate
 )
-from app.models.admin import CreditMaster
+from app.models.admin import CreditMaster,SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
 from sqlalchemy import func
+from collections import defaultdict
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -398,4 +399,322 @@ def get_teacher_details(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
-        )                
+        )
+
+@router.post("/class_subjects/")
+def add_class_subject(
+    class_subject: SchoolClassSubjectBase,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to add class subjects."
+        )
+
+    try:
+        # ✅ Create SchoolClassSubject directly
+        new_class_subject = SchoolClassSubject(
+            school_board=class_subject.school_board,
+            school_medium=class_subject.school_medium,
+            class_name=class_subject.class_name,
+            subject=class_subject.subject
+        )
+
+        db.add(new_class_subject)
+        db.commit()
+        db.refresh(new_class_subject)
+        return {
+            "detail": "Class subject added successfully.",
+            "class_subject_id": new_class_subject.id
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()  # Important: rollback on error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+@router.get("/class_subjects/")
+def list_class_subjects(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view class subjects."
+        )
+
+    try:
+        class_subjects = db.query(SchoolClassSubject).all()
+        return [
+            {
+                "id": cs.id,
+                "school_board": cs.school_board,
+                "school_medium": cs.school_medium,
+                "class_name": cs.class_name,
+                "subject": cs.subject,
+                "created_at": cs.created_at,
+                "updated_at": cs.updated_at,
+            }
+            for cs in class_subjects
+        ]
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+@router.post("/class_subjects/{subject_id}/chapters/")
+def add_chapter_to_subject(
+    subject_id: int,
+    chapter: ChapterCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to add chapters."
+        )
+
+    try:
+        # Check if subject exists
+        subject = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == subject_id).first()
+        if not subject:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Class subject not found."
+            )
+
+        # Create Chapter
+        new_chapter = Chapter(
+            title=chapter.title,
+            description=chapter.description,
+            school_class_subject_id=subject.id
+        )
+        db.add(new_chapter)
+        db.commit()
+        db.refresh(new_chapter)
+
+        # Add videos
+        for v in chapter.videos:
+            db.add(ChapterVideo(url=v.url, chapter_id=new_chapter.id))
+        # Add images
+        for i in chapter.images:
+            db.add(ChapterImage(url=i.url, chapter_id=new_chapter.id))
+        # Add PDFs
+        for p in chapter.pdfs:
+            db.add(ChapterPDF(url=p.url, chapter_id=new_chapter.id))
+        # Add QnAs
+        for q in chapter.qnas:
+            db.add(ChapterQnA(question=q.question, answer=q.answer, chapter_id=new_chapter.id))
+
+        db.commit()
+
+        return {
+            "detail": f"Chapter '{new_chapter.title}' added successfully to subject '{subject.subject}'.",
+            "chapter_id": new_chapter.id
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+@router.put("/chapters/{chapter_id}/")
+def update_chapter(
+    chapter_id: int,
+    chapter_data: ChapterUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to update chapters."
+        )
+
+    try:
+        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        if not chapter:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chapter not found."
+            )
+
+        # Update basic fields
+        if chapter_data.title is not None:
+            chapter.title = chapter_data.title
+        if chapter_data.description is not None:
+            chapter.description = chapter_data.description
+
+        # Update videos
+        if chapter_data.videos:
+            chapter.videos.clear()  # remove existing
+            for v in chapter_data.videos:
+                chapter.videos.append(ChapterVideo(url=v.url))
+
+        # Update images
+        if chapter_data.images:
+            chapter.images.clear()
+            for i in chapter_data.images:
+                chapter.images.append(ChapterImage(url=i.url))
+
+        # Update PDFs
+        if chapter_data.pdfs:
+            chapter.pdfs.clear()
+            for p in chapter_data.pdfs:
+                chapter.pdfs.append(ChapterPDF(url=p.url))
+
+        # Update QnAs
+        if chapter_data.qnas:
+            chapter.qnas.clear()
+            for q in chapter_data.qnas:
+                chapter.qnas.append(ChapterQnA(question=q.question, answer=q.answer))
+
+        db.commit()
+        db.refresh(chapter)
+
+        return {
+            "detail": f"Chapter '{chapter.title}' updated successfully.",
+            "chapter_id": chapter.id
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+@router.get("/chapters/{chapter_id}/")
+def get_chapter_details(
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view chapters."
+        )
+
+    try:
+        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        if not chapter:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chapter not found."
+            )
+
+        return {
+            "chapter_id": chapter.id,
+            "title": chapter.title,
+            "description": chapter.description,
+            "subject_id": chapter.school_class_subject_id,
+            "videos": [{"id": v.id, "url": v.url} for v in chapter.videos],
+            "images": [{"id": i.id, "url": i.url} for i in chapter.images],
+            "pdfs": [{"id": p.id, "url": p.url} for p in chapter.pdfs],
+            "qnas": [{"id": q.id, "question": q.question, "answer": q.answer} for q in chapter.qnas],
+            "created_at": chapter.created_at,
+            "updated_at": chapter.updated_at
+        }
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+@router.get("/classes-with-subjects/")
+def get_classes_with_subject_names(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL)),
+):
+    # Ensure only school role can access
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school accounts can access this resource."
+        )
+
+    # Get current school info
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    try:
+        # Filter classes for this school's board and medium
+        class_subjects = (
+            db.query(SchoolClassSubject)
+            .filter(
+                SchoolClassSubject.school_board == school.school_board,
+                SchoolClassSubject.school_medium == school.school_medium
+            )
+            .all()
+        )
+
+        if not class_subjects:
+            return {
+                "school_name": school.school_name,
+                "school_board": school.school_board,
+                "school_medium": school.school_medium,
+                "classes": []
+            }
+
+        # Group subjects by class
+        classes_dict = defaultdict(list)
+        for cs in class_subjects:
+            key = cs.class_name
+            classes_dict[key].append(cs.subject)
+
+        # Format final structured response
+        result = []
+        for class_name, subjects in classes_dict.items():
+            result.append({
+                "class_name": class_name,
+                "subjects": subjects
+            })
+
+        return {
+            "school_name": school.school_name,
+            "school_board": school.school_board,
+            "school_medium": school.school_medium,
+            "classes": result
+        }
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+@router.get("/available-credit/")
+def get_available_credit(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+):
+    # Only school users allowed
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only schools can access this resource.")
+
+    # Fetch school credit
+    credit = db.query(CreditMaster).filter(CreditMaster.school_id == current_user.school_profile.id).first()
+    if not credit:
+        raise HTTPException(status_code=404, detail="Credit account not found for this school.")
+
+    # Calculate available credit (just in case)
+    credit.calculate_available_credit()
+
+    return {
+        "school_id": current_user.school_profile.id,
+        "available_credit": credit.available_credit,
+        "self_added_credit": credit.self_added_credit or 0,
+        "earned_credit": credit.earned_credit or 0,
+        "used_credit": credit.used_credit or 0,
+        "transfer_credit": credit.transfer_credit or 0,
+        "last_updated": credit.updated_at,
+    }

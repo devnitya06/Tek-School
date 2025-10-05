@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Que
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student
-from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,class_extra_curricular,class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,Attendance,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData
+from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
-from app.schemas.school import ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest
+from app.schemas.school import ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,TimetableUpdate
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract
 from app.db.session import get_db
@@ -23,6 +23,9 @@ import hashlib
 import time
 from app.utils.services import is_time_overlap, create_mcq,get_mcqs_by_exam,delete_mcq,evaluate_exam    
 from app.core.config import settings
+from app.services.students import update_class_ranks
+from app.services.pagination import PaginationParams
+from enum import Enum
 router = APIRouter()
 
 def timer():
@@ -495,68 +498,108 @@ def get_time_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can access this resource.")
-    
-    # Get the school associated with the current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School not found for this user.")
-    
-    # Get classes with sections for this school
-    classes = (
-        db.query(Class)
-        .options(joinedload(Class.sections))
-        .filter(Class.school_id == school.id)
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
     response = []
 
-    for class_ in classes:
-        for section in class_.sections:
-            # Count students
+    # ---------- School User ----------
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this user.")
+
+        timetables = (
+            db.query(Timetable)
+            .options(joinedload(Timetable.days))
+            .filter(Timetable.school_id == school.id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        for timetable in timetables:
+            class_ = db.query(Class).filter(Class.id == timetable.class_id).first()
+            section = db.query(Section).filter(Section.id == timetable.section_id).first()
+
             student_count = db.query(func.count(Student.id)).filter(
                 Student.class_id == class_.id,
                 Student.section_id == section.id,
                 Student.school_id == school.id
             ).scalar()
-            
-            # Get teachers assigned
-            teacher_assignments = db.query(Teacher).join(TeacherClassSectionSubject).filter(
+
+            teacher_assignments = db.query(TeacherClassSectionSubject).filter(
                 TeacherClassSectionSubject.class_id == class_.id,
                 TeacherClassSectionSubject.section_id == section.id,
                 TeacherClassSectionSubject.school_id == school.id
             ).all()
 
-            # Get ALL timetables for this class-section
-            timetable_days = (
-                db.query(TimetableDay)
+            response.append({
+                "timetable_id": timetable.id,
+                "class_id": class_.id,
+                "class_name": class_.name,
+                "section_id": section.id,
+                "section_name": section.name,
+                "students": student_count,
+                "teachers": len(teacher_assignments),
+                "is_published": timetable.is_published,
+                "published_at": timetable.published_at,
+                "days_count": len(timetable.days)
+            })
+
+    # ---------- Teacher User ----------
+    elif current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
+
+        assignments = db.query(TeacherClassSectionSubject).filter(
+            TeacherClassSectionSubject.teacher_id == teacher.id,
+            TeacherClassSectionSubject.school_id == teacher.school_id
+        ).all()
+
+        if not assignments:
+            raise HTTPException(status_code=404, detail="No class-section assignments found for this teacher.")
+
+        for assignment in assignments:
+            timetable = (
+                db.query(Timetable)
+                .options(joinedload(Timetable.days))
                 .filter(
-                    TimetableDay.class_id == class_.id,
-                    TimetableDay.section_id == section.id,
-                    TimetableDay.school_id == school.id
+                    Timetable.class_id == assignment.class_id,
+                    Timetable.section_id == assignment.section_id,
+                    Timetable.school_id == assignment.school_id,
+                    Timetable.is_published == True  # ✅ Only published
                 )
-                .all()
+                .first()
             )
-            
-            for timetable_day in timetable_days:
+
+            if timetable:
+                class_ = db.query(Class).filter(Class.id == timetable.class_id).first()
+                section = db.query(Section).filter(Section.id == timetable.section_id).first()
+
+                student_count = db.query(func.count(Student.id)).filter(
+                    Student.class_id == class_.id,
+                    Student.section_id == section.id,
+                    Student.school_id == teacher.school_id
+                ).scalar()
+
                 response.append({
-                    "timetable_id": timetable_day.id,
+                    "timetable_id": timetable.id,
                     "class_id": class_.id,
                     "class_name": class_.name,
                     "section_id": section.id,
                     "section_name": section.name,
-                    "teachers": len(teacher_assignments),
                     "students": student_count,
-                    "is_published": timetable_day.is_published,
-                    "published_at": timetable_day.published_at,
+                    "is_published": timetable.is_published,
+                    "published_at": timetable.published_at,
+                    "days_count": len(timetable.days)
                 })
-    
-    return response
 
+    else:
+        raise HTTPException(status_code=403, detail="Only school or teacher users can access this resource.")
+
+    if not response:
+        raise HTTPException(status_code=404, detail="No timetables found.")
+
+    return response
 
 
 @router.put("/time-table/{timetable_id}/publish")
@@ -567,81 +610,171 @@ def publish_timetable(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can access this resource.")
-    
+
     # Get the school associated with the current user
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
         raise HTTPException(status_code=404, detail="School not found for this user.")
-    print("School found:", school)
-    # Fetch the timetable day
-    timetable_day = (
-        db.query(TimetableDay)
-        .filter(
-            TimetableDay.id == timetable_id,
-            TimetableDay.school_id == school.id
-        )
-        .first()
-    )
-    timetable_day = db.query(TimetableDay).filter(TimetableDay.id == timetable_id).first()
-    print("Found timetable:", timetable_day)
 
-    
-    if not timetable_day:
+    # Fetch the timetable
+    timetable = db.query(Timetable).filter(
+        Timetable.id == timetable_id,
+        Timetable.school_id == school.id
+    ).first()
+
+    if not timetable:
         raise HTTPException(status_code=404, detail="Timetable not found.")
-    
-    # Publish timetable
-    timetable_day.is_published = True
-    timetable_day.published_at = func.now()  # DB-side timestamp
+
+    # Publish timetable (set timetable-level flag)
+    timetable.is_published = True
+    timetable.published_at = func.now()
+
+    # Also mark all days as published
+    for day in timetable.days:
+        day.is_published = True
+        day.published_at = func.now()
 
     try:
         db.commit()
-        db.refresh(timetable_day)
+        db.refresh(timetable)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to publish timetable: {str(e)}")
-    
+
     return {
-        "detail": "Timetable published successfully",
-        "timetable_id": timetable_day.id,
-        "class_id": timetable_day.class_id,
-        "section_id": timetable_day.section_id,
-        "day": timetable_day.day.name if timetable_day.day else None,
-        "is_published": timetable_day.is_published,
-        "published_at": timetable_day.published_at
+        "detail": "Timetable published successfully"
     }
+
           
-@router.get("/class/{class_id}/timetable/{section_id}/periods/")
-def get_class_timetable_periods(
-    class_id: int,
-    section_id: int,
+@router.get("/timetable/{timetable_id}/periods/")
+@router.get("/timetable/{timetable_id}/periods/")
+def get_timetable_periods(
+    timetable_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    # If school user → verify school ownership
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this user.")
 
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School not found for this user.")
+        timetable = db.query(Timetable).filter(
+            Timetable.id == timetable_id,
+            Timetable.school_id == school.id
+        ).first()
 
-    # Fetch timetable days for this class/section/school
+        if not timetable:
+            raise HTTPException(status_code=404, detail="Timetable not found for this school.")
+
+    # If teacher user → only allow published timetable
+    elif current_user.role == UserRole.TEACHER:
+        timetable = db.query(Timetable).filter(
+            Timetable.id == timetable_id,
+            Timetable.is_published == True   # ✅ only published ones
+        ).first()
+
+        if not timetable:
+            raise HTTPException(status_code=404, detail="Published timetable not found.")
+
+    # Fetch timetable days + periods
     timetable_days = (
         db.query(TimetableDay)
-        .options(joinedload(TimetableDay.periods).joinedload(TimetablePeriod.subject), 
-                 joinedload(TimetableDay.periods).joinedload(TimetablePeriod.teacher))
-        .filter(
-            TimetableDay.class_id == class_id,
-            TimetableDay.section_id == section_id,
-            TimetableDay.school_id == school.id,
-            TimetableDay.is_published == True
+        .options(
+            joinedload(TimetableDay.periods)
+            .joinedload(TimetablePeriod.subject),
+            joinedload(TimetableDay.periods)
+            .joinedload(TimetablePeriod.teacher)
         )
+        .filter(TimetableDay.timetable_id == timetable.id)
         .order_by(TimetableDay.day)
         .all()
     )
 
     if not timetable_days:
-        raise HTTPException(status_code=404, detail="No published timetable found for this class and section.")
+        raise HTTPException(status_code=404, detail="No days found for this timetable.")
 
+    # Build response
+    response = []
+    for day in timetable_days:
+        day_data = {
+            "day": day.day.name,
+            "periods": []
+        }
+
+        for period in sorted(day.periods, key=lambda p: p.start_time):
+            day_data["periods"].append({
+                "id": period.id,
+                "day_id": period.day_id,
+                "start_time": period.start_time.strftime("%H:%M"),
+                "end_time": period.end_time.strftime("%H:%M"),
+                "subject_name": period.subject.name if period.subject else None,
+                "teacher_name": f"{period.teacher.first_name} {period.teacher.last_name}" if period.teacher else None
+            })
+
+        response.append(day_data)
+
+    return response
+
+@router.get("/student/timetable/periods/")
+def get_student_timetable_periods(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Ensure only student role can access
+    if current_user.role != UserRole.STUDENT:
+        raise HTTPException(
+            status_code=403,
+            detail="Only students can access their timetable."
+        )
+
+    # Get student profile
+    student = db.query(Student).filter(Student.user_id == current_user.id).first()
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail="Student profile not found."
+        )
+
+    # Extract school_id, class_id, section_id from student profile
+    school_id = student.school_id
+    class_id = student.class_id
+    section_id = student.section_id
+
+    # Fetch timetable for that class + section + school
+    timetable = db.query(Timetable).filter(
+        Timetable.class_id == class_id,
+        Timetable.section_id == section_id,
+        Timetable.school_id == school_id
+    ).first()
+
+    if not timetable:
+        raise HTTPException(
+            status_code=404,
+            detail="Timetable not found for your class and section."
+        )
+
+    # Fetch timetable days + periods
+    timetable_days = (
+        db.query(TimetableDay)
+        .options(
+            joinedload(TimetableDay.periods)
+            .joinedload(TimetablePeriod.subject),
+            joinedload(TimetableDay.periods)
+            .joinedload(TimetablePeriod.teacher)
+        )
+        .filter(TimetableDay.timetable_id == timetable.id)
+        .order_by(TimetableDay.day)
+        .all()
+    )
+
+    if not timetable_days:
+        raise HTTPException(
+            status_code=404,
+            detail="No days found for this timetable."
+        )
+
+    # Build response
     response = []
     for day in timetable_days:
         day_data = {
@@ -652,6 +785,7 @@ def get_class_timetable_periods(
         for period in sorted(day.periods, key=lambda p: p.start_time):
             day_data["periods"].append({
                 "id": period.id,
+                "day_id": period.day_id,
                 "start_time": period.start_time.strftime("%H:%M"),
                 "end_time": period.end_time.strftime("%H:%M"),
                 "subject_name": period.subject.name if period.subject else None,
@@ -661,7 +795,7 @@ def get_class_timetable_periods(
         response.append(day_data)
 
     return response
-    
+
 @router.get("/sections/")
 def get_sections(
     class_id: int,
@@ -783,54 +917,19 @@ def create_transport(
 
     return {"detail": "Transport created successfully", "transport_id": transport.id}
 
-@router.get("/transports-list/", response_model=List[TransportResponse])
-def get_transports_list(
-    db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
-):
-    if current_user.role == UserRole.SCHOOL:
-        school_id = current_user.school_profile.id
-    else:
-        school_id = current_user.teacher_profile.school_id
-
-    transports = db.query(Transport).filter(Transport.school_id == school_id).all()
-
-    if not transports:
-        raise HTTPException(status_code=404, detail="No transports found for this school.")
-
-    return [
-        TransportResponse(
-            driver_id=t.id,
-            vehicle_number=t.vechicle_number,
-            vehicle_name=t.vechicle_name,
-            driver_name=t.driver_name,
-            phone_no=t.phone_no,
-            duty_start_time=t.duty_start_time.strftime("%H:%M"),
-            duty_end_time=t.duty_end_time.strftime("%H:%M"),
-            school_id=t.school_id,
-            pickup_stops=[
-                StopResponse(stop_name=s.stop_name, stop_time=s.stop_time.strftime("%H:%M"))
-                for s in t.pickup_stops
-            ],
-            drop_stops=[
-                StopResponse(stop_name=s.stop_name, stop_time=s.stop_time.strftime("%H:%M"))
-                for s in t.drop_stops
-            ],
-        )
-        for t in transports
-    ]
-
-@router.get("/transports/")
-def get_transports(
+@router.get("/transport/{driver_id}", response_model=TransportResponse)
+def get_transport_detail(
     driver_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
 ):
+    # Determine school_id
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
     else:
         school_id = current_user.teacher_profile.school_id
 
+    # Query transport by driver_id & school_id
     transport = db.query(Transport).filter(
         Transport.id == driver_id,
         Transport.school_id == school_id
@@ -842,16 +941,54 @@ def get_transports(
             detail="Transport with this vehicle number not found for your school."
         )
 
-    return {
-        "driver_id": transport.id,
-        "vehicle_number": transport.vechicle_number,
-        "driver_name": transport.driver_name,
-        "phone_no": transport.phone_no,
-        "duty_start_time": transport.duty_start_time.strftime("%H:%M"),
-        "duty_end_time": transport.duty_end_time.strftime("%H:%M"),
-        "school_id": transport.school_id
-    }
+    # Return transport details
+    return TransportResponse(
+        driver_id=transport.id,
+        vehicle_number=transport.vechicle_number,
+        vehicle_name=transport.vechicle_name,
+        driver_name=transport.driver_name,
+        phone_no=transport.phone_no,
+        duty_start_time=transport.duty_start_time.strftime("%H:%M"),
+        duty_end_time=transport.duty_end_time.strftime("%H:%M"),
+        school_id=transport.school_id,
+        pickup_stops=[
+            StopResponse(stop_name=s.stop_name, stop_time=s.stop_time.strftime("%H:%M"))
+            for s in transport.pickup_stops
+        ],
+        drop_stops=[
+            StopResponse(stop_name=s.stop_name, stop_time=s.stop_time.strftime("%H:%M"))
+            for s in transport.drop_stops
+        ],
+    )
 
+@router.get("/transports/")
+def get_transports(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+):
+    school_id = current_user.school_profile.id if current_user.role == UserRole.SCHOOL else current_user.teacher_profile.school_id
+
+    query = db.query(Transport).filter(Transport.school_id == school_id)
+    total_count = query.count()
+
+    transports = query.offset(pagination.offset()).limit(pagination.limit()).all()
+
+    data = [
+        {
+            "driver_id": t.id,
+            "vehicle_number": t.vechicle_number,
+            "vehicle_name": t.vechicle_name,
+            "driver_name": t.driver_name,
+            "phone_no": t.phone_no,
+            "duty_start_time": t.duty_start_time.strftime("%H:%M"),
+            "duty_end_time": t.duty_end_time.strftime("%H:%M"),
+            "school_id": t.school_id,
+        }
+        for t in transports
+    ]
+
+    return pagination.format_response(data, total_count)
 @router.get("/school-dashboard/")
 def get_school_dashboard(
     db: Session = Depends(get_db),
@@ -1069,42 +1206,67 @@ def create_timetable(
     if not school:
         raise HTTPException(status_code=400, detail="School profile not found.")
 
-    # Check if the timetable day exists
-    timetable_day = db.query(TimetableDay).filter_by(
+    # ✅ Get or create the timetable for this class + section
+    timetable = db.query(Timetable).filter_by(
+        school_id=school.id,
         class_id=data.class_id,
-        section_id=data.section_id,
+        section_id=data.section_id
+    ).first()
+
+    if not timetable:
+        timetable = Timetable(
+            school_id=school.id,
+            class_id=data.class_id,
+            section_id=data.section_id
+        )
+        db.add(timetable)
+        db.flush()  # assign timetable.id
+
+    # ✅ Check if the day already exists
+    timetable_day = db.query(TimetableDay).filter_by(
+        timetable_id=timetable.id,
         day=data.day
     ).first()
 
     if not timetable_day:
         timetable_day = TimetableDay(
-            school_id=school.id,
-            class_id=data.class_id,
-            section_id=data.section_id,
+            timetable_id=timetable.id,
             day=data.day
         )
         db.add(timetable_day)
-        db.flush()
+        db.flush()  # assign timetable_day.id
 
-    # Fetch existing periods for that day
-    existing_periods = db.query(TimetablePeriod).filter_by(day_id=timetable_day.id).all()
-
-    for new_period in data.periods:
-        for existing in existing_periods:
-            if is_time_overlap(
+    # ✅ Validate overlaps inside the same request
+    for i, new_period in enumerate(data.periods):
+        for j, compare_period in enumerate(data.periods):
+            if i != j and is_time_overlap(
                 new_period.start_time, new_period.end_time,
-                existing.start_time, existing.end_time
+                compare_period.start_time, compare_period.end_time
             ):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Time conflict with an existing period from {existing.start_time} to {existing.end_time}"
+                    detail=f"Conflict: {new_period.start_time}–{new_period.end_time} overlaps with {compare_period.start_time}–{compare_period.end_time}"
                 )
 
-    # Add valid periods
+    # ✅ Validate teacher assignments and add periods
     for period in data.periods:
+        teacher_assignment = db.query(TeacherClassSectionSubject).filter_by(
+            school_id=school.id,
+            class_id=data.class_id,
+            section_id=data.section_id,
+            subject_id=period.subject_id,
+            teacher_id=period.teacher_id
+        ).first()
+
+        if not teacher_assignment:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Teacher {period.teacher_id} is not assigned to Class {data.class_id}, "
+                       f"Section {data.section_id}, Subject {period.subject_id}"
+            )
+
         period_entry = TimetablePeriod(
             day_id=timetable_day.id,
-            school_id=school.id,
             subject_id=period.subject_id,
             teacher_id=period.teacher_id,
             start_time=period.start_time,
@@ -1113,7 +1275,92 @@ def create_timetable(
         db.add(period_entry)
 
     db.commit()
-    return {"detail": "Timetable created successfully."}   
+    return {"detail": f"Timetable for Class {data.class_id} Section {data.section_id} updated/created for {data.day} successfully."}
+
+
+
+@router.put("/timetable/{timetable_id}")
+def update_timetable(
+    timetable_id: int,
+    data: TimetableUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "school":
+        raise HTTPException(status_code=403, detail="Only schools can update timetables.")
+
+    school = current_user.school_profile
+    if not school:
+        raise HTTPException(status_code=400, detail="School profile not found.")
+
+    # ✅ Get the base timetable (one per class + section)
+    timetable = db.query(Timetable).filter_by(
+        id=timetable_id,
+        school_id=school.id
+    ).first()
+
+    if not timetable:
+        raise HTTPException(status_code=404, detail="Timetable not found.")
+
+    # ✅ Find or create the day
+    day = db.query(TimetableDay).filter_by(
+        timetable_id=timetable.id,
+        day=data.day
+    ).first()
+
+    if not day:
+        day = TimetableDay(
+            timetable_id=timetable.id,
+            day=data.day
+        )
+        db.add(day)
+        db.flush()  # assign day.id
+
+    # ✅ Get existing periods for that day
+    existing_periods = db.query(TimetablePeriod).filter_by(day_id=day.id).all()
+
+    for new_period in data.periods:
+        # 🔹 Validate teacher assignment
+        teacher_assignment = db.query(TeacherClassSectionSubject).filter_by(
+            school_id=school.id,
+            class_id=timetable.class_id,
+            section_id=timetable.section_id,
+            subject_id=new_period.subject_id,
+            teacher_id=new_period.teacher_id
+        ).first()
+
+        if not teacher_assignment:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Teacher {new_period.teacher_id} is not assigned to "
+                       f"Class {timetable.class_id}, Section {timetable.section_id}, "
+                       f"Subject {new_period.subject_id}"
+            )
+
+        # 🔹 Check conflicts with existing periods
+        for existing in existing_periods:
+            if is_time_overlap(
+                new_period.start_time, new_period.end_time,
+                existing.start_time, existing.end_time
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Conflict with existing period {existing.start_time}-{existing.end_time}"
+                )
+
+        # 🔹 Add new period (NO school_id here)
+        db.add(TimetablePeriod(
+            day_id=day.id,
+            subject_id=new_period.subject_id,
+            teacher_id=new_period.teacher_id,
+            start_time=new_period.start_time,
+            end_time=new_period.end_time
+        ))
+
+    db.commit()
+    db.refresh(day)
+
+    return {"detail": f"Timetable updated for {day.day}"}
 
 @router.get("/account-credit/configuration/")
 def get_account_credit_configuration(
@@ -1730,19 +1977,18 @@ def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = 
 @router.post("/{exam_id}/submit")
 def submit_exam(
     exam_id: str,
-    submission: StudentExamSubmitRequest,   # only `answers` now
+    submission: StudentExamSubmitRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != UserRole.STUDENT:
         raise HTTPException(status_code=403, detail="Only students can submit exams")
 
-    # ✅ Get student profile (every student belongs to a school)
     student_profile = current_user.student_profile
     if not student_profile:
         raise HTTPException(status_code=400, detail="Student profile not found")
 
-    # Find last attempt for this student & exam
+    # Last attempt check
     last_attempt = (
         db.query(StudentExamData)
         .filter(
@@ -1754,7 +2000,7 @@ def submit_exam(
     )
     next_attempt_no = last_attempt.attempt_no + 1 if last_attempt else 1
 
-    # Fetch exam questions
+    # Fetch questions
     mcqs = db.query(McqBank).filter(McqBank.exam_id == exam_id).all()
     mcq_map = {mcq.id: mcq for mcq in mcqs}
 
@@ -1763,16 +2009,28 @@ def submit_exam(
 
     for ans in submission.answers:
         mcq = mcq_map.get(ans.question_id)
-        if mcq and mcq.correct_option == ans.selected_option:
-            correct_count += 1
+        if mcq:
+            correct_options = mcq.correct_option
+            selected_options = ans.selected_option
 
+        # Normalize: ensure both are lists
+            if not isinstance(correct_options, list):
+                correct_options = [correct_options]
+            if not isinstance(selected_options, list):
+                selected_options = [selected_options]
+
+        # Count correct matches
+            matched = [opt for opt in selected_options if opt in correct_options]
+
+            if matched:
+                correct_count += len(matched)
     result_percentage = (correct_count / total * 100) if total > 0 else 0
-    status_result = "pass" if result_percentage >= 40 else "fail"  # threshold
+    status_result = "pass" if result_percentage >= 40 else "fail"
 
     # Save result
     student_exam_data = StudentExamData(
-        student_id=student_profile.id,               # ✅ from student profile
-        school_id=student_profile.school_id,         # ✅ school comes from student profile
+        student_id=student_profile.id,
+        school_id=student_profile.school_id,
         exam_id=exam_id,
         attempt_no=next_attempt_no,
         answers=[ans.dict() for ans in submission.answers],
@@ -1783,6 +2041,9 @@ def submit_exam(
     db.add(student_exam_data)
     db.commit()
     db.refresh(student_exam_data)
+
+    # ✅ Update rank in class
+    update_class_ranks(db, exam_id, student_profile.class_id)
 
     return {
         "detail": "Exam submitted successfully",

@@ -151,7 +151,13 @@ class TimetableCreate(BaseModel):
     section_id: Optional[int] = None
     day: WeekDay
     periods: List[PeriodCreate]
-    
+
+class TimetableUpdate(BaseModel):
+    day: Optional[WeekDay] = None
+    periods: Optional[List[PeriodCreate]] = None
+    model_config = {
+        "from_attributes": True
+    }
 class CreateSchoolCredit(BaseModel):
     class_id: int
     credit_configuration_id: int

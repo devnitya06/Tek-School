@@ -41,6 +41,7 @@ class Student(Base):
     permanent_address = relationship("PermanentAddress", back_populates="student", uselist=False)
     attendances = relationship("Attendance", back_populates="student")
     exam_data = relationship("StudentExamData", back_populates="student")
+    chapter_progress = relationship("StudentChapterProgress", back_populates="student")
 
 
 class Parent(Base):

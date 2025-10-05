@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import List, Literal
+from typing import List, Literal,Optional
 from datetime import time
 from app.models.teachers import DayOfWeek
 
@@ -9,6 +9,7 @@ class Assignment(BaseModel):
     subject_id: int
 
 class TeacherCreateRequest(BaseModel):
+    profile_image: Optional[str]=None
     first_name: str
     last_name: str
     highest_qualification: str
@@ -22,6 +23,7 @@ class TeacherCreateRequest(BaseModel):
     assignments: List[Assignment]
 class TeacherResponse(BaseModel):
     id: str
+    profile_image:str
     first_name: str
     last_name: str
     highest_qualification: str

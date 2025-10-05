@@ -24,14 +24,13 @@ class Teacher(Base):
     __tablename__ = "teachers"
 
     id = Column(String, primary_key=True)
+    profile_image=Column(String,nullable=True)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     highest_qualification = Column(String, nullable=False)
     university = Column(String, nullable=False)
     phone = Column(String(10), nullable=False)
-    email = Column(String, unique=True, nullable=False)
-    # teacher_in_classes = Column(ARRAY(String), nullable=False)
-    # subjects = Column(ARRAY(String), nullable=False)            
+    email = Column(String, unique=True, nullable=False)           
     start_duty = Column(Time, nullable=False)
     end_duty = Column(Time, nullable=False)
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)

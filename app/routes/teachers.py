@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject
@@ -14,6 +14,8 @@ from typing import List
 from sqlalchemy import func
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
+from app.utils.s3 import upload_base64_to_s3
+from app.services.pagination import PaginationParams
 router = APIRouter()
 
 
@@ -34,18 +36,27 @@ def create_teacher(
         raise HTTPException(status_code=400, detail="School profile not found.")
 
     try:
-        # Use one transaction
+        # Upload teacher profile image if provided
+        profile_pic_url = None
+        if data.profile_image:
+            try:
+                profile_pic_url = upload_base64_to_s3(data.profile_image, f"schools/{current_user.id}/teachers/profile")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
+
+        # Create User
         user = User(
             name=f"{data.first_name} {data.last_name}",
             email=data.email,
-            phone=current_user.phone,
+            phone=data.phone,
             location=current_user.location,
             website=current_user.website,
             role=UserRole.TEACHER
         )
         db.add(user)
-        db.flush()  # assign user.id before commit
+        db.flush()  # assigns user.id
 
+        # Create Teacher
         teacher = Teacher(
             first_name=data.first_name,
             last_name=data.last_name,
@@ -58,11 +69,13 @@ def create_teacher(
             teacher_type=data.teacher_type,
             present_in=data.present_in,
             school_id=school.id,
-            user_id=user.id
+            user_id=user.id,
+            profile_image=profile_pic_url 
         )
         db.add(teacher)
-        db.flush()  # assign teacher.id
+        db.flush()  # assigns teacher.id
 
+        # Teacher assignments
         assignments = [
             TeacherClassSectionSubject(
                 teacher_id=teacher.id,
@@ -75,10 +88,11 @@ def create_teacher(
         ]
         db.bulk_save_objects(assignments)
 
-        db.commit()  # ✅ commit only once, after all inserts
+        db.commit()
         db.refresh(user)
         db.refresh(teacher)
 
+        # Send verification email
         token = create_verification_token(user.id)
         verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
         send_dynamic_email(
@@ -91,30 +105,34 @@ def create_teacher(
             },
             db=db
         )
+
         return {
             "detail": "Teacher account created. Verification email sent.",
             "teacher_id": teacher.id,
-            "user_id": user.id,
         }
 
     except SQLAlchemyError as e:
-        db.rollback()  # ✅ rollback cleans partial user/teacher if something fails
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/all-teacher/")
 def get_all_teachers_for_school(
-    limit: int = 10,
-    offset: int = 0,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
+    teacher_name: str | None = Query(None, description="Filter by teacher name"),
+    teacher_id: str | None = Query(None, description="Filter by teacher ID"),
+    class_name: str | None = Query(None, description="Filter by class name"),
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can access this resource.")
 
+    # Fetch school
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
         raise HTTPException(status_code=404, detail="School profile not found.")
-    # Subquery to get attendance count
+
+    # --- Subqueries ---
     attendance_subq = (
         db.query(
             Attendance.teachers_id,
@@ -123,7 +141,7 @@ def get_all_teachers_for_school(
         .group_by(Attendance.teachers_id)
         .subquery()
     )
-    # Subquery for exam count
+
     exam_subq = (
         db.query(
             Exam.created_by.label("teacher_id"),
@@ -132,32 +150,75 @@ def get_all_teachers_for_school(
         .group_by(Exam.created_by)
         .subquery()
     )
-    teachers_query = (
+
+    assignment_subq = (
+        db.query(
+            TeacherClassSectionSubject.teacher_id,
+            func.count(func.distinct(TeacherClassSectionSubject.class_id)).label("class_count"),
+            func.count(func.distinct(TeacherClassSectionSubject.subject_id)).label("subject_count")
+        )
+        .group_by(TeacherClassSectionSubject.teacher_id)
+        .subquery()
+    )
+
+    # --- Base Query ---
+    base_query = (
         db.query(
             Teacher,
             attendance_subq.c.attendance_count,
-            exam_subq.c.exam_count
+            exam_subq.c.exam_count,
+            assignment_subq.c.class_count,
+            assignment_subq.c.subject_count,
         )
         .outerjoin(attendance_subq, Teacher.id == attendance_subq.c.teachers_id)
         .outerjoin(exam_subq, Teacher.id == exam_subq.c.teacher_id)
+        .outerjoin(assignment_subq, Teacher.id == assignment_subq.c.teacher_id)
         .filter(Teacher.school_id == school.id)
-        .offset(offset)
-        .limit(limit)
-        .all()
     )
 
-    return [
+    # --- Apply Filters ---
+    if teacher_id is not None:
+        base_query = base_query.filter(Teacher.id == teacher_id)
+
+    if teacher_name:
+        base_query = base_query.filter(
+            func.concat(Teacher.first_name, " ", Teacher.last_name).ilike(f"%{teacher_name}%")
+        )
+
+    if class_name:
+        # Join with Class only if class_name filter is used
+        base_query = (
+            base_query.join(
+                TeacherClassSectionSubject,
+                Teacher.id == TeacherClassSectionSubject.teacher_id
+            )
+            .join(Class, TeacherClassSectionSubject.class_id == Class.id)
+            .filter(Class.name.ilike(f"%{class_name}%"))
+        )
+
+    # --- Count & Pagination ---
+    total_count = base_query.count()
+    teachers = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
+
+    # --- Format Response ---
+    data = [
         {
-            "sl_no": index + 1 + offset,
+            "sl_no": index + 1 + pagination.offset(),
             "teacher_id": teacher.id,
             "teacher_name": f"{teacher.first_name} {teacher.last_name}",
             "email": teacher.email,
             "status": "active" if teacher.is_active else "inactive",
             "attendance_count": attendance_count or 0,
-            "exam_count": exam_count or 0
+            "exam_count": exam_count or 0,
+            "class_count": class_count or 0,
+            "subject_count": subject_count or 0,
         }
-        for index, (teacher,attendance_count,exam_count) in enumerate(teachers_query)
+        for index, (teacher, attendance_count, exam_count, class_count, subject_count) in enumerate(teachers)
     ]
+
+    # --- Return Paginated Response ---
+    return pagination.format_response(data, total_count)
+
     
 @router.get("/teacher/profile")
 def get_teacher_profile(
