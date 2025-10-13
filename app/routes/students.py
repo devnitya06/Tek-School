@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException,status,Query
+from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
@@ -342,6 +342,7 @@ def get_student(
 
     return {
         "student_id": student.id,
+        "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
@@ -382,6 +383,45 @@ def get_student(
         } if student.permanent_address else None
     }
 
+@router.patch("/students/{student_id}/status")
+def update_student_status(
+    student_id: int,
+    new_status:StudentStatus = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+):
+
+    # Identify which school the current user belongs to
+    if current_user.role == UserRole.SCHOOL:
+        school_id = current_user.school_profile.id
+    else:
+        school_id = current_user.teacher_profile.school_id
+
+    # Fetch the student within that school
+    student = (
+        db.query(Student)
+        .filter(Student.id == student_id, Student.school_id == school_id)
+        .first()
+    )
+
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found or unauthorized to modify."
+        )
+
+    # Update the student's status
+    student.status = new_status
+    student.status_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(student)
+
+    return {
+        "message": f"Student status changed to {student.status.value}",
+        "student_id": student.id,
+        "new_status": student.status.value,
+        "status_updated_at": getattr(student, "status_updated_at", None)
+    }
 @router.get("/students/profile/")
 def get_own_student_profile(
     db: Session = Depends(get_db),
@@ -412,6 +452,7 @@ def get_own_student_profile(
 
     return {
         "student_id": student.id,
+        "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
@@ -451,18 +492,17 @@ def get_own_student_profile(
         } if student.permanent_address else None
     }
 
-@router.get("/e-book/chapters/")
-def get_student_chapter_list(
+@router.get("/e-books/subjects/")
+def get_student_subjects(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.STUDENT)),
 ):
-    # 1️⃣ Load student with classes and school
+    # ✅ Get student info with class + school
     student = (
         db.query(Student)
         .filter(Student.user_id == current_user.id)
         .options(
             joinedload(Student.classes).joinedload(Class.school),
-            joinedload(Student.section),
         )
         .first()
     )
@@ -470,41 +510,53 @@ def get_student_chapter_list(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     if not student.classes:
-        raise HTTPException(status_code=400, detail="Student class details not found")
+        raise HTTPException(status_code=400, detail="Student class not assigned")
 
     school = student.classes.school
     class_name = student.classes.name
+    print(f"Student's class: {class_name}, School ID: {school.id if school else 'N/A'}")
     school_board = getattr(school, "school_board", None)
     school_medium = getattr(school, "school_medium", None)
 
     if not school_board or not school_medium:
-        raise HTTPException(
-            status_code=400,
-            detail="School board or medium not found for this student's class."
-        )
+        raise HTTPException(status_code=400, detail="School board/medium missing")
 
-    # 2️⃣ Find class-subject mapping
-    school_class_subject = (
+    # ✅ Get subjects for this class, board, medium
+    subjects = (
         db.query(SchoolClassSubject)
         .filter(
             SchoolClassSubject.school_board == school_board,
             SchoolClassSubject.school_medium == school_medium,
             SchoolClassSubject.class_name == class_name,
         )
-        .first()
+        .all()
     )
 
-    if not school_class_subject:
-        raise HTTPException(
-            status_code=404,
-            detail="No class-subject mapping found for this student's class."
-        )
+    if not subjects:
+        raise HTTPException(status_code=404, detail="No subjects found for this class")
 
-    # 3️⃣ Alias for StudentChapterProgress
+    return [
+        {"subject_id": s.id, "subject_name": s.subject}
+        for s in subjects
+    ]
+
+
+@router.get("/e-book/{subject_id}/chapters/")
+def get_chapters_by_subject(
+    subject_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT)),
+):
+    # ✅ Get student
+    student = db.query(Student).filter(Student.user_id == current_user.id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # ✅ Alias for progress
     progress_alias = aliased(StudentChapterProgress)
 
-    # 4️⃣ Get chapters with video counts and last_read_at
-    chapters_data = (
+    # ✅ Get chapters + video count + last read time
+    chapters = (
         db.query(
             Chapter.id.label("chapter_id"),
             Chapter.title.label("chapter_title"),
@@ -514,14 +566,17 @@ def get_student_chapter_list(
         .outerjoin(ChapterVideo, Chapter.id == ChapterVideo.chapter_id)
         .outerjoin(
             progress_alias,
-            (progress_alias.chapter_id == Chapter.id) & (progress_alias.student_id == student.id)
+            (progress_alias.chapter_id == Chapter.id)
+            & (progress_alias.student_id == student.id)
         )
-        .filter(Chapter.school_class_subject_id == school_class_subject.id)
+        .filter(Chapter.school_class_subject_id == subject_id)
         .group_by(Chapter.id, progress_alias.last_read_at)
         .all()
     )
 
-    # 5️⃣ Format response
+    if not chapters:
+        raise HTTPException(status_code=404, detail="No chapters found for this subject")
+
     return [
         {
             "chapter_id": c.chapter_id,
@@ -529,7 +584,7 @@ def get_student_chapter_list(
             "number_of_videos": c.video_count,
             "last_read_at": c.last_read_at.isoformat() if c.last_read_at else None
         }
-        for c in chapters_data
+        for c in chapters
     ]
 
 @router.get("/e-books/chapter/{chapter_id}/")
@@ -578,7 +633,7 @@ def get_chapter_details(
         .first()
     )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if progress:
         progress.last_read_at = now
     else:

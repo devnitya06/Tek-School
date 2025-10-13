@@ -468,6 +468,61 @@ def list_class_subjects(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+@router.get("/subjects/{subject_id}/chapters/")
+def admin_get_chapters_by_subject(
+    subject_id: int,
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN)),
+):
+    """
+    ✅ Admin: View all chapters under a given subject.
+    - Shows chapter name, video count, created date.
+    - Paginated.
+    """
+
+    # ✅ Validate subject exists
+    subject = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == subject_id).first()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    # ✅ Query chapters with video count
+    chapters_query = (
+        db.query(
+            Chapter.id.label("chapter_id"),
+            Chapter.title.label("chapter_title"),
+            func.count(ChapterVideo.id).label("video_count"),
+            Chapter.created_at.label("created_at")
+        )
+        .outerjoin(ChapterVideo, Chapter.id == ChapterVideo.chapter_id)
+        .filter(Chapter.school_class_subject_id == subject_id)
+        .group_by(Chapter.id)
+        .order_by(Chapter.created_at.desc())
+    )
+
+    total_chapters = chapters_query.count()
+
+    # ✅ Apply pagination
+    chapters = chapters_query.offset(offset).limit(limit).all()
+
+    # ✅ Format response
+    result = [
+        {
+            "chapter_id": c.chapter_id,
+            "chapter_title": c.chapter_title,
+            "number_of_videos": c.video_count,
+            "created_at": c.created_at,
+        }
+        for c in chapters
+    ]
+
+    return {
+        "total": total_chapters,
+        "limit": limit,
+        "offset": offset,
+        "chapters": result
+    }
 @router.post("/class_subjects/{subject_id}/chapters/")
 def add_chapter_to_subject(
     subject_id: int,

@@ -252,6 +252,7 @@ def get_teacher_profile(
 
     return {
         "id": teacher.id,
+        "profile_image": teacher.profile_image,
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
@@ -303,6 +304,7 @@ def get_teacher_by_id(
 
     return {
         "id": teacher.id,
+        "profile_image": teacher.profile_image,
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
