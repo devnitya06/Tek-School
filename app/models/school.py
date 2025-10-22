@@ -84,6 +84,7 @@ class School(Base):
     transaction_history = relationship("TransactionHistory", back_populates="school", cascade="all, delete-orphan")
     exams = relationship("Exam", back_populates="school")
     exam_data = relationship("StudentExamData", back_populates="school")
+    leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
 
 
     
@@ -418,3 +419,38 @@ class StudentExamData(Base):
     student = relationship("Student", back_populates="exam_data")
     school = relationship("School", back_populates="exam_data")
     exam = relationship("Exam", back_populates="student_exam_data")
+
+class LeaveStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+
+
+class LeaveRequest(Base):
+    __tablename__ = "leave_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subject = Column(String(255), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    description = Column(Text, nullable=True)
+    attach_file = Column(String, nullable=True)
+    # status can only be pending, approved, or declined
+    status = Column(SQLEnum(LeaveStatus), default=LeaveStatus.PENDING, nullable=False)
+
+    # foreign keys
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(String, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+
+    # metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # relationships
+    school = relationship("School", back_populates="leave_requests")
+    teacher = relationship("Teacher", back_populates="leave_requests")
+    student = relationship("Student", back_populates="leave_requests")
+
+    def __repr__(self):
+        return f"<LeaveRequest(subject={self.subject}, status={self.status})>"

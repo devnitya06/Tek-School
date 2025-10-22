@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Que
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student
-from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData
+from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,LeaveRequest,LeaveStatus
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
-from app.schemas.school import ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,TimetableUpdate
+from app.schemas.school import ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract
 from app.db.session import get_db
@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.services.students import update_class_ranks
 from app.services.pagination import PaginationParams
 from enum import Enum
+from app.utils.s3 import upload_base64_to_s3
 router = APIRouter()
 
 def timer():
@@ -1747,6 +1748,74 @@ def list_exams(
         for exam in exams
     ]
     return response
+@router.get("/exams/{exam_id}/", response_model=ExamDetailResponse)
+def get_exam_detail(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # 🏫 School user access
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+
+        if exam.school_id != school.id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this exam")
+
+    # 👨‍🏫 Teacher access
+    elif current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        if exam.created_by != teacher.id:
+            raise HTTPException(status_code=403, detail="You can only view exams you created")
+
+    # 👨‍🎓 Student access
+    elif current_user.role == UserRole.STUDENT:
+        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        if (
+            exam.school_id != student.school_id
+            or exam.class_id != student.class_id
+            or not any(s.id == student.section_id for s in exam.sections)
+            or exam.status != ExamStatusEnum.ACTIVE
+            or not exam.is_published
+        ):
+            raise HTTPException(status_code=403, detail="You are not allowed to view this exam")
+
+    else:
+        raise HTTPException(status_code=403, detail="Invalid role for viewing exam details")
+
+    # ✅ Build response
+    return ExamDetailResponse(
+        id=exam.id,
+        exam_type=exam.exam_type,
+        school_id=exam.school_id,
+        class_id=exam.class_id,
+        standard=exam.class_obj.name if exam.class_obj else "",
+        section_ids=[section.id for section in exam.sections],
+        section_names=[section.name for section in exam.sections],
+        chapters=exam.chapters,
+        no_of_chapters=len(exam.chapters),
+        no_of_questions=exam.no_of_questions,
+        exam_time=exam.no_of_questions * exam.question_time if exam.no_of_questions and exam.question_time else 0,
+        pass_percentage=exam.pass_percentage,
+        exam_activation_date=exam.exam_activation_date,
+        inactive_date=exam.inactive_date,
+        max_repeat=exam.max_repeat,
+        status=exam.status,
+        no_students_appeared=exam.no_students_appeared,
+        created_by=f"{exam.teacher.first_name} {exam.teacher.last_name}" if exam.teacher else "",
+        created_at=exam.created_at
+    )
 
 @router.put("/exam/{exam_id}")
 def update_exam(
@@ -1793,7 +1862,7 @@ def delete_exam(
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
         if not teacher or exam.created_by != teacher.id:
             raise HTTPException(status_code=403, detail="You can only delete your own exams.")
-    elif current_user.role == UserRole.ADMIN:
+    elif current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or exam.school_id != school.id:
             raise HTTPException(status_code=403, detail="You can only delete exams in your school.")
@@ -1902,7 +1971,7 @@ def add_mcqs(
         raise HTTPException(status_code=400, detail=str(e))
 
     
-@router.put("/exam/{mcq_id}", response_model=McqResponse)
+@router.put("/{mcq_id}/")
 def update_mcq(
     mcq_id: int,
     mcq_update: McqCreate,  # reuse schema
@@ -2051,4 +2120,212 @@ def submit_exam(
         "attempt_no": next_attempt_no,
         "result": result_percentage,
         "status": status_result
+    }
+
+@router.post("/leave-request/")
+def create_leave_request(
+    request: LeaveCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    print("🔹 create_leave_request called")
+    print(f"🔹 request.attach_file: {request.attach_file}")
+    if current_user.role not in [UserRole.TEACHER, UserRole.STUDENT]:
+        raise HTTPException(status_code=403, detail="Only teacher or student can request leave")
+
+    attach_file_url = None
+    if request.attach_file:
+        print("🔹 attach_file exists, uploading to S3...")
+        attach_file_url = upload_base64_to_s3(
+            base64_string=request.attach_file,
+            filename_prefix="leave_request"
+        )
+        print(f"🔹 attach_file_url: {attach_file_url}")
+        if not attach_file_url:
+            raise HTTPException(status_code=500, detail="Failed to upload attachment")
+
+    if current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        school_id = teacher.school_id
+        leave = LeaveRequest(
+            subject=request.subject,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            description=request.description,
+            status=LeaveStatus.PENDING,
+            teacher_id=teacher.id,
+            student_id=None,
+            school_id=school_id,
+            attach_file=attach_file_url
+        )
+    else:
+        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        school_id = student.school_id
+        leave = LeaveRequest(
+            subject=request.subject,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            description=request.description,
+            status=LeaveStatus.PENDING,
+            student_id=student.id,
+            teacher_id=None,
+            school_id=school_id,
+            attach_file=attach_file_url
+        )
+
+    db.add(leave)
+    db.commit()
+    db.refresh(leave)
+
+    return {
+        "status": "success",
+        "message": "Leave request sent successfully",
+        "data": {
+            "leave_id": leave.id,
+            "subject": leave.subject,
+            "start_date": leave.start_date,
+            "end_date": leave.end_date,
+            "status": leave.status.value,
+            "school_id": leave.school_id,
+            "attach_file": leave.attach_file  # now this should show the S3 URL
+        }
+    }
+
+@router.get("/leave-request/")
+def get_all_leaves(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    School user can see all leave requests (teachers + students) with user info.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can view all leave requests")
+
+    leaves = db.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
+
+    result = []
+    for leave in leaves:
+        if leave.teacher_id:
+            user_id = leave.teacher_id
+            user_name = f"{leave.teacher.first_name} {leave.teacher.last_name}"
+            role = "TEACHER"
+        elif leave.student_id:
+            user_id = leave.student_id
+            user_name = f"{leave.student.first_name} {leave.student.last_name}"
+            role = "STUDENT"
+        else:
+            user_id = None
+            user_name = None
+            role = None
+
+        result.append({
+            "id": leave.id,
+            "subject": leave.subject,
+            "start_date": leave.start_date,
+            "end_date": leave.end_date,
+            "status": leave.status.value,  # Enum to string
+            "role": role,
+            "user_id": user_id,
+            "user_name": user_name
+        })
+
+    return {
+        "status": "success",
+        "total": len(result),
+        "data": result
+    }
+
+
+
+@router.get("/leave-request/{leave_id}/")
+def get_leave_by_id(
+    leave_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """
+    Get details of a specific leave request with user info.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can view leave details")
+
+    leave = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
+    if not leave:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+
+    if leave.teacher_id:
+        user_id = leave.teacher_id
+        user_name = f"{leave.teacher.first_name} {leave.teacher.last_name}"
+        role = "TEACHER"
+    elif leave.student_id:
+        user_id = leave.student_id
+        user_name = f"{leave.student.first_name} {leave.student.last_name}"
+        role = "STUDENT"
+    else:
+        user_id = None
+        user_name = None
+        role = None
+
+    return {
+        "status": "success",
+        "data": {
+            "id": leave.id,
+            "subject": leave.subject,
+            "start_date": leave.start_date,
+            "end_date": leave.end_date,
+            "description": leave.description,
+            "attach_file": leave.attach_file,
+            "status": leave.status.value,
+            "role": role,
+            "user_id": user_id,
+            "user_name": user_name,
+            "school_id": leave.school_id
+        }
+    }
+
+
+@router.put("/leave-request/{leave_id}/")
+def update_leave_status(
+    leave_id: int,
+    status: LeaveStatusUpdate,  # Pydantic model
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """
+    School can approve or decline leave requests and return full leave info.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can update leave status")
+
+    leave = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
+    if not leave:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+
+    status_value = status.status.lower()  # extract string from model
+
+    if status_value not in ["approved", "declined"]:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be 'approved' or 'declined'")
+
+    leave.status = LeaveStatus.APPROVED if status_value == "approved" else LeaveStatus.DECLINED
+    db.commit()
+    db.refresh(leave)
+
+    # Determine user info
+    if leave.teacher_id:
+        user_id = leave.teacher_id
+        user_name = f"{leave.teacher.first_name} {leave.teacher.last_name}"
+        role = "TEACHER"
+    elif leave.student_id:
+        user_id = leave.student_id
+        user_name = f"{leave.student.first_name} {leave.student.last_name}"
+        role = "STUDENT"
+    else:
+        user_id = None
+        user_name = None
+        role = None
+
+    return {
+        "status": "success",
+        "message": f"Leave request has been {status_value} successfully"
     }

@@ -42,6 +42,7 @@ class Student(Base):
     attendances = relationship("Attendance", back_populates="student")
     exam_data = relationship("StudentExamData", back_populates="student")
     chapter_progress = relationship("StudentChapterProgress", back_populates="student")
+    leave_requests = relationship("LeaveRequest", back_populates="student", cascade="all, delete")
 
 
 class Parent(Base):

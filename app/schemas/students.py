@@ -15,7 +15,18 @@ class StudentCreateRequest(BaseModel):
     is_transport: bool = True
     driver_id: Optional[int] = None
     # school_id: str
-    
+
+class StudentUpdateRequest(BaseModel):
+    profile_image: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    dob: Optional[date] = None
+    class_id: Optional[int] = None
+    section_id: Optional[int] = None
+    is_transport: Optional[bool] = None
+    driver_id: Optional[int] = None
+
 class AddressBase(BaseModel):
     enter_pin: str
     division: Optional[str] = None

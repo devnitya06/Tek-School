@@ -3,7 +3,7 @@ from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
+from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func
@@ -382,6 +382,94 @@ def get_student(
             "floor_name": student.permanent_address.floor_name
         } if student.permanent_address else None
     }
+
+@router.patch("/students/{student_id}")
+def update_student(
+    student_id: int,
+    data: StudentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Allow only school or teacher
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only schools and teachers can update student profiles."
+        )
+
+    # Identify school_id for both
+    if current_user.role == UserRole.SCHOOL:
+        school = getattr(current_user, "school_profile", None)
+        if not school:
+            raise HTTPException(status_code=400, detail="School profile not found.")
+        school_id = school.id
+    else:
+        teacher = getattr(current_user, "teacher_profile", None)
+        if not teacher:
+            raise HTTPException(status_code=400, detail="Teacher profile not found.")
+        school_id = teacher.school_id
+
+    # Fetch student from same school
+    student = db.query(Student).filter(
+        Student.id == student_id,
+        Student.school_id == school_id
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found in your school.")
+
+    # Allowed fields by role
+    if current_user.role == UserRole.SCHOOL:
+        allowed_fields = [
+            "first_name", "last_name", "gender", "dob",
+            "class_id", "section_id", "is_transport", "driver_id"
+        ]
+    else:
+        allowed_fields = ["first_name", "last_name", "gender", "dob", "class_id", "section_id"]
+
+    # Handle transport validation (school only)
+    if current_user.role == UserRole.SCHOOL and data.is_transport is not None:
+        if data.is_transport:
+            if not data.driver_id:
+                raise HTTPException(status_code=400, detail="Driver ID required when transport is enabled.")
+            driver = db.query(Transport).filter(
+                Transport.id == data.driver_id,
+                Transport.school_id == school_id
+            ).first()
+            if not driver:
+                raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
+        else:
+            student.driver_id = None
+
+    # Handle optional profile image
+    if data.profile_image:
+        try:
+            profile_pic_url = upload_base64_to_s3(data.profile_image, f"students/{school_id}/profile")
+            student.profile_image = profile_pic_url
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
+
+    # Update only provided & allowed fields
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if field in allowed_fields and value is not None:
+            setattr(student, field, value)
+
+    # Update User.name if name changed
+    user = db.query(User).filter(User.id == student.user_id).first()
+    if user:
+        new_name = f"{student.first_name or ''} {student.last_name or ''}".strip()
+        if new_name:
+            user.name = new_name
+
+    try:
+        db.commit()
+        db.refresh(student)
+        return {"detail": "Student profile updated successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update student: {str(e)}")
+
+
 
 @router.patch("/students/{student_id}/status")
 def update_student_status(

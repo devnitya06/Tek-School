@@ -231,6 +231,11 @@ class ExamListResponse(BaseModel):
     model_config = {
         "from_attributes": True
     } 
+class ExamDetailResponse(ExamListResponse):
+    school_id: str
+    chapters: List[int]  # override chapters type if needed
+    pass_percentage: float  # override type if needed
+    created_by: Optional[str] = None  # make optional if needed
 
 class ExamPublishResponse(BaseModel):
     exam_id: str
@@ -262,6 +267,29 @@ class StudentExamSubmitRequest(BaseModel):
 class McqResponse(McqCreate):
     id: int
     exam_id: str
+
+    model_config = {
+        "from_attributes": True
+    } 
+
+class LeaveCreate(BaseModel):
+    subject: str
+    start_date: date
+    end_date: date
+    description: Optional[str] = None
+    attach_file: Optional[str] = None
+
+class LeaveStatusUpdate(BaseModel):
+    status: str
+class LeaveResponse(BaseModel):
+    id: int
+    subject: str
+    start_date: date
+    end_date: date
+    description: Optional[str]
+    status: str
+    user_id: int
+    role: str
 
     model_config = {
         "from_attributes": True

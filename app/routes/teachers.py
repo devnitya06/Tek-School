@@ -4,7 +4,7 @@ from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.school import School,Attendance,Class,Section,Subject,Exam
 from app.schemas.users import UserRole
-from app.schemas.teachers import TeacherCreateRequest,TeacherResponse
+from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -123,6 +123,8 @@ def get_all_teachers_for_school(
     teacher_name: str | None = Query(None, description="Filter by teacher name"),
     teacher_id: str | None = Query(None, description="Filter by teacher ID"),
     class_name: str | None = Query(None, description="Filter by class name"),
+    section_name: str | None = Query(None, description="Filter by section name"),
+    subject_name: str | None = Query(None, description="Filter by subject name"),
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can access this resource.")
@@ -185,16 +187,25 @@ def get_all_teachers_for_school(
             func.concat(Teacher.first_name, " ", Teacher.last_name).ilike(f"%{teacher_name}%")
         )
 
-    if class_name:
-        # Join with Class only if class_name filter is used
+    if class_name or section_name or subject_name:
         base_query = (
             base_query.join(
                 TeacherClassSectionSubject,
                 Teacher.id == TeacherClassSectionSubject.teacher_id
             )
             .join(Class, TeacherClassSectionSubject.class_id == Class.id)
-            .filter(Class.name.ilike(f"%{class_name}%"))
+            .join(Section, TeacherClassSectionSubject.section_id == Section.id)
+            .join(Subject, TeacherClassSectionSubject.subject_id == Subject.id)
         )
+
+        if class_name:
+            base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
+
+        if section_name:
+            base_query = base_query.filter(Section.name.ilike(f"%{section_name}%"))
+
+        if subject_name:
+            base_query = base_query.filter(Subject.name.ilike(f"%{subject_name}%"))
 
     # --- Count & Pagination ---
     total_count = base_query.count()
@@ -252,6 +263,8 @@ def get_teacher_profile(
 
     return {
         "id": teacher.id,
+        "school_id": teacher.school_id,
+        "school_name": teacher.school.school_name if teacher.school else None,
         "profile_image": teacher.profile_image,
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
@@ -314,6 +327,88 @@ def get_teacher_by_id(
         "created_at": teacher.created_at,
         "assignments": detailed_assignments
     }
+
+@router.patch("/teacher/{teacher_id}")
+def update_teacher_profile(
+    teacher_id: str,
+    data: TeacherUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Partially update teacher profile (school user only).
+    Fields not provided in request remain unchanged.
+    """
+
+    # Only school can update
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only schools can update teacher profiles."
+        )
+
+    # Fetch school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    # Fetch teacher under this school
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id,
+        Teacher.school_id == school.id
+    ).first()
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher not found or doesn't belong to your school."
+        )
+
+    try:
+        # Handle profile image upload if provided
+        if data.profile_image:
+            try:
+                teacher.profile_image = upload_base64_to_s3(
+                    data.profile_image,
+                    f"schools/{current_user.id}/teachers/profile"
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
+
+        # Update only provided fields (excluding profile_image and assignments)
+        update_fields = data.model_dump(exclude_unset=True, exclude={"profile_image", "assignments"})
+        for field, value in update_fields.items():
+            setattr(teacher, field, value)
+
+        # Handle assignments if provided
+        if data.assignments is not None:
+            # Delete existing assignments
+            db.query(TeacherClassSectionSubject).filter(
+                TeacherClassSectionSubject.teacher_id == teacher.id
+            ).delete()
+            # Add new assignments
+            new_assignments = [
+                TeacherClassSectionSubject(
+                    teacher_id=teacher.id,
+                    class_id=item.class_id,
+                    section_id=item.section_id,
+                    subject_id=item.subject_id,
+                    school_id=school.id
+                )
+                for item in data.assignments
+            ]
+            db.bulk_save_objects(new_assignments)
+
+        db.commit()
+        db.refresh(teacher)
+
+        return {
+            "detail": "Teacher profile updated successfully."
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 
 @router.put("/teacher/{teacher_id}/inactive")
 def inactive_teacher(
