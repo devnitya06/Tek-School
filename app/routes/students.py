@@ -13,7 +13,7 @@ from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,date
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
@@ -24,43 +24,51 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.SCHOOL:
+    # ✅ Allow only SCHOOL or TEACHER
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only schools can create students."
+            detail="Only schools or teachers can create students."
         )
 
-    # Ensure email doesn't already exist
+    # ✅ Get the correct school_id based on the role
+    if current_user.role == UserRole.SCHOOL:
+        school = getattr(current_user, "school_profile", None)
+        if not school:
+            raise HTTPException(status_code=400, detail="School profile not found.")
+        school_id = school.id
+    else:  # current_user.role == UserRole.TEACHER
+        teacher = getattr(current_user, "teacher_profile", None)
+        if not teacher:
+            raise HTTPException(status_code=400, detail="Teacher profile not found.")
+        school_id = teacher.school_id
+
+    # ✅ Check if email already exists
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists.")
 
-    # Get the school profile for the current user
-    school = getattr(current_user, "school_profile", None)
-    if not school:
-        raise HTTPException(status_code=400, detail="School profile not found.")
-
-    # Validate transport requirement
+    # ✅ Validate transport if enabled
     if data.is_transport:
         if not data.driver_id:
             raise HTTPException(status_code=400, detail="Driver ID is required when transport is enabled.")
         driver = db.query(Transport).filter(
             Transport.id == data.driver_id,
-            Transport.school_id == school.id
+            Transport.school_id == school_id
         ).first()
         if not driver:
             raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
 
     try:
-        # Step 1: Upload student profile image if provided
+        # ✅ Upload student profile image (if provided)
         profile_pic_url = None
         if data.profile_image:
             try:
-                profile_pic_url =upload_base64_to_s3(data.profile_image, f"students/{school.id}/profile")
+                profile_pic_url = upload_base64_to_s3(data.profile_image, f"students/{school_id}/profile")
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
 
-        # Step 2: Create User for the student
+        # ✅ Create User for the student
         user = User(
             name=f"{data.first_name} {data.last_name}",
             email=data.email,
@@ -69,7 +77,7 @@ def create_student(
         db.add(user)
         db.flush()  # ensures user.id is available
 
-        # Step 3: Create Student profile
+        # ✅ Create Student profile
         student = Student(
             first_name=data.first_name,
             last_name=data.last_name,
@@ -81,18 +89,18 @@ def create_student(
             is_transport=data.is_transport,
             driver_id=data.driver_id,
             user_id=user.id,
-            school_id=school.id,
+            school_id=school_id,
             profile_image=profile_pic_url,
             status=StudentStatus.TRIAL,
             status_expiry_date=datetime.utcnow() + timedelta(days=15)
         )
+
         db.add(student)
-        # Commit once at the end
         db.commit()
         db.refresh(user)
         db.refresh(student)
 
-        # Step 5: Send verification email
+        # ✅ Send verification email
         token = create_verification_token(user.id)
         verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
 
@@ -108,7 +116,7 @@ def create_student(
         )
 
         return {
-            "detail": "Student account created. OTP sent to student's email.",
+            "detail": "Student account created. Verification email sent.",
             "student_id": student.id,
             "user_id": user.id,
             "profile_pic_url": profile_pic_url
@@ -117,7 +125,6 @@ def create_student(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create student: {str(e)}")
-
 
 @router.post("/students/{student_id}/activate")
 def activate_student(student_id: int, db: Session = Depends(get_db)):
@@ -299,6 +306,7 @@ def get_students(
             "rank": rank or None,
             "status": student.status.value,
             "status_expiry_date": student.status_expiry_date,
+            "is_present_today": any(att.is_today_present for att in student.attendances if att.date == date.today()) if student.attendances else False 
         }
         for index, (student, attendance_count, exam_count, rank) in enumerate(students)
     ]

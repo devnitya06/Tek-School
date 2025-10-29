@@ -65,11 +65,20 @@ class SchoolProfileUpdate(BaseModel):
     principal_phone: Optional[str]
 
 
+# class ClassWithSubjectCreate(BaseModel):
+#     class_name: str
+#     sections: List[str]
+#     subjects: List[str]
+#     extra_curriculums: List[str] 
+class SubjectItem(BaseModel):
+    name: str
+    school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
+
 class ClassWithSubjectCreate(BaseModel):
     class_name: str
     sections: List[str]
-    subjects: List[str]
-    extra_curriculums: List[str]    
+    subjects: List[SubjectItem]  # 🧠 now supports name + school_class_subject_id
+    extra_curriculums: List[str]   
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]
@@ -125,7 +134,7 @@ class AttendanceCreate(BaseModel):
     date: date
     status: str = Field(..., max_length=1)
     is_verified:bool =Field(default=True)
-
+    is_today_present: bool=Field(default=False)
     model_config = {
         "from_attributes": True
     } 
@@ -185,7 +194,7 @@ class ExamStatusEnum(str, Enum):
     DECLINED = "declined"
 class ExamCreateRequest(BaseModel):
     class_id: int
-    sections: List[int]
+    sections: Optional[List[int]] = None
     chapters: List[int]
     exam_type: ExamTypeEnum
     no_of_questions: int
@@ -197,16 +206,17 @@ class ExamCreateRequest(BaseModel):
     status: Optional[ExamStatusEnum] = ExamStatusEnum.PENDING
 
 class ExamUpdateRequest(BaseModel):
-    exam_type: Optional[str] = None
-    class_id: Optional[str] = None
-    section_ids: Optional[List[str]] = None
-    chapters: Optional[List[str]] = None
+    exam_type: Optional[ExamTypeEnum] = None
+    class_id: Optional[int] = None
+    section_ids: Optional[List[int]] = None
+    chapters: Optional[List[int]] = None
     no_of_questions: Optional[int] = None
+    question_time: Optional[int] = None
     pass_percentage: Optional[float] = None
     exam_activation_date: Optional[datetime] = None
     inactive_date: Optional[datetime] = None
     max_repeat: Optional[int] = None
-    status: Optional[str] = None
+    status: Optional[ExamStatusEnum] = None
 
 
 class ExamListResponse(BaseModel):
@@ -294,3 +304,29 @@ class LeaveResponse(BaseModel):
     model_config = {
         "from_attributes": True
     } 
+# ---------------- Home Task ----------------
+class AssignmentTaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    file: Optional[str] = None
+
+
+class HomeAssignmentCreate(BaseModel):
+    task_title: str
+    # description: Optional[str] = None
+    # file: Optional[str] = None
+    task_type: str
+    chapter_id: int
+    tasks: List[AssignmentTaskCreate]
+    student_ids: Optional[List[int]] = None
+
+class StudentHomeTaskListResponse(BaseModel):
+    id: int
+    teacher_name: str
+    subject_name: str
+    chapter_name: str
+    task_type: str
+    created_at: datetime
+    status: str
+    no_of_tasks_completed: int
+    no_of_tasks_incomplete: int

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject
-from app.models.school import School,Attendance,Class,Section,Subject,Exam
+from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
 from app.schemas.users import UserRole
 from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest
 from sqlalchemy.exc import SQLAlchemyError
@@ -491,21 +491,44 @@ def get_teacher_sections(
 
 @router.get("/subjects")
 def get_teacher_subjects(
-    current_user: User = Depends(get_current_user), 
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.TEACHER:
         raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
 
+    # Get teacher
     teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found")
 
+    # Get all subject_ids assigned to this teacher
     assignments = db.query(TeacherClassSectionSubject).filter(
         TeacherClassSectionSubject.teacher_id == teacher.id
     ).all()
-
+    
     subject_ids = {a.subject_id for a in assignments}
-    subjects = db.query(Subject).filter(Subject.id.in_(subject_ids)).all()
+    if not subject_ids:
+        return []
 
-    return [{"id": sub.id, "name": sub.name} for sub in subjects]
+    # Join Subject with class_subjects to get school_class_subject_id
+    results = db.query(
+        Subject.id.label("subject_id"),
+        Subject.name.label("subject_name"),
+        class_subjects.c.school_class_subject_id
+    ).join(
+        class_subjects,
+        class_subjects.c.subject_id == Subject.id
+    ).filter(
+        Subject.id.in_(subject_ids)
+    ).all()
+
+    # Return in structured format
+    return [
+        {
+            "id": r.subject_id,
+            "name": r.subject_name,
+            "school_class_subject_id": r.school_class_subject_id
+        }
+        for r in results
+    ]

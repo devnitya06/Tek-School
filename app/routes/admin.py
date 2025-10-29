@@ -15,6 +15,7 @@ from app.utils.permission import require_roles
 from app.schemas.users import UserRole
 from sqlalchemy import func
 from collections import defaultdict
+from app.core.dependencies import get_current_user
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -469,18 +470,23 @@ def list_class_subjects(
             detail=f"Database error occurred: {str(e)}"
         )
 @router.get("/subjects/{subject_id}/chapters/")
-def admin_get_chapters_by_subject(
+def get_chapters_by_subject(
     subject_id: int,
     limit: int = 10,
     offset: int = 0,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(get_current_user),
 ):
     """
-    ✅ Admin: View all chapters under a given subject.
+    ✅ View all chapters under a given subject.
+    - Admin, School, Student roles allowed.
     - Shows chapter name, video count, created date.
     - Paginated.
     """
+
+    # ✅ Role check
+    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # ✅ Validate subject exists
     subject = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == subject_id).first()
@@ -650,12 +656,13 @@ def update_chapter(
 def get_chapter_details(
     chapter_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN))
+    current_user = Depends(get_current_user)  # allow all roles
 ):
-    if current_user.role != UserRole.ADMIN:
+    # ✅ Role check: only allow Admin, School, Teacher, Student
+    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to view chapters."
+            detail="You do not have permission to view this chapter."
         )
 
     try:
@@ -723,8 +730,10 @@ def get_classes_with_subject_names(
         # Group subjects by class
         classes_dict = defaultdict(list)
         for cs in class_subjects:
-            key = cs.class_name
-            classes_dict[key].append(cs.subject)
+            classes_dict[cs.class_name].append({
+                "name": cs.subject,
+                "school_class_subject_id": cs.id  # assuming id is the PK
+            })
 
         # Format final structured response
         result = []

@@ -6,6 +6,7 @@ from enum import Enum
 from sqlalchemy import Enum as SQLEnum
 from datetime import datetime
 from sqlalchemy.sql import func
+from datetime import date
 
 class SchoolType(str, Enum):
     PVT = "private"
@@ -98,7 +99,8 @@ class_subjects = Table(
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("subject_id", Integer, ForeignKey("subjects.id")),
-    Column("school_id", String, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id")),
+    Column("school_class_subject_id", Integer, ForeignKey("school_classes_subjects.id", ondelete="SET NULL"), nullable=True)
 )
 
 
@@ -230,11 +232,15 @@ class Attendance(Base):
     is_verified = Column(Boolean, nullable=True)
     student = relationship("Student", back_populates="attendances")
     teacher = relationship("Teacher", back_populates="attendances")
+    is_today_present = Column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
         UniqueConstraint('student_id','date', name='uq_student_attendance'),
         UniqueConstraint('teachers_id','date', name='uq_teacher_attendance'),
     )
+    def update_today_status(self):
+        """Automatically set is_today_present based on whether date == today."""
+        self.is_today_present = (self.date == date.today())
 
 class WeekDay(Enum):
     MONDAY = "Monday"
@@ -454,3 +460,111 @@ class LeaveRequest(Base):
 
     def __repr__(self):
         return f"<LeaveRequest(subject={self.subject}, status={self.status})>"
+
+# ---------------- Home Task ----------------
+class AssignmentStatus(str, Enum):
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+
+
+# ---------------- MAIN HOME ASSIGNMENT ----------------
+class HomeAssignment(Base):
+    __tablename__ = "home_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_title = Column(String(255), nullable=False)
+    task_type = Column(String(100), nullable=False)
+
+    class_id = Column(Integer, ForeignKey("classes.id", ondelete="SET NULL"))
+    section_id = Column(Integer, ForeignKey("sections.id", ondelete="SET NULL"))
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"))
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="SET NULL"))
+
+    assigned_to_count = Column(Integer, default=0)
+    responded_count = Column(Integer, default=0)
+    status = Column(SQLEnum(AssignmentStatus), default=AssignmentStatus.IN_PROGRESS)
+
+    date_assigned = Column(DateTime, default=datetime.utcnow)
+
+    teacher_id = Column(String, ForeignKey("teachers.id", ondelete="CASCADE"))
+    teacher = relationship("Teacher", back_populates="home_assignments")
+
+    # Relationship to individual tasks
+    tasks = relationship(
+        "AssignmentTask",
+        back_populates="assignment",
+        cascade="all, delete-orphan"
+    )
+
+    # Relationship to assigned students
+    assigned_students = relationship(
+        "AssignmentStudent",
+        back_populates="assignment",
+        cascade="all, delete-orphan"
+    )
+
+
+# ---------------- ASSIGNMENT TASKS ----------------
+class AssignmentTask(Base):
+    __tablename__ = "assignment_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    file = Column(String(255), nullable=True)
+
+    assignment_id = Column(Integer, ForeignKey("home_assignments.id", ondelete="CASCADE"))
+    assignment = relationship("HomeAssignment", back_populates="tasks")
+
+    # Each student's completion status for this task
+    student_task_statuses = relationship(
+        "StudentTaskStatus",
+        back_populates="task",
+        cascade="all, delete-orphan"
+    )
+
+
+# ---------------- ASSIGNED STUDENTS ----------------
+class AssignmentStudent(Base):
+    __tablename__ = "assignment_students"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("home_assignments.id", ondelete="CASCADE"))
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"))
+
+    assigned_date = Column(DateTime, default=datetime.utcnow)
+    status = Column(SQLEnum(AssignmentStatus), default=AssignmentStatus.IN_PROGRESS)
+
+    # Relationships
+    assignment = relationship("HomeAssignment", back_populates="assigned_students")
+    student = relationship("Student", back_populates="student_assignments")
+
+    # Student task statuses under this assignment
+    student_tasks = relationship(
+        "StudentTaskStatus",
+        back_populates="assignment_student",
+        cascade="all, delete-orphan"
+    )
+
+
+# ---------------- STUDENT TASK STATUS ----------------
+class StudentTaskStatus(Base):
+    __tablename__ = "student_task_statuses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_student_id = Column(Integer, ForeignKey("assignment_students.id", ondelete="CASCADE"))
+    task_id = Column(Integer, ForeignKey("assignment_tasks.id", ondelete="CASCADE"))
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"))
+
+    status = Column(SQLEnum(TaskStatus), default=TaskStatus.PENDING)
+    completed_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    assignment_student = relationship("AssignmentStudent", back_populates="student_tasks")
+    task = relationship("AssignmentTask", back_populates="student_task_statuses")
+    student = relationship("Student", back_populates="student_task_statuses")

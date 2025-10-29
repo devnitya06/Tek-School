@@ -1,14 +1,25 @@
-from datetime import datetime
+from datetime import datetime,date
 from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student
-from app.models.school import School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,LeaveRequest,LeaveStatus
+from app.models.school import (
+    School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,
+    class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,
+    Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,
+    TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,
+    LeaveRequest,LeaveStatus,AssignmentStatus,HomeAssignment,AssignmentStudent,AssignmentTask,StudentTaskStatus)
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
-from app.schemas.school import ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse
+from app.schemas.school import (
+    ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,
+    PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,
+    PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
+    McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
+    TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,StudentHomeTaskListResponse)
+from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
-from sqlalchemy import delete, insert,extract
+from sqlalchemy import delete, insert,extract,case
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
@@ -180,60 +191,169 @@ async def get_school_profile(
         "created_at": school.created_at,
     }
 
-@router.post("/create-class-with-subjects/")
+# @router.post("/create-class-with-subjects/")
+# def create_class(
+#     class_data: ClassWithSubjectCreate,
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)):
+    
+#     if current_user.role != UserRole.SCHOOL:
+#         raise HTTPException(
+#             status_code=status.HTTP_403_FORBIDDEN,
+#             detail="Only school users can create classes"
+#         )
+        
+#     # Get the school associated with the current user
+#     school = db.query(School).filter(School.user_id == current_user.id).first()
+#     if not school:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="School not found for this user"
+#         )    
+#     # Check if class with same name already exists in this school
+#     existing_class = db.query(Class).filter(
+#         Class.name == class_data.class_name,
+#         Class.school_id == school.id
+#     ).first()
+    
+#     if existing_class:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=f"Class '{class_data.class_name}' already exists in this school"
+#         )
+    
+#     # Create the new class
+#     new_class = Class(
+#         name=class_data.class_name,
+#         school_id=school.id
+#     )
+#     db.add(new_class)
+#     db.commit()
+#     db.refresh(new_class)
+    
+#     # Process sections
+#     for section_name in class_data.sections:
+#         section = db.query(Section).filter(
+#             Section.name == section_name,
+#             Section.school_id == school.id
+#         ).first()
+        
+#         if not section:
+#             section = Section(name=section_name, school_id=school.id)
+#             db.add(section)
+#             db.commit()
+#             db.refresh(section)
+        
+#         # Associate section with class
+#         db.execute(
+#             class_section.insert().values(
+#                 class_id=new_class.id,
+#                 section_id=section.id,
+#                 school_id=school.id
+#             )
+#         )
+    
+#     # Process subjects
+#     for subject_name in class_data.subjects:
+#         subject = db.query(Subject).filter(
+#             Subject.name == subject_name,
+#             Subject.school_id == school.id
+#         ).first()
+        
+#         if not subject:
+#             subject = Subject(name=subject_name, school_id=school.id)
+#             db.add(subject)
+#             db.commit()
+#             db.refresh(subject)
+        
+#         # Associate subject with class
+#         db.execute(
+#             class_subjects.insert().values(
+#                 class_id=new_class.id,
+#                 subject_id=subject.id,
+#                 school_id=school.id
+#             )
+#         )
+    
+    
+#     # Process extracurricular activities
+#     for activity_name in class_data.extra_curriculums:
+#         activity = db.query(ExtraCurricularActivity).filter(
+#             ExtraCurricularActivity.name == activity_name,
+#             ExtraCurricularActivity.school_id == school.id
+#         ).first()
+        
+#         if not activity:
+#             activity = ExtraCurricularActivity(name=activity_name, school_id=school.id)
+#             db.add(activity)
+#             db.commit()
+#             db.refresh(activity)
+        
+#         db.execute(
+#             class_extra_curricular.insert().values(
+#                 class_id=new_class.id,
+#                 activity_id=activity.id,
+#                 school_id=school.id
+#             )
+#         )
+    
+#     db.commit()
+    
+#     return {
+#         "detail": "Class created successfully with all associated data",
+#         "class_id": new_class.id,
+#         "class_name": new_class.name
+#     }
+
+@router.post("/create-class-with-subjects/", status_code=status.HTTP_201_CREATED)
 def create_class(
     class_data: ClassWithSubjectCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)):
-    
+    db: Session = Depends(get_db)
+):
+    # ✅ Only school users
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school users can create classes"
         )
-        
-    # Get the school associated with the current user
+
+    # ✅ Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found for this user"
-        )    
-    # Check if class with same name already exists in this school
+        raise HTTPException(status_code=404, detail="School not found")
+
+    # ✅ Check duplicate class
     existing_class = db.query(Class).filter(
         Class.name == class_data.class_name,
         Class.school_id == school.id
     ).first()
-    
     if existing_class:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail=f"Class '{class_data.class_name}' already exists in this school"
         )
-    
-    # Create the new class
-    new_class = Class(
-        name=class_data.class_name,
-        school_id=school.id
-    )
+
+    # ✅ Create new class
+    new_class = Class(name=class_data.class_name, school_id=school.id)
     db.add(new_class)
     db.commit()
     db.refresh(new_class)
-    
-    # Process sections
+
+    # --- Process Sections ---
     for section_name in class_data.sections:
         section = db.query(Section).filter(
             Section.name == section_name,
             Section.school_id == school.id
         ).first()
-        
+
         if not section:
             section = Section(name=section_name, school_id=school.id)
             db.add(section)
             db.commit()
             db.refresh(section)
-        
-        # Associate section with class
+
+        # Link section with class
         db.execute(
             class_section.insert().values(
                 class_id=new_class.id,
@@ -241,43 +361,45 @@ def create_class(
                 school_id=school.id
             )
         )
-    
-    # Process subjects
-    for subject_name in class_data.subjects:
+
+    # --- Process Subjects ---
+    for subject_item in class_data.subjects:
+        # subject_item: {"name": "Maths", "school_class_subject_id": 1}
         subject = db.query(Subject).filter(
-            Subject.name == subject_name,
+            Subject.name == subject_item.name,
             Subject.school_id == school.id
         ).first()
-        
+
         if not subject:
-            subject = Subject(name=subject_name, school_id=school.id)
+            subject = Subject(name=subject_item.name, school_id=school.id)
             db.add(subject)
             db.commit()
             db.refresh(subject)
-        
-        # Associate subject with class
+
+        # Link subject with class + school_class_subject_id
         db.execute(
             class_subjects.insert().values(
                 class_id=new_class.id,
                 subject_id=subject.id,
-                school_id=school.id
+                school_id=school.id,
+                school_class_subject_id=subject_item.school_class_subject_id
             )
         )
-    
-    
-    # Process extracurricular activities
+
+    # --- Process Extra-curricular activities ---
     for activity_name in class_data.extra_curriculums:
         activity = db.query(ExtraCurricularActivity).filter(
             ExtraCurricularActivity.name == activity_name,
             ExtraCurricularActivity.school_id == school.id
         ).first()
-        
+
         if not activity:
             activity = ExtraCurricularActivity(name=activity_name, school_id=school.id)
             db.add(activity)
             db.commit()
             db.refresh(activity)
-        
+
+        # Link activity with class
         db.execute(
             class_extra_curricular.insert().values(
                 class_id=new_class.id,
@@ -285,9 +407,9 @@ def create_class(
                 school_id=school.id
             )
         )
-    
+
     db.commit()
-    
+
     return {
         "detail": "Class created successfully with all associated data",
         "class_id": new_class.id,
@@ -1030,7 +1152,9 @@ def create_attendance(
 ):
     start = timer()
     try:
-        # Teacher Attendance
+        is_verified = True  # Default for students unless overwritten later
+
+        # ✅ Handle Teacher Attendance
         if data.teachers_id:
             if current_user.role == UserRole.SCHOOL:
                 teacher = db.query(Teacher).filter(
@@ -1038,26 +1162,37 @@ def create_attendance(
                     Teacher.school_id == current_user.school_profile.id
                 ).first()
                 if not teacher:
-                    raise HTTPException(status_code=404, detail="Teacher not found or not in your school.")
-            
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Teacher not found or not in your school."
+                    )
+
             elif current_user.role == UserRole.TEACHER:
-                if current_user.teacher_profile.id != data.teachers_id:
-                    raise HTTPException(status_code=403, detail="Teachers can only mark their own attendance.")
+                if str(current_user.teacher_profile.id) != str(data.teachers_id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Teachers can only mark their own attendance."
+                    )
 
             existing = db.query(Attendance).filter_by(
                 teachers_id=data.teachers_id,
                 date=data.date
             ).first()
             if existing:
-                raise HTTPException(status_code=400, detail="Attendance already recorded for this teacher on this date.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Attendance already recorded for this teacher on this date."
+                )
 
-            is_verified = False  # must be verified later by school
+            is_verified = False  # Teacher attendance must be verified later by school
 
-        # Student Attendance
+        # ✅ Handle Student Attendance
         elif data.student_id:
             school_id = (
-                current_user.school_profile.id if current_user.role == UserRole.SCHOOL
-                else current_user.teacher_profile.school_id if current_user.role == UserRole.TEACHER
+                current_user.school_profile.id
+                if current_user.role == UserRole.SCHOOL
+                else current_user.teacher_profile.school_id
+                if current_user.role == UserRole.TEACHER
                 else None
             )
             if not school_id:
@@ -1068,37 +1203,57 @@ def create_attendance(
                 Student.school_id == school_id
             ).first()
             if not student:
-                raise HTTPException(status_code=404, detail="Student not found or not in your school.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Student not found or not in your school."
+                )
 
             existing = db.query(Attendance).filter_by(
                 student_id=data.student_id,
                 date=data.date
             ).first()
             if existing:
-                raise HTTPException(status_code=400, detail="Attendance already recorded for this student on this date.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Attendance already recorded for this student on this date."
+                )
 
-            is_verified = True  # student attendance does not need verification
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either student_id or teachers_id is required."
+            )
 
+        # ✅ Determine if today’s attendance
+        is_today_present = data.date == date.today()
+
+        # ✅ Create Attendance Record
         attendance = Attendance(
             student_id=data.student_id,
             teachers_id=data.teachers_id,
             date=data.date,
             status=data.status,
-            is_verified=is_verified
+            is_verified=is_verified,
+            is_today_present=is_today_present,  # 👈 NEW FIELD
         )
+
         db.add(attendance)
         db.commit()
         db.refresh(attendance)
 
         end = timer()
         return {
-            "detail": "Attendance recorded successfully",
+            "detail": "Attendance recorded successfully.",
             "id": attendance.id,
+            "is_today_present": attendance.is_today_present,
             "time_taken": round(end - start, 4)
         }
 
     except HTTPException:
         raise
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
@@ -1632,28 +1787,40 @@ def transfer_school_credit(
 def create_exam(
     data: ExamCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
+    # ✅ Only teachers can create exams
     if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403, detail="Only teachers can create exams.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only teachers can create exams."
+        )
 
     teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
     if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Teacher profile not found."
+        )
 
-    # ✅ Enforce business logic
+    # ✅ Enforce business logic for max_repeat
     max_repeat = 1 if data.exam_type == "rank" else data.max_repeat
 
     try:
-        # ✅ Fetch actual Section objects
-        section_objs = db.query(Section).filter(Section.id.in_(data.sections)).all()
-        if not section_objs:
-            raise HTTPException(status_code=404, detail="No valid sections found.")
+        section_objs = []
+        # ✅ Only fetch sections if provided
+        if data.sections:
+            section_objs = db.query(Section).filter(Section.id.in_(data.sections)).all()
+            if not section_objs:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No valid sections found."
+                )
 
+        # ✅ Create exam record
         exam = Exam(
             school_id=teacher.school_id,
             class_id=data.class_id,
-            chapters=data.chapters,
             exam_type=data.exam_type,
             no_of_questions=data.no_of_questions,
             question_time=data.question_time,
@@ -1663,8 +1830,21 @@ def create_exam(
             max_repeat=max_repeat,
             status=data.status,
             created_by=teacher.id,
-            sections=section_objs
         )
+
+        # ✅ Attach sections only if any
+        if section_objs:
+            exam.sections = section_objs
+
+        # ✅ Attach chapters if your model uses a relationship
+        if data.chapters:
+            chapter_objs = db.query(Chapter).filter(Chapter.id.in_(data.chapters)).all()
+            if not chapter_objs:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No valid chapters found."
+                )
+            exam.chapters = chapter_objs
 
         db.add(exam)
         db.commit()
@@ -1677,37 +1857,43 @@ def create_exam(
 
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )
     
-@router.get("/exams/", response_model=List[ExamListResponse])
+@router.get("/exams/")
 def list_exams(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    pagination: PaginationParams = Depends(),
 ):
+    # ----- SCHOOL -----
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found")
-        
-        exams = (
+
+        query = (
             db.query(Exam)
             .filter(
                 Exam.school_id == school.id,
                 Exam.is_published == True
             )
-            .all()
         )
 
+    # ----- TEACHER -----
     elif current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
-        exams = db.query(Exam).filter(Exam.created_by == teacher.id).all()
+        query = db.query(Exam).filter(Exam.created_by == teacher.id)
 
+    # ----- STUDENT -----
     elif current_user.role == UserRole.STUDENT:
         student = db.query(Student).filter(Student.user_id == current_user.id).first()
         if not student:
             raise HTTPException(status_code=404, detail="Student profile not found")
-    
-        exams = (
+
+        query = (
             db.query(Exam)
             .join(Exam.sections)
             .filter(
@@ -1717,14 +1903,22 @@ def list_exams(
                 Exam.status == ExamStatusEnum.ACTIVE,
                 Exam.is_published == True
             )
-            .all()
         )
 
     else:
         raise HTTPException(status_code=403, detail="Invalid role for viewing exams.")
 
-    # Serialize response
-    response = [
+    # ✅ Apply pagination
+    total_count = query.count()
+    exams = (
+        query.order_by(Exam.created_at.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # ✅ Serialize response
+    exam_list = [
         ExamListResponse(
             id=exam.id,
             exam_type=exam.exam_type,
@@ -1747,7 +1941,9 @@ def list_exams(
         )
         for exam in exams
     ]
-    return response
+
+    # ✅ Return paginated response
+    return pagination.format_response(exam_list, total_count)
 @router.get("/exams/{exam_id}/", response_model=ExamDetailResponse)
 def get_exam_detail(
     exam_id: str,
@@ -1824,26 +2020,74 @@ def update_exam(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Only school users should be allowed to update
-    if current_user.role != "school":
-        raise HTTPException(status_code=403, detail="Not authorized to update exam")
+    # ✅ Only school users can update exams
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update exam."
+        )
 
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exam not found."
+        )
 
-    # update only provided fields
-    update_data = data.dict(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(exam, key, value)
+    try:
+        # ✅ Update basic scalar fields
+        update_data = data.dict(exclude_unset=True)
 
-    # enforce business rule
-    if data.exam_type == "rank":
-        exam.max_repeat = 1
+        # Remove relationship fields from direct setattr update
+        sections_data = update_data.pop("sections", None)
+        chapters_data = update_data.pop("chapters", None)
 
-    db.commit()
-    db.refresh(exam)
-    return exam
+        for key, value in update_data.items():
+            setattr(exam, key, value)
+
+        # ✅ Update sections if provided
+        if sections_data is not None:
+            section_objs = (
+                db.query(Section)
+                .filter(Section.id.in_(sections_data))
+                .all()
+            )
+            if not section_objs and sections_data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No valid sections found."
+                )
+            exam.sections = section_objs
+
+        # ✅ Update chapters if provided
+        if chapters_data is not None:
+            chapter_objs = (
+                db.query(Chapter)
+                .filter(Chapter.id.in_(chapters_data))
+                .all()
+            )
+            if not chapter_objs and chapters_data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No valid chapters found."
+                )
+            exam.chapters = chapter_objs
+
+        # ✅ Enforce business rule: rank exams can only have 1 repeat
+        if data.exam_type == ExamTypeEnum.RANK:
+            exam.max_repeat = 1
+
+        db.commit()
+        db.refresh(exam)
+
+        return {"detail": "Exam updated successfully.", "exam_id": exam.id}
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )
 
 
 # ✅ Delete Exam
@@ -2179,7 +2423,7 @@ def create_leave_request(
 
     return {
         "status": "success",
-        "message": "Leave request sent successfully",
+        "detail": "Leave request sent successfully",
         "data": {
             "leave_id": leave.id,
             "subject": leave.subject,
@@ -2327,5 +2571,555 @@ def update_leave_status(
 
     return {
         "status": "success",
-        "message": f"Leave request has been {status_value} successfully"
+        "detail": f"Leave request has been {status_value} successfully"
+    }
+
+@router.post("/create-home-task/")
+def create_home_task(
+    data: HomeAssignmentCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.TEACHER))
+):
+    teacher = current_user.teacher_profile
+    if not teacher:
+        raise HTTPException(status_code=400, detail="Teacher profile not found.")
+
+    # ✅ Get chapter details
+    chapter = db.query(Chapter).filter(Chapter.id == data.chapter_id).first()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found.")
+
+    # ✅ Fetch class & subject info using the class_subjects table
+    class_subject = db.query(Class).join(
+        class_subjects,
+        Class.id == class_subjects.c.class_id
+    ).join(
+        Subject,
+        Subject.id == class_subjects.c.subject_id
+    ).filter(
+        class_subjects.c.school_class_subject_id == chapter.school_class_subject_id
+    ).add_columns(
+        Class.id.label("class_id"),
+        Subject.id.label("subject_id"),
+        Subject.name.label("subject_name"),
+        Class.name.label("class_name")
+    ).first()
+
+    if not class_subject:
+        raise HTTPException(status_code=404, detail="ClassSubject not found for this chapter.")
+
+    class_id = class_subject.class_id
+    subject_id = class_subject.subject_id
+
+    # ✅ Find all sections where this teacher teaches this subject in this class
+    teacher_sections = (
+        db.query(TeacherClassSectionSubject)
+        .filter(
+            TeacherClassSectionSubject.teacher_id == teacher.id,
+            TeacherClassSectionSubject.class_id == class_id,
+            TeacherClassSectionSubject.subject_id == subject_id
+        )
+        .all()
+    )
+
+    if not teacher_sections:
+        raise HTTPException(status_code=404, detail="No sections found for this teacher in this chapter.")
+
+    created_assignments = []
+
+    for entry in teacher_sections:
+        section = db.query(Section).filter(Section.id == entry.section_id).first()
+        if not section:
+            continue
+
+        # 1️⃣ Create HomeAssignment
+        home_assignment = HomeAssignment(
+            task_title=data.task_title,
+            # description=data.description,
+            # file=data.file,
+            task_type=data.task_type,
+            class_id=class_id,
+            section_id=section.id,
+            subject_id=subject_id,
+            chapter_id=chapter.id,
+            teacher_id=teacher.id,
+        )
+        db.add(home_assignment)
+        db.flush()
+
+        # 2️⃣ Create AssignmentTasks
+        for t in data.tasks:
+            assignment_task = AssignmentTask(
+                title=t.title,
+                description=t.description,
+                file=t.file,
+                assignment_id=home_assignment.id
+            )
+            db.add(assignment_task)
+
+        # 3️⃣ Fetch students (either passed IDs or all in section)
+        if data.student_ids:
+            # Only include students that are in this section
+            students_in_section = (
+                db.query(Student)
+                .filter(
+                    Student.id.in_(data.student_ids),
+                    Student.section_id == section.id,
+                    Student.class_id == class_id
+                )
+                .all()
+            )
+        else:
+            # Include all students in this section
+            students_in_section = (
+                db.query(Student)
+                .filter(Student.section_id == section.id, Student.class_id == class_id)
+                .all()
+            )
+
+        # 4️⃣ Create AssignmentStudent entries for each student
+        for student in students_in_section:
+            assignment_student = AssignmentStudent(
+                assignment_id=home_assignment.id,
+                student_id=student.id,
+                status=AssignmentStatus.IN_PROGRESS
+            )
+            db.add(assignment_student)
+
+        created_assignments.append({
+            "class_id": class_id,
+            "class_name": class_subject.class_name,
+            "section_id": section.id,
+            "section_name": section.name,
+            "subject_id": subject_id,
+            "subject_name": class_subject.subject_name,
+            "assignment_id": home_assignment.id,
+            "task_title": home_assignment.task_title,
+            "assigned_student_ids": [s.id for s in students_in_section]
+        })
+
+    db.commit()
+
+    return {
+        "detail": "Home assignments created successfully.",
+        "created_assignments": created_assignments
+    }
+
+
+@router.get("/home-task/")
+def get_hometask_list_sectionwise(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.TEACHER))
+):
+    """
+    Returns HomeAssignments list section-wise with aggregated student completion info.
+    Only for the current teacher.
+    """
+
+    teacher_id = current_user.teacher_profile.id
+
+    # Query HomeAssignments of this teacher
+    results = (
+    db.query(
+        HomeAssignment.id.label("assignment_id"),
+        Class.name.label("class_name"),
+        Subject.name.label("subject_name"),
+        Section.name.label("section_name"),
+        Chapter.title.label("chapter_title"),
+        HomeAssignment.date_assigned,
+        func.count(AssignmentStudent.id).label("total_assigned_students"),
+        func.sum(
+            case(
+                (AssignmentStudent.status == "completed", 1),
+                else_=0
+            )
+        ).label("completed_students")
+    )
+    .outerjoin(AssignmentStudent, AssignmentStudent.assignment_id == HomeAssignment.id)  # ✅ changed
+    .outerjoin(Class, Class.id == HomeAssignment.class_id)
+    .outerjoin(Section, Section.id == HomeAssignment.section_id)
+    .outerjoin(Subject, Subject.id == HomeAssignment.subject_id)
+    .outerjoin(Chapter, Chapter.id == HomeAssignment.chapter_id)
+    .filter(HomeAssignment.teacher_id == teacher_id)
+    .group_by(
+        HomeAssignment.id,
+        Class.name,
+        Subject.name,
+        Section.name,
+        Chapter.title,
+        HomeAssignment.date_assigned
+    )
+    .order_by(HomeAssignment.date_assigned.desc())
+    .all()
+    )
+    response = []
+    for r in results:
+        response.append({
+            "assignment_id": r.assignment_id,
+            "class_name": r.class_name,
+            "subject_name": r.subject_name,
+            "section_name": r.section_name,
+            "chapter_name": r.chapter_title,
+            "total_assigned_students": r.total_assigned_students,
+            "completed_students": r.completed_students or 0,
+            "date_created": r.date_assigned
+        })
+
+    return response
+
+@router.get("/home-task/{assignment_id}/details/")
+def get_hometask_details(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.TEACHER))
+):
+    """
+    Get details of a HomeAssignment, its tasks, and student list with their completion status.
+    """
+
+    # 1️⃣ Fetch the HomeAssignment and join related tables for names
+    assignment = (
+        db.query(
+            HomeAssignment.id,
+            HomeAssignment.task_title,
+            HomeAssignment.task_type,
+            HomeAssignment.date_assigned,
+            Class.name.label("class_name"),
+            Section.name.label("section_name"),
+            Subject.name.label("subject_name"),
+            Chapter.title.label("chapter_name")
+        )
+        .join(Class, Class.id == HomeAssignment.class_id)
+        .join(Section, Section.id == HomeAssignment.section_id)
+        .join(Subject, Subject.id == HomeAssignment.subject_id)
+        .join(Chapter, Chapter.id == HomeAssignment.chapter_id)
+        .filter(
+            HomeAssignment.id == assignment_id,
+            HomeAssignment.teacher_id == current_user.teacher_profile.id
+        )
+        .first()
+    )
+
+    if not assignment:
+        raise HTTPException(status_code=404, detail="HomeAssignment not found")
+
+    # 2️⃣ Fetch all tasks under this assignment
+    tasks = (
+        db.query(
+            AssignmentTask.id,
+            AssignmentTask.title,
+            AssignmentTask.description,
+            AssignmentTask.file
+        )
+        .filter(AssignmentTask.assignment_id == assignment.id)
+        .all()
+    )
+
+    tasks_list = [
+        {
+            "task_id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "file": t.file
+        } for t in tasks
+    ]
+
+    # 3️⃣ Fetch assigned students and their task completion info
+    assigned_students = (
+        db.query(
+            AssignmentStudent.id.label("assignment_student_id"),
+            Student.id.label("student_id"),
+            Student.first_name.label("student_name"),
+            AssignmentStudent.status.label("home_task_status"),
+            func.count(StudentTaskStatus.id).label("total_tasks"),
+            func.sum(
+                case(
+                    (StudentTaskStatus.status == "completed", 1),
+                    else_=0
+                )
+            ).label("completed_tasks")
+        )
+        .join(Student, Student.id == AssignmentStudent.student_id)
+        .outerjoin(
+            StudentTaskStatus,
+            StudentTaskStatus.assignment_student_id == AssignmentStudent.id
+        )
+        .filter(AssignmentStudent.assignment_id == assignment.id)
+        .group_by(
+            AssignmentStudent.id,
+            Student.id,
+            Student.first_name,
+            AssignmentStudent.status
+        )
+        .all()
+    )
+
+    student_list = []
+    for s in assigned_students:
+        pending_tasks = (s.total_tasks or 0) - (s.completed_tasks or 0)
+        student_list.append({
+            "student_id": s.student_id,
+            "student_name": s.student_name,
+            "home_task_status": s.home_task_status,
+            "total_tasks": s.total_tasks or 0,
+            "completed_tasks": s.completed_tasks or 0,
+            "pending_tasks": pending_tasks
+        })
+
+    # 4️⃣ Prepare response
+    response = {
+        "assignment_id": assignment.id,
+        "task_title": assignment.task_title,
+        "task_type": assignment.task_type,
+        "date_created": assignment.date_assigned,
+        "class_name": assignment.class_name,
+        "section_name": assignment.section_name,
+        "subject_name": assignment.subject_name,
+        "chapter_name": assignment.chapter_name,
+        "tasks": tasks_list,
+        "students": student_list
+    }
+
+    return response
+@router.get("/home-tasks/students/")
+def get_student_home_tasks(
+    teacher_name: Optional[str] = Query(None),
+    subject_name: Optional[str] = Query(None),
+    task_type: Optional[str] = Query(None),
+    from_date: Optional[datetime] = Query(None),
+    to_date: Optional[datetime] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT))
+):
+    """
+    Get all home tasks assigned to the current student.
+    Shows teacher, subject, chapter, task type, and completion status.
+    """
+
+    student = current_user.student_profile
+    if not student:
+        raise HTTPException(status_code=400, detail="Student profile not found.")
+
+    # Get all HomeAssignments assigned to this student
+    assignments = (
+        db.query(HomeAssignment)
+        .join(AssignmentStudent, AssignmentStudent.assignment_id == HomeAssignment.id)
+        .filter(AssignmentStudent.student_id == student.id)
+    )
+
+    # Apply filters
+    if task_type:
+        assignments = assignments.filter(HomeAssignment.task_type == task_type)
+    if from_date:
+        assignments = assignments.filter(HomeAssignment.date_assigned >= from_date)
+    if to_date:
+        assignments = assignments.filter(HomeAssignment.date_assigned <= to_date)
+
+    assignments = assignments.all()
+    response = []
+
+    for assignment in assignments:
+        # Fetch teacher name
+        teacher = db.query(Teacher).filter(Teacher.id == assignment.teacher_id).first()
+        teacher_name_val = teacher.first_name if teacher else None
+
+        # Fetch subject name
+        subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
+        subject_name_val = subject.name if subject else None
+
+        # Fetch chapter name
+        chapter = db.query(Chapter).filter(Chapter.id == assignment.chapter_id).first()
+        chapter_name_val = chapter.title if chapter else None
+
+        # Fetch tasks for this assignment with student completion
+        tasks = db.query(
+            AssignmentTask.id,
+            AssignmentTask.title,
+            AssignmentTask.description,
+            AssignmentTask.file,
+            func.coalesce(
+                func.max(
+                    case(
+                        (StudentTaskStatus.status == "completed", 1),
+                        else_=0
+                    )
+                ), 0
+            ).label("is_completed")
+        ).join(
+            StudentTaskStatus,
+            (StudentTaskStatus.task_id == AssignmentTask.id) &
+            (StudentTaskStatus.student_id == student.id),
+            isouter=True
+        ).filter(
+            AssignmentTask.assignment_id == assignment.id
+        ).group_by(AssignmentTask.id).all()
+
+        response.append({
+            "assignment_id": assignment.id,
+            "task_title": assignment.task_title,
+            "task_type": assignment.task_type,
+            "date_assigned": assignment.date_assigned,
+            "teacher_name": teacher_name_val,
+            "subject_name": subject_name_val,
+            "chapter_name": chapter_name_val
+        })
+
+    return response
+
+
+@router.get("/home-tasks/{home_task_id}/")
+def get_student_home_task_details(
+    home_task_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT))
+):
+    # Get student profile
+    student = current_user.student_profile
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    # Fetch HomeAssignment
+    home_task = db.query(HomeAssignment).filter(HomeAssignment.id == home_task_id).first()
+    if not home_task:
+        raise HTTPException(status_code=404, detail="HomeTask not found")
+
+    # Fetch related info
+    teacher = db.query(Teacher).filter(Teacher.id == home_task.teacher_id).first()
+    subject = db.query(Subject).filter(Subject.id == home_task.subject_id).first()
+    chapter = db.query(Chapter).filter(Chapter.id == home_task.chapter_id).first()
+
+    # Fetch all tasks for this assignment
+    tasks = db.query(
+        AssignmentTask.id,
+        AssignmentTask.title,
+        AssignmentTask.description,
+        AssignmentTask.file,
+        func.coalesce(
+            func.max(
+                case(
+                    (StudentTaskStatus.status == "completed", 1),
+                    else_=0
+                )
+            ), 0
+        ).label("is_completed"),
+        StudentTaskStatus.completed_at
+    ).join(
+        StudentTaskStatus,
+        (StudentTaskStatus.task_id == AssignmentTask.id) &
+        (StudentTaskStatus.student_id == student.id),
+        isouter=True
+    ).filter(
+        AssignmentTask.assignment_id == home_task.id
+    ).group_by(AssignmentTask.id, StudentTaskStatus.completed_at).all()
+
+    task_list = []
+    for t in tasks:
+        task_list.append({
+            "task_id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "file": t.file,
+            "is_completed": bool(t.is_completed),
+            "submitted_on": t.completed_at.strftime("%Y-%m-%d") if t.completed_at else None
+        })
+
+    total_tasks = len(task_list)
+    completed_tasks = sum(1 for t in task_list if t["is_completed"])
+    incomplete_tasks = total_tasks - completed_tasks
+
+    return {
+        "id": home_task.id,
+        "task_title": home_task.task_title,
+        "task_type": home_task.task_type,
+        "date_assigned": home_task.date_assigned,
+        "teacher_name": teacher.first_name if teacher else None,
+        "subject_name": subject.name if subject else None,
+        "chapter_name": chapter.title if chapter else None,
+        "total_tasks": total_tasks,
+        "completed_tasks": completed_tasks,
+        "incomplete_tasks": incomplete_tasks,
+        "tasks": task_list
+    }
+
+@router.put("/{home_task_id}/tasks/{task_id}/status/")
+def update_assignment_task_status(
+    home_task_id: int,
+    task_id: int,
+    status_update: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.STUDENT))
+):
+    """
+    Allows a student to update the status of a single assignment task.
+    If all tasks are completed → mark the AssignmentStudent and HomeAssignment accordingly.
+    """
+    student = current_user.student_profile
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    new_status = status_update.get("status")
+    if new_status not in ["completed", "pending"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Status must be either 'completed' or 'pending'."
+        )
+
+    # ✅ Find the AssignmentStudent record
+    assignment_student = db.query(AssignmentStudent).filter(
+        AssignmentStudent.assignment_id == home_task_id,
+        AssignmentStudent.student_id == student.id
+    ).first()
+    if not assignment_student:
+        raise HTTPException(status_code=404, detail="Assignment not assigned to this student")
+
+    # ✅ Find the StudentTaskStatus record for this task (or create if it doesn't exist)
+    task_status = db.query(StudentTaskStatus).filter(
+        StudentTaskStatus.assignment_student_id == assignment_student.id,
+        StudentTaskStatus.task_id == task_id
+    ).first()
+
+    if not task_status:
+        # Create if not exists
+        task_status = StudentTaskStatus(
+            assignment_student_id=assignment_student.id,
+            task_id=task_id,
+            student_id=student.id,
+            status=new_status
+        )
+        db.add(task_status)
+    else:
+        # Update existing
+        task_status.status = new_status
+
+    db.commit()
+
+    # ✅ Update AssignmentStudent status if all tasks completed
+    total_tasks = db.query(StudentTaskStatus).filter(
+        StudentTaskStatus.assignment_student_id == assignment_student.id
+    ).count()
+
+    completed_tasks = db.query(StudentTaskStatus).filter(
+        StudentTaskStatus.assignment_student_id == assignment_student.id,
+        StudentTaskStatus.status == "completed"
+    ).count()
+
+    assignment_student.status = "completed" if total_tasks == completed_tasks else "in_progress"
+
+    # ✅ Update HomeAssignment's overall responded_count
+    home_assignment = db.query(HomeAssignment).filter(HomeAssignment.id == home_task_id).first()
+    if home_assignment:
+        # Count students who completed all tasks
+        completed_students_count = db.query(AssignmentStudent).filter(
+            AssignmentStudent.assignment_id == home_task_id,
+            AssignmentStudent.status == "completed"
+        ).count()
+        home_assignment.responded_count = completed_students_count
+
+    db.commit()
+
+    return {
+        "message": "Task status updated successfully.",
+        "assignment_student_status": assignment_student.status,
+        "completed_tasks": completed_tasks,
+        "total_tasks": total_tasks
     }

@@ -49,6 +49,7 @@ class Teacher(Base):
     timetable_periods = relationship("TimetablePeriod", back_populates="teacher")
     created_exams = relationship("Exam", back_populates="teacher")
     leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
+    home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
