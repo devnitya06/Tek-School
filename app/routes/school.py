@@ -8,7 +8,8 @@ from app.models.school import (
     class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,
     Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,
     TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,
-    LeaveRequest,LeaveStatus,AssignmentStatus,HomeAssignment,AssignmentStudent,AssignmentTask,StudentTaskStatus)
+    LeaveRequest,LeaveStatus,AssignmentStatus,HomeAssignment,AssignmentStudent,AssignmentTask,
+    StudentTaskStatus)
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
 from app.schemas.school import (
@@ -16,7 +17,8 @@ from app.schemas.school import (
     PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,
     PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
     McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
-    TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,StudentHomeTaskListResponse)
+    TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
+    StudentHomeTaskListResponse,TransportUpdate)
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case
@@ -1040,6 +1042,62 @@ def create_transport(
 
     return {"detail": "Transport created successfully", "transport_id": transport.id}
 
+@router.put("/transports/{transport_id}/")
+def update_transport(
+    transport_id: int,
+    data: TransportUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only schools can update transport records.")
+
+    # Get school
+    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
+    if not school:
+        raise HTTPException(status_code=400, detail="School profile not found.")
+
+    # Get transport record
+    transport = (
+        db.query(Transport)
+        .filter(Transport.id == transport_id, Transport.school_id == school.id)
+        .first()
+    )
+    if not transport:
+        raise HTTPException(status_code=404, detail="Transport record not found.")
+
+    # Update only provided fields
+    update_data = data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        if field not in ["pickup_stops", "drop_stops"]:
+            setattr(transport, field, value)
+
+    # Handle pickup and drop stops (if provided)
+    if data.pickup_stops is not None:
+        db.query(PickupStop).filter(PickupStop.transport_id == transport.id).delete()
+        for stop in data.pickup_stops:
+            new_stop = PickupStop(
+                stop_name=stop.stop_name,
+                stop_time=stop.stop_time,
+                transport_id=transport.id
+            )
+            db.add(new_stop)
+
+    if data.drop_stops is not None:
+        db.query(DropStop).filter(DropStop.transport_id == transport.id).delete()
+        for stop in data.drop_stops:
+            new_stop = DropStop(
+                stop_name=stop.stop_name,
+                stop_time=stop.stop_time,
+                transport_id=transport.id
+            )
+            db.add(new_stop)
+
+    db.commit()
+    db.refresh(transport)
+
+    return {"detail": "Transport updated successfully"}
+
 @router.get("/transport/{driver_id}", response_model=TransportResponse)
 def get_transport_detail(
     driver_id: int,
@@ -1090,15 +1148,43 @@ def get_transports(
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
 ):
-    school_id = current_user.school_profile.id if current_user.role == UserRole.SCHOOL else current_user.teacher_profile.school_id
+    # Determine school ID
+    school_id = (
+        current_user.school_profile.id
+        if current_user.role == UserRole.SCHOOL
+        else current_user.teacher_profile.school_id
+    )
 
+    # Query all transports of that school
     query = db.query(Transport).filter(Transport.school_id == school_id)
     total_count = query.count()
 
-    transports = query.offset(pagination.offset()).limit(pagination.limit()).all()
+    transports = (
+        query
+        .options(
+            joinedload(Transport.pickup_stops),
+            joinedload(Transport.drop_stops)
+        )
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
 
-    data = [
-        {
+    # Build response with route_map
+    data = []
+    for t in transports:
+        route_map = {
+            "pickup_stops": [
+                {"stop_name": stop.stop_name, "stop_time": stop.stop_time.strftime("%H:%M")}
+                for stop in sorted(t.pickup_stops, key=lambda s: s.stop_time)
+            ],
+            "drop_stops": [
+                {"stop_name": stop.stop_name, "stop_time": stop.stop_time.strftime("%H:%M")}
+                for stop in sorted(t.drop_stops, key=lambda s: s.stop_time)
+            ]
+        }
+
+        data.append({
             "driver_id": t.id,
             "vehicle_number": t.vechicle_number,
             "vehicle_name": t.vechicle_name,
@@ -1107,11 +1193,11 @@ def get_transports(
             "duty_start_time": t.duty_start_time.strftime("%H:%M"),
             "duty_end_time": t.duty_end_time.strftime("%H:%M"),
             "school_id": t.school_id,
-        }
-        for t in transports
-    ]
+            "route_map": route_map,  # ✅ new field
+        })
 
     return pagination.format_response(data, total_count)
+
 @router.get("/school-dashboard/")
 def get_school_dashboard(
     db: Session = Depends(get_db),
@@ -1822,6 +1908,7 @@ def create_exam(
             school_id=teacher.school_id,
             class_id=data.class_id,
             exam_type=data.exam_type,
+            chapters=data.chapters,
             no_of_questions=data.no_of_questions,
             question_time=data.question_time,
             pass_percentage=data.pass_percentage,
@@ -1835,16 +1922,6 @@ def create_exam(
         # ✅ Attach sections only if any
         if section_objs:
             exam.sections = section_objs
-
-        # ✅ Attach chapters if your model uses a relationship
-        if data.chapters:
-            chapter_objs = db.query(Chapter).filter(Chapter.id.in_(data.chapters)).all()
-            if not chapter_objs:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No valid chapters found."
-                )
-            exam.chapters = chapter_objs
 
         db.add(exam)
         db.commit()

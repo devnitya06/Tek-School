@@ -3,7 +3,7 @@ from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest
+from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func
@@ -214,6 +214,58 @@ def add_parent_and_address(
     db.commit()
 
     return {"detail": "Parent and address data added successfully."}
+
+@router.put("/students/{student_id}/update-parent-info")
+def update_parent_and_address(
+    student_id: int,
+    data: ParentWithAddressUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only schools can update parent and address data.")
+
+    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    if student.classes.school_id != school.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to modify this student.")
+
+    # ✅ Parent update
+    parent = db.query(Parent).filter(Parent.student_id == student_id).first()
+    if parent and data.parent:
+        for field, value in data.parent.dict(exclude_unset=True).items():
+            setattr(parent, field, value)
+
+    # ✅ Present address update
+    present = db.query(PresentAddress).filter(PresentAddress.student_id == student_id).first()
+    if present and data.present_address:
+        for field, value in data.present_address.dict(exclude_unset=True).items():
+            setattr(present, field, value)
+
+    # ✅ Permanent address handling
+    permanent = db.query(PermanentAddress).filter(PermanentAddress.student_id == student_id).first()
+    if data.present_address and data.present_address.is_this_permanent_as_well:
+        if permanent:
+            db.delete(permanent)
+    elif data.permanent_address:
+        if permanent:
+            for field, value in data.permanent_address.dict(exclude_unset=True).items():
+                setattr(permanent, field, value)
+        else:
+            permanent = PermanentAddress(
+                **data.permanent_address.dict(exclude_unset=True),
+                student_id=student_id
+            )
+            db.add(permanent)
+
+    db.commit()
+    return {"detail": "Parent and address data updated successfully."}
 
 @router.get("/students/")
 def get_students(

@@ -55,3 +55,37 @@ class ParentWithAddressCreate(BaseModel):
     parent: ParentCreate
     present_address: PresentAddressCreate
     permanent_address: Optional[PermanentAddressCreate] = None    
+
+# ---------------- Parent ----------------
+class ParentUpdate(BaseModel):
+    parent_name: Optional[str] = None
+    relation: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    occupation: Optional[str] = None
+    organization: Optional[str] = None
+
+# ---------------- Address Base ----------------
+class AddressBaseUpdate(BaseModel):
+    enter_pin: Optional[str] = None
+    division: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    building: Optional[str] = None
+    house_no: Optional[str] = None
+    floor_name: Optional[str] = None
+
+# ---------------- Present Address ----------------
+class PresentAddressUpdate(AddressBaseUpdate):
+    is_this_permanent_as_well: Optional[bool] = None
+
+# ---------------- Permanent Address ----------------
+class PermanentAddressUpdate(AddressBaseUpdate):
+    pass
+
+# ---------------- Wrapper ----------------
+class ParentWithAddressUpdate(BaseModel):
+    parent: Optional[ParentUpdate] = None
+    present_address: Optional[PresentAddressUpdate] = None
+    permanent_address: Optional[PermanentAddressUpdate] = None

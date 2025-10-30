@@ -324,6 +324,8 @@ def get_teacher_by_id(
         "status": "active" if teacher.is_active else "inactive",
         "present_in": teacher.present_in,
         "teacher_type": teacher.teacher_type,
+        "highest_qualification": teacher.highest_qualification,
+        "university": teacher.university,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments
     }

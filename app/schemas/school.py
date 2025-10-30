@@ -108,6 +108,22 @@ class TransportCreate(BaseModel):
     duty_end_time: time
     pickup_stops: List[StopBase]
     drop_stops: List[StopBase]
+    
+class StopUpdate(BaseModel):
+    id: Optional[int] = None  # existing stop id (if updating)
+    stop_name: Optional[str] = None
+    stop_time: Optional[time] = None
+
+
+class TransportUpdate(BaseModel):
+    vehicle_number: Optional[str] = None
+    vehicle_name: Optional[str] = None
+    driver_name: Optional[str] = None
+    phone_no: Optional[str] = None
+    duty_start_time: Optional[time] = None
+    duty_end_time: Optional[time] = None
+    pickup_stops: Optional[List[StopUpdate]] = None
+    drop_stops: Optional[List[StopUpdate]] = None
 
 class StopResponse(StopBase):
     stop_name: str
