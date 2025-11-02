@@ -18,7 +18,7 @@ from app.schemas.school import (
     PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
     McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
     TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
-    StudentHomeTaskListResponse,TransportUpdate)
+    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum)
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case
@@ -28,7 +28,7 @@ from app.utils.permission import require_roles
 from typing import List,Optional
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
-from sqlalchemy import func
+from sqlalchemy import func,and_
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from app.utils.razorpay_client import razorpay_client
 import hmac
@@ -2516,48 +2516,118 @@ def create_leave_request(
 def get_all_leaves(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    pagination: PaginationParams = Depends(),
+    username: Optional[str] = Query(None, description="Filter by user name (teacher/student)"),
+    from_date: Optional[date] = Query(None, description="Filter from this start date"),
+    end_date: Optional[date] = Query(None, description="Filter until this end date"),
 ):
     """
-    School user can see all leave requests (teachers + students) with user info.
+    Get leave requests:
+    - School → all leave requests (teachers + students)
+    - Teacher → their own leaves
+    - Student → their own leaves
+    Filters:
+      - username (partial match)
+      - from_date, end_date
+    Includes leave_count and pagination.
     """
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can view all leave requests")
 
-    leaves = db.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
+    query = db.query(LeaveRequest)
 
+    # --- Role-based filtering ---
+    if current_user.role == UserRole.SCHOOL:
+        pass
+    elif current_user.role == UserRole.TEACHER:
+        query = query.filter(LeaveRequest.teacher_id == current_user.teacher_profile.id)
+    elif current_user.role == UserRole.STUDENT:
+        query = query.filter(LeaveRequest.student_id == current_user.student_profile.id)
+    else:
+        raise HTTPException(status_code=403, detail="Not authorized to view leave requests")
+
+    # --- Date filtering ---
+    if from_date and end_date:
+        query = query.filter(
+            and_(
+                LeaveRequest.start_date >= from_date,
+                LeaveRequest.end_date <= end_date,
+            )
+        )
+    elif from_date:
+        query = query.filter(LeaveRequest.start_date >= from_date)
+    elif end_date:
+        query = query.filter(LeaveRequest.end_date <= end_date)
+
+    # --- Get total count before pagination ---
+    total_count = query.count()
+
+    # --- Apply pagination ---
+    leaves = (
+        query.order_by(LeaveRequest.id.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # --- Optional username filtering (after fetching relations) ---
+    if username:
+        leaves = [
+            l for l in leaves
+            if (
+                (l.teacher and username.lower() in f"{l.teacher.first_name} {l.teacher.last_name}".lower())
+                or
+                (l.student and username.lower() in f"{l.student.first_name} {l.student.last_name}".lower())
+            )
+        ]
+        total_count = len(leaves)  # adjust count if username filter used
+
+    # --- Leave counts for all users (optimized) ---
+    teacher_counts = dict(
+        db.query(LeaveRequest.teacher_id, func.count(LeaveRequest.id))
+        .filter(LeaveRequest.teacher_id.isnot(None))
+        .group_by(LeaveRequest.teacher_id)
+        .all()
+    )
+
+    student_counts = dict(
+        db.query(LeaveRequest.student_id, func.count(LeaveRequest.id))
+        .filter(LeaveRequest.student_id.isnot(None))
+        .group_by(LeaveRequest.student_id)
+        .all()
+    )
+
+    # --- Build final response ---
     result = []
     for leave in leaves:
         if leave.teacher_id:
             user_id = leave.teacher_id
             user_name = f"{leave.teacher.first_name} {leave.teacher.last_name}"
             role = "TEACHER"
+            leave_count = teacher_counts.get(user_id, 0)
         elif leave.student_id:
             user_id = leave.student_id
             user_name = f"{leave.student.first_name} {leave.student.last_name}"
             role = "STUDENT"
+            leave_count = student_counts.get(user_id, 0)
         else:
             user_id = None
             user_name = None
             role = None
+            leave_count = 0
 
         result.append({
             "id": leave.id,
             "subject": leave.subject,
             "start_date": leave.start_date,
             "end_date": leave.end_date,
-            "status": leave.status.value,  # Enum to string
+            "status": leave.status.value,
             "role": role,
             "user_id": user_id,
-            "user_name": user_name
+            "user_name": user_name,
+            "applied_at": leave.created_at,
+            "leave_count": leave_count,
         })
 
-    return {
-        "status": "success",
-        "total": len(result),
-        "data": result
-    }
-
-
+    return pagination.format_response(result, total_count)
 
 @router.get("/leave-request/{leave_id}/")
 def get_leave_by_id(
