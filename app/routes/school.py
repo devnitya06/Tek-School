@@ -2470,6 +2470,7 @@ def create_leave_request(
         school_id = teacher.school_id
         leave = LeaveRequest(
             subject=request.subject,
+            leave_type=request.leave_type,
             start_date=request.start_date,
             end_date=request.end_date,
             description=request.description,
@@ -2484,6 +2485,7 @@ def create_leave_request(
         school_id = student.school_id
         leave = LeaveRequest(
             subject=request.subject,
+            leave_type=request.leave_type,
             start_date=request.start_date,
             end_date=request.end_date,
             description=request.description,
@@ -2504,6 +2506,7 @@ def create_leave_request(
         "data": {
             "leave_id": leave.id,
             "subject": leave.subject,
+            "leave_type": leave.leave_type,
             "start_date": leave.start_date,
             "end_date": leave.end_date,
             "status": leave.status.value,
@@ -2617,6 +2620,8 @@ def get_all_leaves(
         result.append({
             "id": leave.id,
             "subject": leave.subject,
+            "leave_type":leave.leave_type,
+            "description": leave.description,
             "start_date": leave.start_date,
             "end_date": leave.end_date,
             "status": leave.status.value,
@@ -2624,6 +2629,7 @@ def get_all_leaves(
             "user_id": user_id,
             "user_name": user_name,
             "applied_at": leave.created_at,
+            "updated_at": leave.updated_at,
             "leave_count": leave_count,
         })
 
@@ -2663,6 +2669,7 @@ def get_leave_by_id(
         "data": {
             "id": leave.id,
             "subject": leave.subject,
+            "leave_type":leave.leave_type,
             "start_date": leave.start_date,
             "end_date": leave.end_date,
             "description": leave.description,

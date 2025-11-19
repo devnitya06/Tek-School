@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
 from app.models.admin import AccountConfiguration, CreditConfiguration
-from app.models.school import School
+from app.models.school import School,StudentExamData
 from app.models.users import User
-from app.models.teachers import Teacher
-from app.models.students import Student
+from app.models.teachers import Teacher,TeacherClassSectionSubject
+from app.models.students import Student,StudentStatus
 from app.schemas.admin import (
     ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate
 )
@@ -16,6 +16,9 @@ from app.schemas.users import UserRole
 from sqlalchemy import func
 from collections import defaultdict
 from app.core.dependencies import get_current_user
+from typing import Optional
+from app.services.pagination import PaginationParams
+from datetime import datetime
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -63,58 +66,109 @@ def create_account_credit_config(
 
 @router.get("/all-school/")
 def get_all_school(
+    school_name: Optional[str] = None,
+    school_id: Optional[str] = None,
+    status: Optional[bool] = None,  # True = active, False = inactive
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+    # Admin check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all schools."
         )
 
     try:
-        schools = db.query(School).all()
+        # Base Query
+        query = db.query(School)
+
+        # Filters
+        if school_name:
+            query = query.filter(School.school_name.ilike(f"%{school_name}%"))
+
+        if school_id:
+            query = query.filter(School.id == school_id)
+
+        if status is not None:
+            query = query.filter(School.is_active == status)
+
+        if start_date:
+            query = query.filter(School.created_at >= start_date)
+
+        if end_date:
+            query = query.filter(School.created_at <= end_date)
+
+        # Count before pagination
+        total_count = query.count()
+
+        # Apply pagination
+        schools = (
+            query
+            .order_by(School.created_at.desc())
+            .offset(pagination.offset())
+            .limit(pagination.limit())
+            .all()
+        )
+
         if not schools:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No schools found."
-            )
+            return pagination.format_response([], total_count=0)
 
         result = []
-        for school in schools:
-            teacher_count = db.query(func.count()).select_from(Teacher).filter(Teacher.school_id == school.id).scalar()
-            student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
-            student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
-            # active_student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id, Student.is_active == True).scalar()
-            # inactive_student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id, Student.is_active == False).scalar()
-            user = db.query(User).filter(User.id == school.user_id).first()
-            if not user:
-                raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Associated user not found."
-                )
 
+        for school in schools:
+
+            # Count teachers
+            teacher_count = db.query(func.count()).select_from(Teacher).filter(
+                Teacher.school_id == school.id
+            ).scalar()
+
+            # Count students
+            student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id
+            ).scalar()
+
+            # Count ACTIVE students
+            active_student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id,
+                Student.status == StudentStatus.ACTIVE
+            ).scalar()
+
+            # Count INACTIVE students
+            inactive_student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id,
+                Student.status == StudentStatus.INACTIVE
+            ).scalar()
+
+            # Related user
+            user = db.query(User).filter(User.id == school.user_id).first()
+
+            # Build result
             result.append({
                 "school_id": school.id,
                 "school_name": school.school_name,
-                "location": user.location,
+                "location": user.location if user else None,
                 "no_of_teachers": teacher_count,
                 "no_of_students": student_count,
-                "active_students": student_count,
-                # "inactive_students": inactive_student_count,
+                "active_students": active_student_count,
+                "inactive_students": inactive_student_count,
                 "created_at": school.created_at,
                 "is_active": school.is_active,
                 "is_verified": school.is_verified,
                 "principal_name": school.principal_name,
             })
 
-        return result
+        return pagination.format_response(result, total_count=total_count)
 
     except SQLAlchemyError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
+
 @router.put("/school/{school_id}/verify/")
 def verify_school(
     school_id: str,
@@ -180,12 +234,13 @@ def get_school_details(
                 detail="Associated user not found."
             )
         credits = db.query(CreditMaster).filter(CreditMaster.school_id == school.id).first()
-        if not credits:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Credit information not found for this school."
-            )    
-
+        if not school.is_verified:
+            available_credit = 0
+            earned_credit = 0
+        else:
+    # If school is verified, use credits from DB or 0 if no record exists
+            available_credit = credits.available_credit if credits else 0
+            earned_credit = credits.used_credit if credits else 0   
         teacher_count = db.query(func.count()).select_from(Teacher).filter(Teacher.school_id == school.id).scalar()
         student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
 
@@ -211,8 +266,8 @@ def get_school_details(
             "principal_email": school.principal_email,
             "teacher_count": teacher_count,
             "student_count": student_count,
-            "available_credit": credits.available_credit,
-            "earned_credit": credits.used_credit,
+            "available_credit": available_credit,
+            "earned_credit": earned_credit,
         }
 
     except SQLAlchemyError as e:
@@ -264,7 +319,7 @@ def get_all_students(
         )
 @router.get("/student/{student_id}/")
 def get_student_details(
-    student_id: str,
+    student_id: int,
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
@@ -288,10 +343,12 @@ def get_student_details(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Associated user not found."
             )
+        last_exam = ( db.query(StudentExamData).filter(StudentExamData.student_id == student.id).order_by(StudentExamData.submitted_at.desc()).first())
 
         return {
             "student_id": student.id,
             "name": f"{student.first_name} {student.last_name}",
+            "profile_image": student.profile_image,
             "class_name": student.classes.name if student.classes else "N/A",
             "school_name": student.school.school_name if student.school else "N/A",
             # "location": student.school.location if student.school else "N/A",
@@ -299,6 +356,10 @@ def get_student_details(
             "district": student.school.district if student.school else "N/A",
             "state": student.school.state if student.school else "N/A",
             "location": user.location,
+            "last_appeared_exam":last_exam.submitted_at if last_exam else None,
+            "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
+            "exam_result":last_exam.result if last_exam else None,
+            "status": student.status,
             # "email": student.email,
             # "is_active": student.is_active,
             "created_at": student.created_at,
@@ -383,15 +444,35 @@ def get_teacher_details(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Associated school not found."
-            )    
+            )
+        
+        assignments = (
+        db.query(TeacherClassSectionSubject)
+        .filter(TeacherClassSectionSubject.teacher_id == teacher.id)
+        .all()
+            )
+
+    # Build detailed assignment info
+        detailed_assignments = []
+        for a in assignments:
+            detailed_assignments.append({
+            "class_id": a.class_id,
+            "class_name": a.class_.name if a.class_ else None,
+            "section_id": a.section_id,
+            "section_name": a.section.name if a.section else None,
+            "subject_id": a.subject_id,
+            "subject_name": a.subject.name if a.subject else None,
+            })    
 
         return {
             "teacher_id": teacher.id,
+            "profile_image": teacher.profile_image,
             "name": f"{teacher.first_name} {teacher.last_name}",
             "phone": teacher.phone,
             "email": teacher.email,
             "school_name": school.school_name if school else "N/A",
             "location": user.location,
+            "assignments": detailed_assignments,
             # "is_active": teacher.is_active,
             "created_at": teacher.created_at,
         }

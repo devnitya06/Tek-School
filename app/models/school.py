@@ -430,6 +430,9 @@ class LeaveStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     DECLINED = "declined"
+class LeaveType(str, Enum):
+    CASUAL = "casual"
+    EMERGENCY = "emergency"
 
 
 class LeaveRequest(Base):
@@ -443,7 +446,7 @@ class LeaveRequest(Base):
     attach_file = Column(String, nullable=True)
     # status can only be pending, approved, or declined
     status = Column(SQLEnum(LeaveStatus), default=LeaveStatus.PENDING, nullable=False)
-
+    leave_type = Column(SQLEnum(LeaveType), nullable=False)
     # foreign keys
     school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
     teacher_id = Column(String, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True)
