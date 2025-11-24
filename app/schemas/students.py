@@ -14,6 +14,10 @@ class StudentCreateRequest(BaseModel):
     section_id: int
     is_transport: bool = True
     driver_id: Optional[int] = None
+    pickup_point: Optional[str] = None
+    pickup_time: Optional[str] = None
+    drop_point: Optional[str] = None
+    drop_time: Optional[str] = None
     # school_id: str
 
 class StudentUpdateRequest(BaseModel):
@@ -26,6 +30,10 @@ class StudentUpdateRequest(BaseModel):
     section_id: Optional[int] = None
     is_transport: Optional[bool] = None
     driver_id: Optional[int] = None
+    pickup_point: Optional[str] = None
+    pickup_time: Optional[str] = None
+    drop_point: Optional[str] = None
+    drop_time: Optional[str] = None
 
 class AddressBase(BaseModel):
     enter_pin: str

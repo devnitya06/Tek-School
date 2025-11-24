@@ -13,7 +13,7 @@ from app.models.admin import CreditMaster,SchoolClassSubject,Chapter,ChapterVide
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
-from sqlalchemy import func
+from sqlalchemy import func,cast, String
 from collections import defaultdict
 from app.core.dependencies import get_current_user
 from typing import Optional
@@ -278,45 +278,72 @@ def get_school_details(
         
 @router.get("/all-students/")
 def get_all_students(
-    limit: int = 10,
-    offset: int = 0,
+    student_id: int = None,
+    student_name: str = None,
+    school_name: str = None,
+    status: str = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all students."
         )
 
-    try:
-        students = db.query(Student).options(joinedload(Student.school),joinedload(Student.classes)).offset(offset).limit(limit).all()
-        if not students:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No students found."
-            )
+    # Base query — NO SCHOOL FILTER
+    query = (
+        db.query(Student)
+        .options(joinedload(Student.school))
+        .options(joinedload(Student.classes))
+    )
 
-        result = []
-        for student in students:
-            result.append({
-                "student_id": student.id,
-                "name": f"{student.first_name} {student.last_name}",
-                "class_name": student.classes.name if student.classes else "N/A",
-                "school_name": student.school.school_name if student.school else "N/A",
-                # "location": student.school.location if student.school else "N/A",
-                # "email": student.email,
-                # "is_active": student.is_active,
-                "created_at": student.created_at,
-            })
+    # Apply filters
+    if student_id:
+        query = query.filter(Student.id == student_id)
 
-        return result
-
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
+    if student_name:
+        query = query.filter(
+            (Student.first_name.ilike(f"%{student_name}%")) |
+            (Student.last_name.ilike(f"%{student_name}%"))
         )
+
+    if school_name:
+        query = query.join(Student.school).filter(
+            School.school_name.ilike(f"%{school_name}%")
+        )
+
+    if status:
+        query = query.filter(Student.status == status)
+
+    # Total count BEFORE pagination
+    total_count = query.count()
+
+    # Apply pagination
+    students = (
+        query
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # Format student data
+    items = []
+    for student in students:
+        items.append({
+            "student_id": student.id,
+            "name": f"{student.first_name} {student.last_name}",
+            "class_name": student.classes.name if student.classes else "N/A",
+            "school_name": student.school.school_name if student.school else "N/A",
+            "status": student.status.value,
+            "created_at": student.created_at,
+        })
+
+    # Return paginated response
+    return pagination.format_response(items, total_count)
+
 @router.get("/student/{student_id}/")
 def get_student_details(
     student_id: int,
@@ -373,46 +400,73 @@ def get_student_details(
 
 @router.get("/all-teachers/")
 def get_all_teachers(
-    limit: int = 10,
-    offset: int = 0,
+    teacher_id: str = None,
+    teacher_name: str = None,
+    school_name: str = None,
+    status: str = None,   # active / inactive or whatever your enum is
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+
+    # Only admin can access
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all teachers."
         )
 
-    try:
-        teachers = db.query(Teacher).options(joinedload(Teacher.school)).offset(offset).limit(limit).all()
-        if not teachers:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No teachers found."
-            )
+    # Base query (NO SCHOOL LIMIT)
+    query = (
+        db.query(Teacher)
+        .options(joinedload(Teacher.school))
+    )
 
-        result = []
-        for teacher in teachers:
-            school = db.query(School).filter(School.id == teacher.school_id).first()
-            result.append({
-                "teacher_id": teacher.id,
-                "name": f"{teacher.first_name} {teacher.last_name}",
-                "phone": teacher.phone,
-                "school_name": school.school_name if school else "N/A",
-                # "school_name": teacher.school.school_name if teacher.school else "N/A",
-                "email": teacher.email,
-                # "is_active": teacher.is_active,
-                "created_at": teacher.created_at,
-            })
+    # Apply filters
+    if teacher_id:
+        query = query.filter(Teacher.id == teacher_id)
 
-        return result
-
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
+    if teacher_name:
+        query = query.filter(
+            (Teacher.first_name.ilike(f"%{teacher_name}%")) |
+            (Teacher.last_name.ilike(f"%{teacher_name}%"))
         )
+
+    if school_name:
+        query = query.join(Teacher.school).filter(
+            School.school_name.ilike(f"%{school_name}%")
+        )
+
+    if status:
+        query = query.filter(Teacher.status == status)
+
+    # Total before pagination
+    total_count = query.count()
+
+    # Apply pagination
+    teachers = (
+        query
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # Build response data
+    items = []
+    for teacher in teachers:
+        items.append({
+            "teacher_id": teacher.id,
+            "name": f"{teacher.first_name} {teacher.last_name}",
+            "phone": teacher.phone,
+            "email": teacher.email,
+            "school_name": teacher.school.school_name if teacher.school else "N/A",
+            "status": teacher.status.value if hasattr(teacher, "status") else None,
+            "created_at": teacher.created_at,
+        })
+
+    # Return paginated response
+    return pagination.format_response(items, total_count)
+
 @router.get("/teacher/{teacher_id}/")
 def get_teacher_details(
     teacher_id: str,
@@ -483,41 +537,61 @@ def get_teacher_details(
             detail=f"Database error occurred: {str(e)}"
         )
 
-@router.post("/class_subjects/")
-def add_class_subject(
-    class_subject: SchoolClassSubjectBase,
+@router.get("/class_subjects/")
+def get_class_subjects(
+    class_name: str = None,
+    school_board: str = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+    # Access check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to add class subjects."
+            status_code=403,
+            detail="Only admin account is allowed to view class subjects."
         )
 
     try:
-        # ✅ Create SchoolClassSubject directly
-        new_class_subject = SchoolClassSubject(
-            school_board=class_subject.school_board,
-            school_medium=class_subject.school_medium,
-            class_name=class_subject.class_name,
-            subject=class_subject.subject
+        query = db.query(SchoolClassSubject)
+
+        # 🔍 Apply Filters
+        if class_name:
+            query = query.filter(SchoolClassSubject.class_name.ilike(f"%{class_name}%"))
+
+        if school_board:
+            query = query.filter(cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%"))
+
+        # Count before pagination
+        total_count = query.count()
+
+        # Apply pagination
+        subjects = (
+            query
+            .offset(pagination.offset())
+            .limit(pagination.limit())
+            .all()
         )
 
-        db.add(new_class_subject)
-        db.commit()
-        db.refresh(new_class_subject)
-        return {
-            "detail": "Class subject added successfully.",
-            "class_subject_id": new_class_subject.id
-        }
+        result = []
+        for obj in subjects:
+            result.append({
+                "id": obj.id,
+                "school_board": obj.school_board,
+                "school_medium": obj.school_medium,
+                "class_name": obj.class_name,
+                "subject": obj.subject,
+                "created_at": obj.created_at,
+            })
+
+        return pagination.format_response(result, total_count)
 
     except SQLAlchemyError as e:
-        db.rollback()  # Important: rollback on error
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
+
 
 @router.get("/class_subjects/")
 def list_class_subjects(

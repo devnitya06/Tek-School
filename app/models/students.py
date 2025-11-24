@@ -29,6 +29,10 @@ class Student(Base):
     status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False)
     status_expiry_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
+    pickup_point = Column(String(150), nullable=True)
+    pickup_time = Column(String(50), nullable=True)
+    drop_point = Column(String(150), nullable=True)
+    drop_time = Column(String(50), nullable=True)
 
     # Relationships
     classes = relationship("Class", back_populates="students")

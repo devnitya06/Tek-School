@@ -33,6 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from app.utils.razorpay_client import razorpay_client
 import hmac
 import hashlib
+import uuid
 import time
 from app.utils.services import is_time_overlap, create_mcq,get_mcqs_by_exam,delete_mcq,evaluate_exam    
 from app.core.config import settings
@@ -1713,6 +1714,47 @@ def create_school_credit_configuration(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
+@router.get("/margin-config/")
+def get_school_margin_config(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL))
+):
+    school_id = current_user.school_profile.id
+
+    # Load all credit configurations with related school margins + class
+    credit_configs = (
+        db.query(CreditConfiguration)
+        .options(joinedload(CreditConfiguration.school_margins).joinedload(SchoolMarginConfiguration.class_))
+        .all()
+    )
+
+    result = []
+    for config in credit_configs:
+        for school_margin in config.school_margins:
+            if school_margin.school_id == school_id:
+                result.append({
+                    "credit_configuration_id": config.id,
+                    "class_id": school_margin.class_id,
+                    "class_name": school_margin.class_.name,
+                    "monthly_credit": config.monthly_credit,
+                    "margin_up_to": config.margin_up_to,
+                    "margin_value": school_margin.margin_value,
+                })
+
+        # If no entry exists for this school, show default structure
+        if not any(m.school_id == school_id for m in config.school_margins):
+            result.append({
+                "credit_configuration_id": config.id,
+                "class_id": None,
+                "class_name": None,
+                "monthly_credit": config.monthly_credit,
+                "margin_up_to": config.margin_up_to,
+                "margin_value": None,
+            })
+
+    return {"items": result, "total": len(result)}
+
+
 @router.post("/create-payment-order")
 def create_payment_order(
     data: CreatePaymentRequest,
@@ -1740,7 +1782,7 @@ def create_payment_order(
     transaction = TransactionHistory(
         school_id=school.id,
         amount=data.amount,
-        transaction_id="",
+        transaction_id=str(uuid.uuid4()),
         order_id=payment_order["id"],
         status="PENDING"
     )
