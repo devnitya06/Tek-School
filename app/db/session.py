@@ -22,6 +22,7 @@ from app.models.school import *
 from app.models.teachers import *
 from app.models.students import *
 from app.models.admin import *
+from app.models.staff import *
 
 def create_tables():
     """Create all tables that don't exist yet"""
