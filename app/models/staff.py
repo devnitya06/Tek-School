@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -16,6 +16,10 @@ class Staff(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String(15), nullable=True)
     designation = Column(String, nullable=True)
+    employee_type = Column(String, nullable=True)  # "full_time" or "part_time"
+    annual_salary = Column(Numeric(12, 2), nullable=True)
+    emergency_leave = Column(Integer, nullable=True, default=0)
+    casual_leave = Column(Integer, nullable=True, default=0)
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_active = Column(Boolean, default=True)
