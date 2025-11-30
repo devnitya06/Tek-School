@@ -1,10 +1,113 @@
-from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text
+from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
 from app.models.school import SchoolBoard,SchoolMedium
 from enum import Enum
 from sqlalchemy import Enum as SQLEnum
+import uuid
+from datetime import datetime
+
+class ExamType(str, Enum):
+    mock = "mock"
+    rank = "rank"
+
+
+class QuestionType(str, Enum):
+    short = "short"
+    long = "long"
+
+
+class AdminExamStatus(str, Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+class StudentExamStatus(str, Enum):
+    pass_ = "pass"
+    fail = "fail"
+class SetType(str, Enum):
+    A = "A"
+    B = "B"
+    C = "C"
+    ALL = "ALL"
+
+class AdminExam(Base):
+    __tablename__ = "admin_exams"
+
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+
+    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
+    class_name = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+
+    exam_type = Column(SQLEnum(ExamType), nullable=False)
+    question_type = Column(SQLEnum(QuestionType), nullable=False)
+    passing_mark = Column(Integer, nullable=False)
+    repeat = Column(Integer,default=0)
+    duration = Column(Integer, nullable=False)
+    exam_validity = Column(DateTime, nullable=True)
+    description = Column(String, nullable=True)
+    no_students_appeared = Column(Integer, default=0)
+    status = Column(SQLEnum(AdminExamStatus), default=AdminExamStatus.ACTIVE, nullable=False)
+
+    school_class_subject = relationship("SchoolClassSubject", back_populates="admin_exams")
+    admin_exam_bank = relationship("AdminExamBank", back_populates="exam", cascade="all, delete")
+    student_admin_exam_data = relationship("StudentAdminExamData", back_populates="exam", cascade="all, delete")
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            self.id = f"AEXM-{str(uuid.uuid4().int)[:6]}"
+
+
+class AdminExamBank(Base):
+    __tablename__ = "admin_exam_bank"
+
+    id = Column(Integer, primary_key=True, index=True)
+    exam_id = Column(String, ForeignKey("admin_exams.id", ondelete="CASCADE"))
+
+    question = Column(Text, nullable=False)
+    que_type = Column(SQLEnum(QuestionType), nullable=False)
+    image = Column(String, nullable=True)
+
+    # MCQ Fields
+    option_a = Column(String(200), nullable=True)
+    option_b = Column(String(200), nullable=True)
+    option_c = Column(String(200), nullable=True)
+    option_d = Column(String(200), nullable=True)
+    correct_option = Column(ARRAY(String), nullable=True)
+
+    # Descriptive Fields
+    descriptive_answer = Column(Text, nullable=True)
+    answer_keys = Column(ARRAY(String), nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    exam = relationship("AdminExam", back_populates="admin_exam_bank")
+
+class StudentAdminExamData(Base):
+    __tablename__ = "student_admin_exam_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    exam_id = Column(String, ForeignKey("admin_exams.id", ondelete="CASCADE"), nullable=False)
+
+    attempt_no = Column(Integer, default=1)
+    answers = Column(JSON, nullable=False)
+    result = Column(Float, nullable=True)
+    status = Column(SQLEnum(StudentExamStatus), nullable=True)
+    appeared_count = Column(Integer, default=0)
+    class_rank = Column(Integer, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    student = relationship("Student", back_populates="admin_exam_data")
+
+    exam = relationship("AdminExam", back_populates="student_admin_exam_data")
+
 class Admin(Base):
     __tablename__ = "admins"
 
@@ -69,6 +172,7 @@ class SchoolClassSubject(Base):
 
     # ✅ Relationships
     chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
+    admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
 
 
 class Chapter(Base):
@@ -144,3 +248,38 @@ class StudentChapterProgress(Base):
 
     student = relationship("Student", back_populates="chapter_progress")
     chapter = relationship("Chapter", back_populates="student_progress")    
+
+class QuestionSet(Base):
+    __tablename__ = "question_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    board = Column(String(100), nullable=False)
+    class_name= Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
+    set = Column(SQLEnum(SetType),default=SetType.A,nullable=False)
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationship
+    questions = relationship("QuestionSetBank", back_populates="question_set")
+    school_class_subject = relationship("SchoolClassSubject")
+
+class QuestionSetBank(Base):
+    __tablename__ = "question_set_bank"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_set_id = Column(Integer, ForeignKey("question_sets.id"))
+
+    subject = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
+    year = Column(Integer, nullable=True)
+    probability_ratio = Column(Integer, nullable=True)
+    no_of_teacher_verified = Column(Integer, nullable=True)
+    question = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationship
+    question_set = relationship("QuestionSet", back_populates="questions")
+    school_class_subject = relationship("SchoolClassSubject")

@@ -50,6 +50,8 @@ class Student(Base):
     student_assignments = relationship("AssignmentStudent",back_populates="student",cascade="all, delete-orphan")
     # Each student’s task completion statuses
     student_task_statuses = relationship("StudentTaskStatus",back_populates="student",cascade="all, delete-orphan")
+    admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
+
 
 
 class Parent(Base):
