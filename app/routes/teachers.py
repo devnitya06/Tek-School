@@ -25,6 +25,8 @@ def create_teacher(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    print(current_user.role)
+    print(UserRole.SCHOOL)
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can create teachers.")
     

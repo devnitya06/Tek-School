@@ -97,3 +97,20 @@ class ParentWithAddressUpdate(BaseModel):
     parent: Optional[ParentUpdate] = None
     present_address: Optional[PresentAddressUpdate] = None
     permanent_address: Optional[PermanentAddressUpdate] = None
+
+class SelfSignedStudentUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    profile_image: Optional[str] = None
+    select_board: Optional[str] = None
+    select_class: Optional[str] = None
+    school_name: Optional[str] = None
+    school_location: Optional[str] = None
+
+    pin: Optional[int] = None
+    division: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    plot: Optional[str] = None

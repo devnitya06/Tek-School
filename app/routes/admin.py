@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
 from app.models.admin import AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet
-from app.models.school import School,StudentExamData
+from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus

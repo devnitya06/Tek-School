@@ -15,12 +15,12 @@ class Student(Base):
     profile_image = Column(String, nullable=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
-    gender = Column(String(10), nullable=False)
-    dob = Column(Date, nullable=False)
+    gender = Column(String(10), nullable=False) #1
+    dob = Column(Date, nullable=False)   #2
 
-    class_id = Column(Integer, ForeignKey("classes.id"))
-    section_id = Column(Integer, ForeignKey("sections.id"))
-    roll_no = Column(Integer, nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"))  #3
+    section_id = Column(Integer, ForeignKey("sections.id"))  #4
+    roll_no = Column(Integer, nullable=False)       #5
     is_transport = Column(Boolean, default=True)
 
     driver_id = Column(Integer, ForeignKey("transports.id"), nullable=True)
@@ -96,3 +96,34 @@ class PermanentAddress(Base, AddressMixin):
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False, unique=True)
     student = relationship("Student", back_populates="permanent_address")
 
+
+
+class SelfSignedStudent(Base):
+    __tablename__ = "self_signed_students"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    profile_image = Column(String, nullable=True)
+    phone = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=False, unique=True)
+
+    select_board = Column(String(50), nullable=True)
+    select_class = Column(String(50), nullable=True)
+
+    school_name = Column(String(255), nullable=True)
+    school_location = Column(String(255), nullable=True)
+
+    pin = Column(Integer, nullable=True)
+    division = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+
+    plot = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship("User", back_populates="self_signed_student_profile")

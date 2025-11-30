@@ -5,6 +5,7 @@ from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,Resen
 from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
+from app.models.students import SelfSignedStudent
 from app.utils.email_utility import generate_otp,send_dynamic_email,generate_password
 from datetime import datetime,timezone,timedelta
 from app.core.security import verify_verification_token
@@ -15,45 +16,33 @@ router = APIRouter()
 @router.post("/", response_model=SignupResponse)
 def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     try:
-        # Check for duplicate email
+        # Prevent duplicate email
         if db.query(User).filter(User.email == user_data.email).first():
             raise HTTPException(status_code=400, detail="Email already registered.")
 
-        # Determine role based on presence of school info
-        is_school_signup = all([
-            user_data.name,
-            user_data.location,
-            user_data.phone,
-            user_data.website
-        ])
-        role = UserRole.SCHOOL if is_school_signup else UserRole.ADMIN
+        # Detect signup type
+        is_school_signup = all([user_data.name, user_data.location, user_data.phone, user_data.website])
+        is_student_signup = all([user_data.first_name, user_data.last_name, user_data.phone, user_data.email])
 
-        # Check for existing school
-        if role == UserRole.SCHOOL:
-            existing_school = db.query(User).filter(
-                User.name == user_data.name,
-                User.location == user_data.location,
-                User.role == UserRole.SCHOOL
-            ).first()
-            if existing_school:
-                raise HTTPException(
-                    status_code=400,
-                    detail="A school with the same name and location already exists."
-                )
+        if is_school_signup:
+            role = UserRole.SCHOOL
+        elif is_student_signup:
+            role = UserRole.STUDENT
+        else:
+            role = UserRole.ADMIN  # First user case or fallback
 
-        # Create user
+        # Create User entry
         user = User(
             email=user_data.email,
-            name=user_data.name,
-            location=user_data.location,
             phone=user_data.phone,
-            website=user_data.website,
+            name=user_data.name or f"{user_data.first_name} {user_data.last_name}",  # For student name
             role=role,
         )
-        db.add(user)
-        db.flush()  # Ensures user.id is available without committing
 
-        # Create school profile
+        db.add(user)
+        db.flush()
+
+        # Create School Profile (if school)
         if role == UserRole.SCHOOL:
             school_profile = School(
                 user_id=user.id,
@@ -64,27 +53,30 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
             )
             db.add(school_profile)
 
-        # Generate OTP and store
+        # Create Student Profile (if student)
+        if role == UserRole.STUDENT:
+            student_profile = SelfSignedStudent(
+                user_id=user.id,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                phone=user_data.phone,
+                email=user_data.email
+            )
+            db.add(student_profile)
+
+        # OTP functionality
         otp = generate_otp()
-        otp_entry = Otp(
-            user_id=user.id,
-            otp=otp
-        )
+        otp_entry = Otp(user_id=user.id, otp=otp)
         db.add(otp_entry)
 
-        # Send email (before final commit)
         send_dynamic_email(
             context_key="otp_verify.html",
             subject="Your OTP Code",
             recipient_email=user.email,
-            context_data={
-                "email": user.email,
-                "OTP": otp,
-            },
+            context_data={"email": user.email, "OTP": otp},
             db=db
         )
 
-        # Final commit after all steps succeed
         db.commit()
         return {
             "detail": "OTP sent to your email. Please verify to complete signup.",
@@ -94,6 +86,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Signup failed: {str(e)}")
+
     
 @router.post("/verify-otp")
 def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
