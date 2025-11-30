@@ -88,6 +88,10 @@ def create_student(
             section_id=data.section_id,
             is_transport=data.is_transport,
             driver_id=data.driver_id,
+            pickup_point=data.pickup_point,
+            pickup_time=data.pickup_time,
+            drop_point=data.drop_point,
+            drop_time=data.drop_time,
             user_id=user.id,
             school_id=school_id,
             profile_image=profile_pic_url,
@@ -386,7 +390,8 @@ def get_student(
             joinedload(Student.parent),
             joinedload(Student.present_address),
             joinedload(Student.permanent_address),
-            joinedload(Student.exam_data)
+            joinedload(Student.exam_data),
+            joinedload(Student.driver),
         )
         .first()
     )
@@ -404,6 +409,10 @@ def get_student(
         "student_id": student.id,
         "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "gender": student.gender,
+        "dob": student.dob,
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
@@ -413,6 +422,12 @@ def get_student(
         "last_appeared_exam":last_exam.submitted_at if last_exam else None,
         "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
         "exam_result":last_exam.result if last_exam else None,
+        "vechicle_number":student.driver.vechicle_number if student.driver else None,
+        "driver_name":student.driver.driver_name if student.driver else None,
+        "pickup_point":student.pickup_point,
+        "pickup_time":student.pickup_time,
+        "drop_point":student.drop_point,
+        "drop_time":student.drop_time,
         "parent": {
             "parent_name": student.parent.parent_name,
             "relation": student.parent.relation,
@@ -481,7 +496,7 @@ def update_student(
     if current_user.role == UserRole.SCHOOL:
         allowed_fields = [
             "first_name", "last_name", "gender", "dob",
-            "class_id", "section_id", "is_transport", "driver_id"
+            "class_id", "section_id", "is_transport", "driver_id","pickup_point","pickup_time","drop_point","drop_time"
         ]
     else:
         allowed_fields = ["first_name", "last_name", "gender", "dob", "class_id", "section_id"]
@@ -609,6 +624,10 @@ def get_own_student_profile(
         "total_attendance": len(student.attendances) if student.attendances else 0,
         "total_exams": len(student.exam_data) if student.exam_data else 0,
         "last_appeared_exam":last_exam.submitted_at if last_exam else None,
+        "pickup_point":student.pickup_point,
+        "pickup_time":student.pickup_time,
+        "drop_point":student.drop_point,
+        "drop_time":student.drop_time,
         # "exam_given": sum(1 for exam in student.exam_data if exam.is_exam_given) if student.exam_data else 0,
         "parent": {
             "parent_name": student.parent.parent_name,

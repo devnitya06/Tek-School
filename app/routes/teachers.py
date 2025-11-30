@@ -25,6 +25,8 @@ def create_teacher(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    print(current_user.role)
+    print(UserRole.SCHOOL)
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can create teachers.")
     
@@ -319,8 +321,13 @@ def get_teacher_by_id(
         "id": teacher.id,
         "profile_image": teacher.profile_image,
         "name": f"{teacher.first_name} {teacher.last_name}",
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
         "email": teacher.email,
         "phone": teacher.phone,
+        "highest_qualification": teacher.highest_qualification,
+        "start_duty": teacher.start_duty,
+        "end_duty": teacher.end_duty,
         "status": "active" if teacher.is_active else "inactive",
         "present_in": teacher.present_in,
         "teacher_type": teacher.teacher_type,

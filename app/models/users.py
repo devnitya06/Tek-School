@@ -57,6 +57,7 @@ class User(Base):
     school_profile = relationship("School", back_populates="user", uselist=False, cascade="all, delete-orphan", overlaps="school")
     student_profile = relationship("Student", back_populates="user", uselist=False, cascade="all, delete-orphan")
     staff_profile = relationship("Staff", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    self_signed_student_profile = relationship("SelfSignedStudent", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     # Add unique constraint for school name and location
     __table_args__ = (

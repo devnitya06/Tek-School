@@ -1,21 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
-from app.models.admin import AccountConfiguration, CreditConfiguration
-from app.models.school import School
+from app.models.admin import AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet
+from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType
 from app.models.users import User
-from app.models.teachers import Teacher
-from app.models.students import Student
+from app.models.teachers import Teacher,TeacherClassSectionSubject
+from app.models.students import Student,StudentStatus
 from app.schemas.admin import (
-    ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate
+    ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate,AdminExamCreate,
+    AdminExamUpdate,ExamQuestionPayloadList,QuestionSetCreate,BulkQuestionCreate,QuestionUpdate
 )
 from app.models.admin import CreditMaster,SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
-from sqlalchemy import func
+from sqlalchemy import func,cast, String
 from collections import defaultdict
 from app.core.dependencies import get_current_user
+from typing import Optional
+from app.services.pagination import PaginationParams
+from datetime import datetime
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -63,58 +67,109 @@ def create_account_credit_config(
 
 @router.get("/all-school/")
 def get_all_school(
+    school_name: Optional[str] = None,
+    school_id: Optional[str] = None,
+    status: Optional[bool] = None,  # True = active, False = inactive
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+    # Admin check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all schools."
         )
 
     try:
-        schools = db.query(School).all()
+        # Base Query
+        query = db.query(School)
+
+        # Filters
+        if school_name:
+            query = query.filter(School.school_name.ilike(f"%{school_name}%"))
+
+        if school_id:
+            query = query.filter(School.id == school_id)
+
+        if status is not None:
+            query = query.filter(School.is_active == status)
+
+        if start_date:
+            query = query.filter(School.created_at >= start_date)
+
+        if end_date:
+            query = query.filter(School.created_at <= end_date)
+
+        # Count before pagination
+        total_count = query.count()
+
+        # Apply pagination
+        schools = (
+            query
+            .order_by(School.created_at.desc())
+            .offset(pagination.offset())
+            .limit(pagination.limit())
+            .all()
+        )
+
         if not schools:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No schools found."
-            )
+            return pagination.format_response([], total_count=0)
 
         result = []
-        for school in schools:
-            teacher_count = db.query(func.count()).select_from(Teacher).filter(Teacher.school_id == school.id).scalar()
-            student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
-            student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
-            # active_student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id, Student.is_active == True).scalar()
-            # inactive_student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id, Student.is_active == False).scalar()
-            user = db.query(User).filter(User.id == school.user_id).first()
-            if not user:
-                raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Associated user not found."
-                )
 
+        for school in schools:
+
+            # Count teachers
+            teacher_count = db.query(func.count()).select_from(Teacher).filter(
+                Teacher.school_id == school.id
+            ).scalar()
+
+            # Count students
+            student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id
+            ).scalar()
+
+            # Count ACTIVE students
+            active_student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id,
+                Student.status == StudentStatus.ACTIVE
+            ).scalar()
+
+            # Count INACTIVE students
+            inactive_student_count = db.query(func.count()).select_from(Student).filter(
+                Student.school_id == school.id,
+                Student.status == StudentStatus.INACTIVE
+            ).scalar()
+
+            # Related user
+            user = db.query(User).filter(User.id == school.user_id).first()
+
+            # Build result
             result.append({
                 "school_id": school.id,
                 "school_name": school.school_name,
-                "location": user.location,
+                "location": user.location if user else None,
                 "no_of_teachers": teacher_count,
                 "no_of_students": student_count,
-                "active_students": student_count,
-                # "inactive_students": inactive_student_count,
+                "active_students": active_student_count,
+                "inactive_students": inactive_student_count,
                 "created_at": school.created_at,
                 "is_active": school.is_active,
                 "is_verified": school.is_verified,
                 "principal_name": school.principal_name,
             })
 
-        return result
+        return pagination.format_response(result, total_count=total_count)
 
     except SQLAlchemyError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
+
 @router.put("/school/{school_id}/verify/")
 def verify_school(
     school_id: str,
@@ -180,12 +235,13 @@ def get_school_details(
                 detail="Associated user not found."
             )
         credits = db.query(CreditMaster).filter(CreditMaster.school_id == school.id).first()
-        if not credits:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Credit information not found for this school."
-            )    
-
+        if not school.is_verified:
+            available_credit = 0
+            earned_credit = 0
+        else:
+    # If school is verified, use credits from DB or 0 if no record exists
+            available_credit = credits.available_credit if credits else 0
+            earned_credit = credits.used_credit if credits else 0   
         teacher_count = db.query(func.count()).select_from(Teacher).filter(Teacher.school_id == school.id).scalar()
         student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
 
@@ -211,8 +267,8 @@ def get_school_details(
             "principal_email": school.principal_email,
             "teacher_count": teacher_count,
             "student_count": student_count,
-            "available_credit": credits.available_credit,
-            "earned_credit": credits.used_credit,
+            "available_credit": available_credit,
+            "earned_credit": earned_credit,
         }
 
     except SQLAlchemyError as e:
@@ -223,48 +279,75 @@ def get_school_details(
         
 @router.get("/all-students/")
 def get_all_students(
-    limit: int = 10,
-    offset: int = 0,
+    student_id: int = None,
+    student_name: str = None,
+    school_name: str = None,
+    status: str = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all students."
         )
 
-    try:
-        students = db.query(Student).options(joinedload(Student.school),joinedload(Student.classes)).offset(offset).limit(limit).all()
-        if not students:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No students found."
-            )
+    # Base query — NO SCHOOL FILTER
+    query = (
+        db.query(Student)
+        .options(joinedload(Student.school))
+        .options(joinedload(Student.classes))
+    )
 
-        result = []
-        for student in students:
-            result.append({
-                "student_id": student.id,
-                "name": f"{student.first_name} {student.last_name}",
-                "class_name": student.classes.name if student.classes else "N/A",
-                "school_name": student.school.school_name if student.school else "N/A",
-                # "location": student.school.location if student.school else "N/A",
-                # "email": student.email,
-                # "is_active": student.is_active,
-                "created_at": student.created_at,
-            })
+    # Apply filters
+    if student_id:
+        query = query.filter(Student.id == student_id)
 
-        return result
-
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
+    if student_name:
+        query = query.filter(
+            (Student.first_name.ilike(f"%{student_name}%")) |
+            (Student.last_name.ilike(f"%{student_name}%"))
         )
+
+    if school_name:
+        query = query.join(Student.school).filter(
+            School.school_name.ilike(f"%{school_name}%")
+        )
+
+    if status:
+        query = query.filter(Student.status == status)
+
+    # Total count BEFORE pagination
+    total_count = query.count()
+
+    # Apply pagination
+    students = (
+        query
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # Format student data
+    items = []
+    for student in students:
+        items.append({
+            "student_id": student.id,
+            "name": f"{student.first_name} {student.last_name}",
+            "class_name": student.classes.name if student.classes else "N/A",
+            "school_name": student.school.school_name if student.school else "N/A",
+            "status": student.status.value,
+            "created_at": student.created_at,
+        })
+
+    # Return paginated response
+    return pagination.format_response(items, total_count)
+
 @router.get("/student/{student_id}/")
 def get_student_details(
-    student_id: str,
+    student_id: int,
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
@@ -288,10 +371,12 @@ def get_student_details(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Associated user not found."
             )
+        last_exam = ( db.query(StudentExamData).filter(StudentExamData.student_id == student.id).order_by(StudentExamData.submitted_at.desc()).first())
 
         return {
             "student_id": student.id,
             "name": f"{student.first_name} {student.last_name}",
+            "profile_image": student.profile_image,
             "class_name": student.classes.name if student.classes else "N/A",
             "school_name": student.school.school_name if student.school else "N/A",
             # "location": student.school.location if student.school else "N/A",
@@ -299,6 +384,10 @@ def get_student_details(
             "district": student.school.district if student.school else "N/A",
             "state": student.school.state if student.school else "N/A",
             "location": user.location,
+            "last_appeared_exam":last_exam.submitted_at if last_exam else None,
+            "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
+            "exam_result":last_exam.result if last_exam else None,
+            "status": student.status,
             # "email": student.email,
             # "is_active": student.is_active,
             "created_at": student.created_at,
@@ -312,46 +401,73 @@ def get_student_details(
 
 @router.get("/all-teachers/")
 def get_all_teachers(
-    limit: int = 10,
-    offset: int = 0,
+    teacher_id: str = None,
+    teacher_name: str = None,
+    school_name: str = None,
+    status: str = None,   # active / inactive or whatever your enum is
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+
+    # Only admin can access
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view all teachers."
         )
 
-    try:
-        teachers = db.query(Teacher).options(joinedload(Teacher.school)).offset(offset).limit(limit).all()
-        if not teachers:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No teachers found."
-            )
+    # Base query (NO SCHOOL LIMIT)
+    query = (
+        db.query(Teacher)
+        .options(joinedload(Teacher.school))
+    )
 
-        result = []
-        for teacher in teachers:
-            school = db.query(School).filter(School.id == teacher.school_id).first()
-            result.append({
-                "teacher_id": teacher.id,
-                "name": f"{teacher.first_name} {teacher.last_name}",
-                "phone": teacher.phone,
-                "school_name": school.school_name if school else "N/A",
-                # "school_name": teacher.school.school_name if teacher.school else "N/A",
-                "email": teacher.email,
-                # "is_active": teacher.is_active,
-                "created_at": teacher.created_at,
-            })
+    # Apply filters
+    if teacher_id:
+        query = query.filter(Teacher.id == teacher_id)
 
-        return result
-
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
+    if teacher_name:
+        query = query.filter(
+            (Teacher.first_name.ilike(f"%{teacher_name}%")) |
+            (Teacher.last_name.ilike(f"%{teacher_name}%"))
         )
+
+    if school_name:
+        query = query.join(Teacher.school).filter(
+            School.school_name.ilike(f"%{school_name}%")
+        )
+
+    if status:
+        query = query.filter(Teacher.status == status)
+
+    # Total before pagination
+    total_count = query.count()
+
+    # Apply pagination
+    teachers = (
+        query
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+
+    # Build response data
+    items = []
+    for teacher in teachers:
+        items.append({
+            "teacher_id": teacher.id,
+            "name": f"{teacher.first_name} {teacher.last_name}",
+            "phone": teacher.phone,
+            "email": teacher.email,
+            "school_name": teacher.school.school_name if teacher.school else "N/A",
+            "status": teacher.status.value if hasattr(teacher, "status") else None,
+            "created_at": teacher.created_at,
+        })
+
+    # Return paginated response
+    return pagination.format_response(items, total_count)
+
 @router.get("/teacher/{teacher_id}/")
 def get_teacher_details(
     teacher_id: str,
@@ -383,15 +499,35 @@ def get_teacher_details(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Associated school not found."
-            )    
+            )
+        
+        assignments = (
+        db.query(TeacherClassSectionSubject)
+        .filter(TeacherClassSectionSubject.teacher_id == teacher.id)
+        .all()
+            )
+
+    # Build detailed assignment info
+        detailed_assignments = []
+        for a in assignments:
+            detailed_assignments.append({
+            "class_id": a.class_id,
+            "class_name": a.class_.name if a.class_ else None,
+            "section_id": a.section_id,
+            "section_name": a.section.name if a.section else None,
+            "subject_id": a.subject_id,
+            "subject_name": a.subject.name if a.subject else None,
+            })    
 
         return {
             "teacher_id": teacher.id,
+            "profile_image": teacher.profile_image,
             "name": f"{teacher.first_name} {teacher.last_name}",
             "phone": teacher.phone,
             "email": teacher.email,
             "school_name": school.school_name if school else "N/A",
             "location": user.location,
+            "assignments": detailed_assignments,
             # "is_active": teacher.is_active,
             "created_at": teacher.created_at,
         }
@@ -402,73 +538,113 @@ def get_teacher_details(
             detail=f"Database error occurred: {str(e)}"
         )
 
-@router.post("/class_subjects/")
-def add_class_subject(
-    class_subject: SchoolClassSubjectBase,
-    db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN))
-):
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to add class subjects."
-        )
-
-    try:
-        # ✅ Create SchoolClassSubject directly
-        new_class_subject = SchoolClassSubject(
-            school_board=class_subject.school_board,
-            school_medium=class_subject.school_medium,
-            class_name=class_subject.class_name,
-            subject=class_subject.subject
-        )
-
-        db.add(new_class_subject)
-        db.commit()
-        db.refresh(new_class_subject)
-        return {
-            "detail": "Class subject added successfully.",
-            "class_subject_id": new_class_subject.id
-        }
-
-    except SQLAlchemyError as e:
-        db.rollback()  # Important: rollback on error
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
-        )
-
 @router.get("/class_subjects/")
-def list_class_subjects(
+def get_class_subjects(
+    class_name: str = None,
+    school_board: str = None,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+    # Access check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=403,
             detail="Only admin account is allowed to view class subjects."
         )
 
     try:
-        class_subjects = db.query(SchoolClassSubject).all()
-        return [
-            {
-                "id": cs.id,
-                "school_board": cs.school_board,
-                "school_medium": cs.school_medium,
-                "class_name": cs.class_name,
-                "subject": cs.subject,
-                "created_at": cs.created_at,
-                "updated_at": cs.updated_at,
-            }
-            for cs in class_subjects
-        ]
+        query = db.query(SchoolClassSubject)
+
+        # 🔍 Apply Filters
+        if class_name:
+            query = query.filter(SchoolClassSubject.class_name.ilike(f"%{class_name}%"))
+
+        if school_board:
+            query = query.filter(cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%"))
+
+        # Count before pagination
+        total_count = query.count()
+
+        # Apply pagination
+        subjects = (
+            query
+            .offset(pagination.offset())
+            .limit(pagination.limit())
+            .all()
+        )
+
+        result = []
+        for obj in subjects:
+            result.append({
+                "id": obj.id,
+                "school_board": obj.school_board,
+                "school_medium": obj.school_medium,
+                "class_name": obj.class_name,
+                "subject": obj.subject,
+                "created_at": obj.created_at,
+            })
+
+        return pagination.format_response(result, total_count)
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+
+@router.post("/class_subjects/")
+def create_class_subjects(
+    payload: SchoolClassSubjectBase,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    # Access control
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to create class subjects."
+        )
+
+    try:
+        # 🔍 Check duplicate (class_name + subject + board + medium combo)
+        existing = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.class_name == payload.class_name,
+            SchoolClassSubject.subject == payload.subject,
+            SchoolClassSubject.school_board == payload.school_board,
+            SchoolClassSubject.school_medium == payload.school_medium
+        ).first()
+
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="This class + subject already exists for the given board and medium."
+            )
+
+        # Create record
+        new_record = SchoolClassSubject(
+            school_board=payload.school_board,
+            school_medium=payload.school_medium,
+            class_name=payload.class_name,
+            subject=payload.subject
+        )
+
+        db.add(new_record)
+        db.commit()
+        db.refresh(new_record)
+
+        return {
+            "detail": "Class subject created successfully.",
+            "class_subject_id": new_record.id
+        }
 
     except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+
 @router.get("/subjects/{subject_id}/chapters/")
 def get_chapters_by_subject(
     subject_id: int,
@@ -782,3 +958,532 @@ def get_available_credit(
         "transfer_credit": credit.transfer_credit or 0,
         "last_updated": credit.updated_at,
     }
+
+@router.post("/exams/")
+def create_exam(
+    payload: AdminExamCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+
+    # 1️⃣ Verify school mapping exists
+    scs = db.query(SchoolClassSubject).filter(
+        SchoolClassSubject.id == payload.school_class_subject_id
+    ).first()
+
+    if not scs:
+        raise HTTPException(
+            status_code=404,
+            detail="Invalid school_class_subject_id provided."
+        )
+
+    # 2️⃣ Optional duplicate prevention
+    existing_exam = db.query(AdminExam).filter(
+        AdminExam.name == payload.name,
+        AdminExam.school_class_subject_id == payload.school_class_subject_id
+    ).first()
+
+    if existing_exam:
+        raise HTTPException(
+            status_code=400,
+            detail="Exam with same name already exists for this class & subject."
+        )
+
+    try:
+        # 3️⃣ Create Exam
+        new_exam = AdminExam(
+            name=payload.name,
+            school_class_subject_id=payload.school_class_subject_id,
+            class_name=scs.class_name,
+            subject=scs.subject,
+            exam_type=payload.exam_type,
+            question_type=payload.question_type,
+            passing_mark=payload.passing_mark,
+            repeat=payload.repeat,
+            duration=payload.duration,
+            exam_validity=payload.exam_validity,
+            description=payload.description,
+            status=AdminExamStatus.ACTIVE
+        )
+
+        db.add(new_exam)
+        db.commit()
+        db.refresh(new_exam)
+
+        return {
+            "detail": "Exam created successfully.",
+            "exam_id": new_exam.id
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+
+@router.get("/exams/")
+def get_exams(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+
+    exams = db.query(AdminExam).all()
+
+    if not exams:
+        return {
+            "detail": "No exams found.",
+            "data": []
+        }
+
+    response = []
+
+    for exam in exams:
+        # Count students who attempted exam
+        student_count = db.query(StudentAdminExamData).filter(
+            StudentAdminExamData.exam_id == exam.id
+        ).count()
+
+        # Count number of questions added
+        question_count = db.query(AdminExamBank).filter(
+            AdminExamBank.exam_id == exam.id
+        ).count()
+
+        response.append({
+            "exam_id": exam.id,
+            "name": exam.name,
+            "class_name": exam.class_name,
+            "subject": exam.subject,
+            "exam_type": exam.exam_type,
+            "question_type": exam.question_type,
+            "passing_mark": exam.passing_mark,
+            "duration": exam.duration,
+            "repeat_allowed": exam.repeat,
+            "valid_until": exam.exam_validity,
+            "status": exam.status,
+            "no_of_questions": question_count,
+            "no_of_students_attempted": student_count
+        })
+
+    return {
+        "message": "Exam list retrieved successfully.",
+        "count": len(response),
+        "data": response
+    }
+
+@router.put("/exams/{exam_id}/")
+def update_exam(
+    exam_id: str,
+    payload: AdminExamUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+
+    # 1️⃣ Fetch the exam
+    exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+
+    if not exam:
+        raise HTTPException(
+            status_code=404,
+            detail="Exam not found."
+        )
+
+    # 2️⃣ Update fields dynamically
+    update_data = payload.dict(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(exam, field, value)
+
+    try:
+        db.commit()
+        db.refresh(exam)
+
+        return {
+            "detail": "Exam updated successfully.",
+            "exam_id": exam.id
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+@router.post("/add-questions/{exam_id}/")
+async def add_questions(
+    exam_id: str,
+    payload: ExamQuestionPayloadList,
+    db: Session = Depends(get_db)
+):
+    try:
+        exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+        if not exam:
+            raise HTTPException(status_code=404, detail="Exam not found")
+
+        questions_to_insert = []
+
+        for q in payload.questions:
+
+            if q.que_type not in ["short", "long"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported exam question type: {q.que_type}"
+                )
+
+            # --- COMMON FIELDS ---
+            db_entry = AdminExamBank(
+                exam_id=exam_id,
+                question=q.question,
+                que_type=q.que_type,
+                image=q.image
+            )
+
+            # --- SHORT TYPE (MCQ) ---
+            if q.que_type == "short":
+                if not (q.option_a and q.option_b and q.option_c and q.option_d and q.correct_option):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Short questions require options and correct_option"
+                    )
+
+                db_entry.option_a = q.option_a
+                db_entry.option_b = q.option_b
+                db_entry.option_c = q.option_c
+                db_entry.option_d = q.option_d
+                db_entry.correct_option = q.correct_option
+
+                # Clear descriptive fields
+                db_entry.descriptive_answer = None
+                db_entry.answer_keys = None
+
+            # --- LONG TYPE ---
+            elif q.que_type == "long":
+                if not (q.descriptive_answer and q.answer_keys):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Long questions require descriptive_answer and answer_keys"
+                    )
+
+                db_entry.descriptive_answer = q.descriptive_answer
+                db_entry.answer_keys = q.answer_keys
+
+                # Clear MCQ fields
+                db_entry.option_a = None
+                db_entry.option_b = None
+                db_entry.option_c = None
+                db_entry.option_d = None
+                db_entry.correct_option = None
+
+            questions_to_insert.append(db_entry)
+
+        db.add_all(questions_to_insert)
+        db.commit()
+
+        return {"message": "Questions added successfully", "count": len(questions_to_insert)}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error processing questions: {str(e)}")
+
+@router.get("/exams/{exam_id}/questions/")
+def get_exam_questions(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+):
+    # Check if exam exists
+    exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    # Fetch question list
+    questions = db.query(AdminExamBank).filter(AdminExamBank.exam_id == exam_id).all()
+
+    if not questions:
+        return []
+
+    response_data = []
+
+    for q in questions:
+        base = {
+            "id": q.id,
+            "question": q.question,
+            "que_type": q.que_type,
+            "image": q.image
+        }
+
+        if q.que_type == QuestionType.short:  # MCQ
+            base["options"] = {
+                "option_a": q.option_a,
+                "option_b": q.option_b,
+                "option_c": q.option_c,
+                "option_d": q.option_d
+            }
+
+            # Show answer only to ADMIN
+            if current_user.role == UserRole.ADMIN:
+                base["correct_option"] = q.correct_option
+
+        elif q.que_type == QuestionType.long:  # Descriptive
+            # Only admin sees answer
+            if current_user.role == UserRole.ADMIN:
+                base["descriptive_answer"] = q.descriptive_answer
+                base["answer_keys"] = q.answer_keys
+
+        response_data.append(base)
+
+    return response_data
+@router.get("/exams/{exam_id}/details/")
+def get_exam_details(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+):
+    # 1️⃣ Check if exam exists
+    exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    # 2️⃣ Count how many questions exist
+    total_questions = (
+        db.query(AdminExamBank)
+        .filter(AdminExamBank.exam_id == exam_id)
+        .count()
+    )
+
+    # 3️⃣ Count how many student entries exist (who appeared)
+    total_students_appeared = (
+        db.query(StudentAdminExamData)
+        .filter(StudentAdminExamData.exam_id == exam_id)
+        .count()
+    )
+
+    return {
+        "exam_id": exam.id,
+        "name": exam.name,
+        "exam_type": exam.exam_type.value,
+        "question_type": exam.question_type.value,
+        "class_name": exam.class_name,
+        "subject": exam.subject,
+        "duration": exam.duration,
+        "passing_mark": exam.passing_mark,
+        "total_questions": total_questions,
+        "total_students_appeared": total_students_appeared,
+        "status": exam.status.value,
+        "description": exam.description,
+        "exam_validity": exam.exam_validity
+    }
+@router.post("/set/")
+def create_question_set(
+    payload: QuestionSetCreate, 
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+    ):
+
+    # Check if set exists already
+    existing = db.query(QuestionSet).filter(
+        QuestionSet.board == payload.board,
+        QuestionSet.class_name == payload.class_name,
+        QuestionSet.set == payload.set
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Set '{payload.set}' already exists for board '{payload.board}' and class '{payload.class_name}'."
+        )
+
+    # Create
+    new_set = QuestionSet(
+        board=payload.board,
+        class_name=payload.class_name,
+        set=payload.set,
+        description=payload.description
+    )
+
+    db.add(new_set)
+    db.commit()
+    db.refresh(new_set)
+
+    return {
+        "message": "Question set created successfully",
+        "set_id": new_set.id
+    }
+
+@router.get("/set/")
+def list_question_sets(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+
+    result = (
+        db.query(
+            QuestionSet.id,
+            QuestionSet.board,
+            QuestionSet.class_name,
+            QuestionSet.set,
+            QuestionSet.created_at,
+            func.count(QuestionSetBank.id).label("question_count")
+        )
+        .outerjoin(QuestionSetBank, QuestionSet.id == QuestionSetBank.question_set_id)
+        .group_by(QuestionSet.id)
+        .order_by(QuestionSet.created_at.desc())
+        .all()
+    )
+
+    response = [
+        {
+            "id": row.id,
+            "name": f"{row.board} - Class {row.class_name}",
+            "set": row.set.value,
+            "class_name": row.class_name,
+            "num_of_questions": row.question_count,
+            "created_at": row.created_at
+        }
+        for row in result
+    ]
+
+    return response
+
+@router.get("/set/{set_id}/")
+def get_question_set_details(
+    set_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    # Fetch the set
+    question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
+
+    if not question_set:
+        raise HTTPException(status_code=404, detail="Question set not found")
+
+    return {
+        "id": question_set.id,
+        "board": question_set.board,
+        "class_name": question_set.class_name,
+        "set": question_set.set.value,
+        "description": question_set.description,
+        "created_at": question_set.created_at,
+        "updated_at": question_set.updated_at
+    }
+
+@router.post("/set/{set_id}/questions")
+def add_questions_to_set(
+    set_id: int,
+    payload: BulkQuestionCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    # Check if Set exists
+    question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
+    if not question_set:
+        raise HTTPException(status_code=404, detail="Question set not found")
+
+    created_questions = []
+
+    for item in payload.questions:
+        new_question = QuestionSetBank(
+            question_set_id=set_id,  # ✅ Correct field
+            subject=item.subject_id,    # If you're using school_class_subject id, change this to item.subject_id
+            year=item.year,
+            question=item.question,
+            probability_ratio=item.probability_ratio,
+            no_of_teacher_verified=item.teacher_verified_count
+        )
+        
+        db.add(new_question)
+        created_questions.append(new_question)
+
+    db.commit()
+
+    return {
+        "message": f"{len(created_questions)} question(s) added successfully to set {set_id}",
+        "added_count": len(created_questions)
+    }
+@router.get("/set/{set_id}/questions")
+def get_questions_by_set(
+    set_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN,UserRole.STUDENT))
+):
+    # Check if the set exists
+    question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
+    if not question_set:
+        raise HTTPException(status_code=404, detail="Question set not found")
+
+    # Fetch questions
+    questions = db.query(QuestionSetBank).filter(QuestionSetBank.question_set_id == set_id).all()
+
+    # Format response as list of dicts
+    response = []
+    for q in questions:
+        response.append({
+            "id": q.id,
+            "school_class_subject_id": q.subject,  # FK column
+            "subject": q.school_class_subject.subject if q.school_class_subject else "",
+            "class_name": q.school_class_subject.class_name if q.school_class_subject else None,
+            "year": q.year,
+            "probability_ratio": q.probability_ratio,
+            "no_of_teacher_verified": q.no_of_teacher_verified,
+            "question": q.question,
+            "created_at": q.created_at
+        })
+
+    return response
+@router.put("/set/question/{question_id}/")
+def update_question(
+    question_id: int,
+    payload: QuestionUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    # Fetch question
+    question = db.query(QuestionSetBank).filter(QuestionSetBank.id == question_id).first()
+
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # Update only fields sent in request
+    if payload.subject_id is not None:
+        question.subject = payload.subject_id
+
+    if payload.year is not None:
+        question.year = payload.year
+
+    if payload.probability_ratio is not None:
+        question.probability_ratio = payload.probability_ratio
+
+    if payload.no_of_teacher_verified is not None:
+        question.no_of_teacher_verified = payload.no_of_teacher_verified
+
+    if payload.question is not None:
+        question.question = payload.question
+
+    db.commit()
+    db.refresh(question)
+
+    return {"message": f"Question {question_id} updated successfully", "updated_question": question_id}
+
+@router.delete("/set/question/{question_id}/")
+def delete_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    # Retrieve question
+    question = db.query(QuestionSetBank).filter(QuestionSetBank.id == question_id).first()
+
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # Delete
+    db.delete(question)
+    db.commit()
+
+    return {"message": f"Question {question_id} deleted successfully"}
+
+
+
+
+

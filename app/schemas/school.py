@@ -303,6 +303,7 @@ class LeaveCreate(BaseModel):
     subject: str
     start_date: date
     end_date: date
+    leave_type: str
     description: Optional[str] = None
     attach_file: Optional[str] = None
 
@@ -313,6 +314,7 @@ class LeaveResponse(BaseModel):
     subject: str
     start_date: date
     end_date: date
+    leave_type: str
     description: Optional[str]
     status: str
     user_id: int

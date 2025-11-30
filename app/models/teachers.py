@@ -30,7 +30,7 @@ class Teacher(Base):
     highest_qualification = Column(String, nullable=False)
     university = Column(String, nullable=False)
     phone = Column(String(10), nullable=False)
-    email = Column(String, unique=True, nullable=False)           
+    email = Column(String, unique=True, nullable=False)
     start_duty = Column(Time, nullable=False)
     end_duty = Column(Time, nullable=False)
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)
