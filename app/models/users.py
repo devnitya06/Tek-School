@@ -28,10 +28,22 @@ class UserRoleEnum(TypeDecorator):
         """Convert database value back to enum when reading"""
         if value is None:
             return value
+        if isinstance(value, UserRole):
+            return value
         try:
+            # Try direct conversion first
             return UserRole(value)
         except ValueError:
-            return value
+            # Try case-insensitive matching by value
+            value_lower = str(value).lower()
+            for role in UserRole:
+                if role.value.lower() == value_lower:
+                    return role
+            # Try matching by enum name (e.g., "SCHOOL" -> UserRole.SCHOOL)
+            try:
+                return UserRole[value.upper()]
+            except (KeyError, AttributeError):
+                return value
 
 class User(Base):
     __tablename__ = "users"
