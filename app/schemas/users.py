@@ -13,6 +13,7 @@ class UserRole(str,Enum):
     SCHOOL = "school"
     TEACHER = "teacher"
     STUDENT  = "student" 
+    STAFF = "staff"
     
 # Base schema for user-related actions
 class UserBase(BaseModel):
