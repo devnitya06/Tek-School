@@ -1,10 +1,33 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric, Table, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from enum import Enum as PyEnum
 
 from app.db.session import Base
 
 import uuid
+
+
+class StaffPermissionType(str, PyEnum):
+    TEACHER = "teacher"
+    STUDENTS = "students"
+    CLASS_AND_TIMETABLE = "class_and_timetable"
+    EXAMS = "exams"
+    TRANSPORT = "transport"
+    PAYMENTS = "payments"
+    LEAVE_REQUEST = "leave_request"
+    HELP_DESK = "help_desk"
+
+
+# Many-to-many relationship table for Staff and Permissions
+staff_permissions = Table(
+    "staff_permissions",
+    Base.metadata,
+    Column("staff_id", String, ForeignKey("staff.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission", SQLEnum(StaffPermissionType), primary_key=True),
+    Column("granted_at", DateTime, server_default=func.now()),
+    Column("granted_by", Integer, ForeignKey("users.id"), nullable=True)  # School user who granted it
+)
 
 
 class Staff(Base):
@@ -28,6 +51,7 @@ class Staff(Base):
 
     school = relationship("School", back_populates="staff_members")
     user = relationship("User", back_populates="staff_profile")
+    attendances = relationship("Attendance", back_populates="staff")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

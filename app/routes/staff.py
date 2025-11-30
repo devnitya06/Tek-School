@@ -9,9 +9,11 @@ from app.db.session import get_db
 from app.models.school import School
 from app.models.staff import Staff
 from app.models.users import User
-from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest
+from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse
 from app.schemas.users import UserRole
+from app.models.staff import staff_permissions, StaffPermissionType
 from app.utils.email_utility import send_dynamic_email
+from app.utils.permission import get_staff_permissions
 
 router = APIRouter()
 
@@ -79,6 +81,19 @@ def create_staff(
             user_id=staff_user.id,
         )
         db.add(staff)
+        db.flush()  # Get staff.id
+        
+        # Add permissions if provided
+        if data.permissions:
+            for permission in data.permissions:
+                db.execute(
+                    staff_permissions.insert().values(
+                        staff_id=staff.id,
+                        permission=permission.value,
+                        granted_by=current_user.id
+                    )
+                )
+        
         db.commit()
         db.refresh(staff)
 
@@ -93,7 +108,7 @@ def create_staff(
         if "enum" in error_message.lower() and "userrole" in error_message.lower():
             field_name = "role"
             error_detail = f"Invalid role value. The 'role' field must be one of: superadmin, admin, school, teacher, student, staff"
-        # Check for unique constraint violations
+
         elif "unique" in error_message.lower() or "duplicate" in error_message.lower():
             if "email" in error_message.lower():
                 field_name = "email"
@@ -101,7 +116,7 @@ def create_staff(
             else:
                 field_name = "unknown"
                 error_detail = "A record with these values already exists"
-        # Check for foreign key violations
+
         elif "foreign key" in error_message.lower():
             if "school_id" in error_message.lower():
                 field_name = "school_id"
@@ -109,9 +124,9 @@ def create_staff(
             else:
                 field_name = "unknown"
                 error_detail = "Invalid reference to related record"
-        # Check for not null violations
+
         elif "not null" in error_message.lower() or "null value" in error_message.lower():
-            # Extract field name from error message
+
             match = re.search(r'column "(\w+)"', error_message)
             if match:
                 field_name = match.group(1)
@@ -121,7 +136,7 @@ def create_staff(
                 error_detail = "A required field is missing"
         # Check for data type errors
         elif "invalid input" in error_message.lower():
-            # Extract field name from error message
+
             match = re.search(r'for enum \w+: "(\w+)"', error_message)
             if match:
                 field_name = "role"
@@ -277,8 +292,7 @@ def update_staff_profile(
             raise HTTPException(status_code=404, detail=f"Staff with ID '{staff_id}' does not belong to your school.")
 
     try:
-        # Update User table fields (name, email, phone)
-        # Get the user associated with the staff being updated
+
         user = db.query(User).filter(User.id == staff.user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User record not found.")
@@ -308,7 +322,6 @@ def update_staff_profile(
             if value is not None:
                 setattr(staff, field, value)
 
-        # Also update staff email/phone if provided (to keep in sync)
         if data.email is not None:
             staff.email = data.email
         if data.phone is not None:
@@ -318,7 +331,6 @@ def update_staff_profile(
         db.refresh(staff)
         db.refresh(user)
 
-        # Calculate monthly salary
         monthly_salary = None
         if staff.annual_salary:
             monthly_salary = float(staff.annual_salary) / 12
@@ -349,4 +361,131 @@ def update_staff_profile(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update staff profile: {str(e)}") from e
+
+
+@router.put("/{staff_id}/permissions")
+def assign_staff_permissions(
+    staff_id: str,
+    data: StaffPermissionAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Assign/Update permissions for a staff member. Only SCHOOL users can assign permissions.
+    This replaces all existing permissions with the new ones.
+    """
+    if current_user.role != "SCHOOL":
+        raise HTTPException(status_code=403, detail="Only school users can assign staff permissions.")
+
+    school = getattr(current_user, "school_profile", None)
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found for the current user.")
+
+    staff = db.query(Staff).filter(
+        Staff.id == staff_id,
+        Staff.school_id == school.id
+    ).first()
+    
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found or doesn't belong to your school.")
+
+    try:
+        db.execute(
+            staff_permissions.delete().where(staff_permissions.c.staff_id == staff_id)
+        )
+        
+        for permission in data.permissions:
+            db.execute(
+                staff_permissions.insert().values(
+                    staff_id=staff_id,
+                    permission=permission.value,
+                    granted_by=current_user.id
+                )
+            )
+        
+        db.commit()
+        
+        updated_permissions = get_staff_permissions(staff_id, db)
+        
+        return {
+            "detail": "Staff permissions updated successfully.",
+            "staff_id": staff_id,
+            "staff_name": f"{staff.first_name} {staff.last_name}",
+            "permissions": updated_permissions
+        }
+    
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}") from e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update staff permissions: {str(e)}") from e
+
+
+@router.get("/{staff_id}/permissions")
+def get_staff_permissions_endpoint(
+    staff_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get permissions for a staff member.
+    - SCHOOL users can view any staff member's permissions from their school
+    - STAFF users can only view their own permissions
+    """
+    if current_user.role not in ["STAFF", "SCHOOL"]:
+        raise HTTPException(status_code=403, detail="Only staff members and school users can view permissions.")
+    
+    staff = None
+    
+    if current_user.role == "STAFF":
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        if staff.id != staff_id:
+            raise HTTPException(status_code=403, detail="You can only view your own permissions.")
+    elif current_user.role == "SCHOOL":
+        school = getattr(current_user, "school_profile", None)
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found for the current user.")
+        
+        staff = db.query(Staff).filter(
+            Staff.id == staff_id,
+            Staff.school_id == school.id
+        ).first()
+        
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff not found or doesn't belong to your school.")
+    
+    permissions = get_staff_permissions(staff_id, db)
+    
+    return {
+        "staff_id": staff.id,
+        "staff_name": f"{staff.first_name} {staff.last_name}",
+        "permissions": permissions
+    }
+
+
+@router.get("/permissions/my")
+def get_my_permissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get current staff user's own permissions.
+    """
+    if current_user.role != "STAFF":
+        raise HTTPException(status_code=403, detail="Only staff members can view their own permissions.")
+    
+    staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff profile not found.")
+    
+    permissions = get_staff_permissions(staff.id, db)
+    
+    return {
+        "staff_id": staff.id,
+        "staff_name": f"{staff.first_name} {staff.last_name}",
+        "permissions": permissions
+    }
 

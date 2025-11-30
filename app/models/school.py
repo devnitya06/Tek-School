@@ -228,16 +228,19 @@ class Attendance(Base):
 
     student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
     teachers_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    staff_id = Column(String, ForeignKey("staff.id"), nullable=True)
     date = Column(Date, nullable=False)
     status = Column(String(1), nullable=False)
     is_verified = Column(Boolean, nullable=True)
     student = relationship("Student", back_populates="attendances")
     teacher = relationship("Teacher", back_populates="attendances")
+    staff = relationship("Staff", back_populates="attendances")
     is_today_present = Column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
         UniqueConstraint('student_id','date', name='uq_student_attendance'),
         UniqueConstraint('teachers_id','date', name='uq_teacher_attendance'),
+        UniqueConstraint('staff_id','date', name='uq_staff_attendance'),
     )
     def update_today_status(self):
         """Automatically set is_today_present based on whether date == today."""

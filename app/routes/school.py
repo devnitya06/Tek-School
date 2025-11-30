@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Que
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student
+from app.models.staff import Staff
 from app.models.school import (
     School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,
     class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,
@@ -1234,7 +1235,7 @@ def get_school_dashboard(
 def create_attendance(
     data: AttendanceCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
+    current_user=Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF)),
 ):
     start = timer()
     try:
@@ -1272,6 +1273,44 @@ def create_attendance(
 
             is_verified = False  # Teacher attendance must be verified later by school
 
+        # ✅ Handle Staff Attendance
+        elif data.staff_id:
+            if current_user.role == UserRole.SCHOOL:
+                staff = db.query(Staff).filter(
+                    Staff.id == data.staff_id,
+                    Staff.school_id == current_user.school_profile.id
+                ).first()
+                if not staff:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Staff not found or not in your school."
+                    )
+
+            elif current_user.role == UserRole.STAFF:
+                staff_profile = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+                if not staff_profile:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Staff profile not found."
+                    )
+                if str(staff_profile.id) != str(data.staff_id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Staff can only mark their own attendance."
+                    )
+
+            existing = db.query(Attendance).filter_by(
+                staff_id=data.staff_id,
+                date=data.date
+            ).first()
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Attendance already recorded for this staff on this date."
+                )
+
+            is_verified = False  # Staff attendance must be verified later by school
+
         # ✅ Handle Student Attendance
         elif data.student_id:
             school_id = (
@@ -1307,7 +1346,7 @@ def create_attendance(
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Either student_id or teachers_id is required."
+                detail="Either student_id, teachers_id, or staff_id is required."
             )
 
         # ✅ Determine if today’s attendance
@@ -1317,10 +1356,11 @@ def create_attendance(
         attendance = Attendance(
             student_id=data.student_id,
             teachers_id=data.teachers_id,
+            staff_id=data.staff_id,
             date=data.date,
             status=data.status,
             is_verified=is_verified,
-            is_today_present=is_today_present,  # 👈 NEW FIELD
+            is_today_present=is_today_present,
         )
 
         db.add(attendance)
@@ -1365,7 +1405,48 @@ def verify_teacher_attendance(
     db.commit()
     db.refresh(attendance)
 
-    return {"detail": "Teacher attendance verified successfully."}   
+    return {"detail": "Teacher attendance verified successfully."}
+
+
+@router.post("/attendance/staff-attendance/verify/{attendance_id}") 
+def verify_staff_attendance(
+    attendance_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    Verify staff attendance. Only SCHOOL users can verify staff attendance.
+    """
+    attendance = db.query(Attendance).filter(
+        Attendance.id == attendance_id,
+        Attendance.staff_id.isnot(None)
+    ).first()
+
+    if not attendance:
+        raise HTTPException(status_code=404, detail="Staff attendance not found.")
+
+    if attendance.is_verified:
+        raise HTTPException(status_code=400, detail="Attendance already verified.")
+
+    # Verify staff belongs to the school
+    staff = db.query(Staff).filter(Staff.id == attendance.staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found.")
+
+    school = getattr(current_user, "school_profile", None)
+    if not school or staff.school_id != school.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only verify attendance for staff in your school."
+        )
+
+    attendance.is_verified = True
+    db.commit()
+    db.refresh(attendance)
+
+    return {"detail": "Staff attendance verified successfully."}
+
+
 @router.get("/student/{student_id}/month/{year}/{month}")
 def get_student_attendance_monthwise(student_id: int, year: int, month: int, db: Session = Depends(get_db)):
     import calendar
@@ -1435,6 +1516,52 @@ def get_teacher_attendance_monthwise(
         "month": f"{year}-{month:02}",
         "attendance": status_list
     }
+
+
+@router.get("/staff/{staff_id}/month/{year}/{month}")
+def get_staff_attendance_monthwise(
+    staff_id: str,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get staff attendance for a specific month.
+    Returns an array with attendance status for each day (P=Present, A=Absent, etc.)
+    """
+    import calendar
+    from datetime import date, datetime
+
+    today = datetime.today().date()
+    days_in_month = calendar.monthrange(year, month)[1]
+
+    # End date should be min(last day of month, today)
+    end_day = days_in_month if (year, month) < (today.year, today.month) else min(today.day, days_in_month)
+
+    start_date = date(year, month, 1)
+    end_date = date(year, month, end_day)
+
+    # Fetch attendance records
+    records = db.query(Attendance).filter(
+        Attendance.staff_id == staff_id,
+        Attendance.date.between(start_date, end_date)
+    ).all()
+
+    record_map = {r.date: r.status for r in records}
+
+    # Build day-wise status list
+    status_list = [
+        record_map.get(date(year, month, day), "A")  # default "A" if no record
+        for day in range(1, end_day + 1)
+    ]
+
+    return {
+        "staff_id": staff_id,
+        "month": f"{year}-{month:02}",
+        "attendance": status_list
+    }
+
+
 @router.post("/create-time-table/")
 def create_timetable(
     data: TimetableCreate,

@@ -147,6 +147,7 @@ class TransportResponse(BaseModel):
 class AttendanceCreate(BaseModel):
     student_id: Optional[int]=None
     teachers_id: Optional[str]=None
+    staff_id: Optional[str]=None
     date: date
     status: str = Field(..., max_length=1)
     is_verified:bool =Field(default=True)

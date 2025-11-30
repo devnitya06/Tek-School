@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from decimal import Decimal
+from app.models.staff import StaffPermissionType
 
 
 class StaffBase(BaseModel):
@@ -27,6 +28,7 @@ class StaffCreateRequest(StaffBase):
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+    permissions: Optional[List[StaffPermissionType]] = None
 
     @field_validator("password")
     def validate_password(cls, value: str) -> str:
@@ -68,6 +70,20 @@ class StaffResponse(StaffBase):
     casual_leave: Optional[int] = None
     is_active: bool
     created_at: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class StaffPermissionAssignRequest(BaseModel):
+    permissions: List[StaffPermissionType]
+
+
+class StaffPermissionResponse(BaseModel):
+    permissions: List[str]
+    staff_id: str
+    staff_name: str
 
     model_config = {
         "from_attributes": True
