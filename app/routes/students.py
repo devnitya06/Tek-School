@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
+from app.models.staff import Staff
 from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate
 from datetime import timezone
@@ -17,6 +18,8 @@ from datetime import datetime, timedelta,date
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
+from app.utils.staff_logging import log_action
+from app.models.staff import ActionType, ResourceType
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -24,24 +27,29 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow only SCHOOL or TEACHER
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
+    # ✅ Allow SCHOOL, TEACHER, or STAFF
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only schools or teachers can create students."
+            detail="Only schools, teachers, or staff can create students."
         )
 
     # ✅ Get the correct school_id based on the role
     if current_user.role == UserRole.SCHOOL:
         school = getattr(current_user, "school_profile", None)
         if not school:
-            raise HTTPException(status_code=400, detail="School profile not found.")
+            raise HTTPException(status_code=404, detail="School profile not found.")
         school_id = school.id
-    else:  # current_user.role == UserRole.TEACHER
+    elif current_user.role == UserRole.TEACHER:
         teacher = getattr(current_user, "teacher_profile", None)
         if not teacher:
-            raise HTTPException(status_code=400, detail="Teacher profile not found.")
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
         school_id = teacher.school_id
+    else:  # current_user.role == UserRole.STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # ✅ Check if email already exists
     existing = db.query(User).filter(User.email == data.email).first()
@@ -117,6 +125,17 @@ def create_student(
                 "verification_link": verification_link,
             },
             db=db
+        )
+
+        # Log action
+        log_action(
+            db=db,
+            current_user=current_user,
+            action_type=ActionType.CREATE,
+            resource_type=ResourceType.STUDENT,
+            resource_id=str(student.id),
+            description=f"Created student: {data.first_name} {data.last_name}",
+            metadata={"student_id": student.id, "roll_no": data.roll_no, "class_id": data.class_id}
         )
 
         return {
@@ -539,6 +558,18 @@ def update_student(
     try:
         db.commit()
         db.refresh(student)
+        
+        # Log action
+        log_action(
+            db=db,
+            current_user=current_user,
+            action_type=ActionType.UPDATE,
+            resource_type=ResourceType.STUDENT,
+            resource_id=str(student.id),
+            description=f"Updated student: {student.first_name} {student.last_name}",
+            metadata={"student_id": student.id, "updated_fields": list(update_data.keys())}
+        )
+        
         return {"detail": "Student profile updated successfully."}
     except Exception as e:
         db.rollback()

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric, Table, Enum as SQLEnum
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric, Table, Enum as SQLEnum, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
@@ -57,4 +57,39 @@ class Staff(Base):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"STF-{str(uuid.uuid4().int)[:6]}"
+
+
+class ActionType(str, PyEnum):
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    APPROVE = "approve"
+    DECLINE = "decline"
+
+
+class ResourceType(str, PyEnum):
+    STUDENT = "student"
+    TEACHER = "teacher"
+    LEAVE_REQUEST = "leave_request"
+    CLASS = "class"
+    TRANSPORT = "transport"
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # User who performed the action
+    user_role = Column(String, nullable=False)  # Role of the user (school, staff, teacher, etc.)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
+    action_type = Column(SQLEnum(ActionType), nullable=False)  # create, update, delete, approve, decline
+    resource_type = Column(SQLEnum(ResourceType), nullable=False)  # student, teacher, leave_request, class, transport
+    resource_id = Column(String, nullable=True)  # ID of the resource that was acted upon
+    description = Column(Text, nullable=True)  # Human-readable description
+    action_metadata = Column(JSON, nullable=True)  # Additional data about the action
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    user = relationship("User", backref="activity_logs")
+    school = relationship("School", backref="activity_logs")
 

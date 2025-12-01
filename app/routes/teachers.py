@@ -3,6 +3,7 @@ from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
+from app.models.staff import Staff
 from app.schemas.users import UserRole
 from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest
 from sqlalchemy.exc import SQLAlchemyError
@@ -16,6 +17,8 @@ from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
+from app.utils.staff_logging import log_action
+from app.models.staff import ActionType, ResourceType
 router = APIRouter()
 
 
@@ -25,24 +28,35 @@ def create_teacher(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    print(current_user.role)
-    print(UserRole.SCHOOL)
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can create teachers.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can create teachers."
+        )
     
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(status_code=400, detail="Email already exists.")
 
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=400, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     try:
         # Upload teacher profile image if provided
         profile_pic_url = None
         if data.profile_image:
             try:
-                profile_pic_url = upload_base64_to_s3(data.profile_image, f"schools/{current_user.id}/teachers/profile")
+                profile_pic_url = upload_base64_to_s3(data.profile_image, f"schools/{school.id}/teachers/profile")
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
 
@@ -106,6 +120,17 @@ def create_teacher(
                 "verification_link": verification_link,
             },
             db=db
+        )
+
+        # Log action
+        log_action(
+            db=db,
+            current_user=current_user,
+            action_type=ActionType.CREATE,
+            resource_type=ResourceType.TEACHER,
+            resource_id=teacher.id,
+            description=f"Created teacher: {data.first_name} {data.last_name}",
+            metadata={"teacher_id": teacher.id, "email": data.email}
         )
 
         return {
@@ -409,6 +434,17 @@ def update_teacher_profile(
 
         db.commit()
         db.refresh(teacher)
+
+        # Log action
+        log_action(
+            db=db,
+            current_user=current_user,
+            action_type=ActionType.UPDATE,
+            resource_type=ResourceType.TEACHER,
+            resource_id=teacher.id,
+            description=f"Updated teacher: {teacher.first_name} {teacher.last_name}",
+            metadata={"teacher_id": teacher.id, "updated_fields": list(update_fields.keys())}
+        )
 
         return {
             "detail": "Teacher profile updated successfully."

@@ -42,6 +42,8 @@ from app.services.students import update_class_ranks
 from app.services.pagination import PaginationParams
 from enum import Enum
 from app.utils.s3 import upload_base64_to_s3
+from app.utils.staff_logging import log_action
+from app.models.staff import ActionType, ResourceType
 router = APIRouter()
 
 def timer():
@@ -315,17 +317,25 @@ def create_class(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # ✅ Only school users
-    if current_user.role != UserRole.SCHOOL:
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school users can create classes"
+            detail="Only school and staff users can create classes"
         )
 
-    # ✅ Get school
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School not found")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
 
     # ✅ Check duplicate class
     existing_class = db.query(Class).filter(
@@ -413,6 +423,17 @@ def create_class(
         )
 
     db.commit()
+
+    # Log action
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.CREATE,
+        resource_type=ResourceType.CLASS,
+        resource_id=str(new_class.id),
+        description=f"Created class: {class_data.class_name} with {len(class_data.sections)} sections and {len(class_data.subjects)} subjects",
+        metadata={"class_id": new_class.id, "class_name": class_data.class_name, "sections_count": len(class_data.sections), "subjects_count": len(class_data.subjects)}
+    )
 
     return {
         "detail": "Class created successfully with all associated data",
@@ -998,13 +1019,25 @@ def create_transport(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can create transport records.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can create transport records."
+        )
 
-    # Get school profile
-    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
-    if not school:
-        raise HTTPException(status_code=400, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     # Check for duplicate vehicle
     existing = db.query(Transport).filter(
@@ -1040,7 +1073,18 @@ def create_transport(
         )
         db.add(drop)
     db.commit()
-    db.refresh(transport)        
+    db.refresh(transport)
+
+    # Log action
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.CREATE,
+        resource_type=ResourceType.TRANSPORT,
+        resource_id=str(transport.id),
+        description=f"Created transport: {data.vehicle_name} ({data.vehicle_number}) with driver {data.driver_name}",
+        metadata={"transport_id": transport.id, "vehicle_number": data.vehicle_number, "driver_name": data.driver_name}
+    )
 
     return {"detail": "Transport created successfully", "transport_id": transport.id}
 
@@ -1097,6 +1141,17 @@ def update_transport(
 
     db.commit()
     db.refresh(transport)
+
+    # Log action
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.UPDATE,
+        resource_type=ResourceType.TRANSPORT,
+        resource_id=str(transport.id),
+        description=f"Updated transport: {transport.vechicle_name} ({transport.vechicle_number})",
+        metadata={"transport_id": transport.id, "updated_fields": list(update_data.keys())}
+    )
 
     return {"detail": "Transport updated successfully"}
 
@@ -1241,7 +1296,6 @@ def create_attendance(
     start = timer()
     try:
         is_verified = True  # Default for students unless overwritten later
-
         # ✅ Handle Teacher Attendance
         if data.teachers_id:
             if current_user.role == UserRole.SCHOOL:
@@ -2860,14 +2914,38 @@ def update_leave_status(
     current_user=Depends(get_current_user)
 ):
     """
-    School can approve or decline leave requests and return full leave info.
+    School and staff can approve or decline leave requests and return full leave info.
     """
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can update leave status")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can update leave status"
+        )
 
     leave = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
+
+    # ✅ Verify the leave request belongs to the same school
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        if leave.school_id != school.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Leave request does not belong to your school"
+            )
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        if leave.school_id != staff.school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Leave request does not belong to your school"
+            )
 
     status_value = status.status.lower()  # extract string from model
 
@@ -2891,6 +2969,18 @@ def update_leave_status(
         user_id = None
         user_name = None
         role = None
+
+    # Log action
+    action = ActionType.APPROVE if status_value == "approved" else ActionType.DECLINE
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=action,
+        resource_type=ResourceType.LEAVE_REQUEST,
+        resource_id=str(leave.id),
+        description=f"{status_value.capitalize()} leave request for {user_name} ({role})",
+        metadata={"leave_id": leave.id, "user_name": user_name, "role": role, "subject": leave.subject}
+    )
 
     return {
         "status": "success",

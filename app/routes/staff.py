@@ -7,13 +7,15 @@ from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.school import School
-from app.models.staff import Staff
+from app.models.staff import Staff, ActivityLog, staff_permissions, StaffPermissionType
 from app.models.users import User
-from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse
+from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse, ActivityLogResponse
 from app.schemas.users import UserRole
-from app.models.staff import staff_permissions, StaffPermissionType
 from app.utils.email_utility import send_dynamic_email
-from app.utils.permission import get_staff_permissions
+from app.utils.permission import get_staff_permissions, require_roles
+from app.services.pagination import PaginationParams
+from sqlalchemy import func
+from typing import Optional
 
 router = APIRouter()
 
@@ -38,7 +40,7 @@ def create_staff(
     Creates both User and Staff profile, then emails credentials to the staff member.
     """
     # Permission check: Only SCHOOL role can create staff
-    if current_user.role != "SCHOOL":
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school accounts can create staff members.")
 
     # Validate email uniqueness
@@ -185,16 +187,16 @@ def get_staff_profile(
     - School users can view any staff profile from their school (staff_id is required)
     """
 
-    if current_user.role not in ["STAFF", "SCHOOL"]:
+    if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can access staff profiles.")
 
     staff = None
     
-    if current_user.role == "STAFF":
+    if current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
-    elif current_user.role == "SCHOOL":
+    elif current_user.role == UserRole.SCHOOL:
         if not staff_id:
             raise HTTPException(status_code=400, detail="staff_id is required when accessing as school user.")
 
@@ -260,17 +262,17 @@ def update_staff_profile(
     - Monthly Salary (auto-calculated from annual salary)
     - Emergency Leave, Casual Leave (auto)
     """
-    if current_user.role not in ["STAFF", "SCHOOL"]:
+    if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can update staff profiles.")
 
     staff = None
     
-    if current_user.role == "STAFF":
+    if current_user.role == UserRole.STAFF:
         # Staff updating their own profile
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
-    elif current_user.role == "SCHOOL":
+    elif current_user.role == UserRole.SCHOOL:
         # School updating a specific staff profile
         if not staff_id:
             raise HTTPException(status_code=400, detail="staff_id is required when updating as school user.")
@@ -374,7 +376,7 @@ def assign_staff_permissions(
     Assign/Update permissions for a staff member. Only SCHOOL users can assign permissions.
     This replaces all existing permissions with the new ones.
     """
-    if current_user.role != "SCHOOL":
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can assign staff permissions.")
 
     school = getattr(current_user, "school_profile", None)
@@ -433,18 +435,18 @@ def get_staff_permissions_endpoint(
     - SCHOOL users can view any staff member's permissions from their school
     - STAFF users can only view their own permissions
     """
-    if current_user.role not in ["STAFF", "SCHOOL"]:
+    if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can view permissions.")
     
     staff = None
     
-    if current_user.role == "STAFF":
+    if current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
         if staff.id != staff_id:
             raise HTTPException(status_code=403, detail="You can only view your own permissions.")
-    elif current_user.role == "SCHOOL":
+    elif current_user.role == UserRole.SCHOOL:
         school = getattr(current_user, "school_profile", None)
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found for the current user.")
@@ -474,7 +476,7 @@ def get_my_permissions(
     """
     Get current staff user's own permissions.
     """
-    if current_user.role != "STAFF":
+    if current_user.role != UserRole.STAFF:
         raise HTTPException(status_code=403, detail="Only staff members can view their own permissions.")
     
     staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
@@ -488,4 +490,136 @@ def get_my_permissions(
         "staff_name": f"{staff.first_name} {staff.last_name}",
         "permissions": permissions
     }
+
+
+@router.get("/activity-logs/", response_model=dict)
+def get_activity_logs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    pagination: PaginationParams = Depends(),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    action_type: Optional[str] = Query(None, description="Filter by action type (create, update, delete, approve, decline)"),
+    resource_type: Optional[str] = Query(None, description="Filter by resource type (student, teacher, leave_request, class, transport)"),
+):
+    """
+    Get activity logs for all users.
+    - School users can see all logs for their school
+    - Staff users can see all logs for their school
+    """
+    # Determine school_id
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        school_id = school.id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+    
+    # Build query
+    query = db.query(ActivityLog).filter(ActivityLog.school_id == school_id)
+    
+    # Apply filters
+    if user_id:
+        query = query.filter(ActivityLog.user_id == user_id)
+    if action_type:
+        query = query.filter(ActivityLog.action_type == action_type)
+    if resource_type:
+        query = query.filter(ActivityLog.resource_type == resource_type)
+    
+    # Get total count
+    total_count = query.count()
+    
+    # Get paginated results
+    logs = (
+        query.order_by(ActivityLog.created_at.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    
+    # Format response with user names
+    result = []
+    for log in logs:
+        user = db.query(User).filter(User.id == log.user_id).first()
+        user_name = user.name if user else None
+        result.append({
+            "id": log.id,
+            "user_id": log.user_id,
+            "user_name": user_name,
+            "user_role": log.user_role,
+            "school_id": log.school_id,
+            "action_type": log.action_type.value,
+            "resource_type": log.resource_type.value,
+            "resource_id": log.resource_id,
+            "description": log.description,
+            "action_metadata": log.action_metadata,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        })
+    
+    return pagination.format_response(result, total_count)
+
+
+@router.get("/staff-list/", response_model=dict)
+def get_staff_list(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+    pagination: PaginationParams = Depends(),
+    staff_name: Optional[str] = Query(None, description="Filter by staff name"),
+):
+    """
+    Get list of all staff members under the school.
+    Only school users can access this endpoint.
+    Returns: staff name, permissions, roll number (staff.id), date of joining, and activity logs count.
+    """
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    
+    # Build base query for staff
+    query = db.query(Staff).filter(Staff.school_id == school.id)
+    
+    # Apply name filter
+    if staff_name:
+        query = query.filter(
+            (Staff.first_name.ilike(f"%{staff_name}%")) |
+            (Staff.last_name.ilike(f"%{staff_name}%"))
+        )
+    
+    # Get total count before pagination
+    total_count = query.count()
+    
+    # Get paginated staff
+    staff_members = (
+        query.order_by(Staff.created_at.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    
+    # Build response with permissions and activity log counts
+    result = []
+    for staff in staff_members:
+        # Get permissions for this staff
+        permissions = get_staff_permissions(staff.id, db)
+        
+        # Count activity logs for this staff's user
+        activity_logs_count = db.query(ActivityLog).filter(
+            ActivityLog.user_id == staff.user_id,
+            ActivityLog.school_id == school.id
+        ).count()
+        
+        result.append({
+            "staff_id": staff.id,
+            "staff_name": f"{staff.first_name} {staff.last_name}",
+            "roll_number": staff.id,  # Using staff.id as roll number
+            "permissions": permissions,
+            "date_of_joining": staff.created_at.isoformat() if staff.created_at else None,
+            "activity_logs_count": activity_logs_count
+        })
+    
+    return pagination.format_response(result, total_count)
 

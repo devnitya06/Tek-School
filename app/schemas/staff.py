@@ -1,7 +1,8 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Dict, Any
 from decimal import Decimal
-from app.models.staff import StaffPermissionType
+from datetime import datetime
+from app.models.staff import StaffPermissionType, ActionType, ResourceType
 
 
 class StaffBase(BaseModel):
@@ -69,7 +70,7 @@ class StaffResponse(StaffBase):
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
     is_active: bool
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
     model_config = {
         "from_attributes": True
@@ -84,6 +85,24 @@ class StaffPermissionResponse(BaseModel):
     permissions: List[str]
     staff_id: str
     staff_name: str
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class ActivityLogResponse(BaseModel):
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    user_role: str
+    school_id: str
+    action_type: str
+    resource_type: str
+    resource_id: Optional[str] = None
+    description: Optional[str] = None
+    action_metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
 
     model_config = {
         "from_attributes": True
