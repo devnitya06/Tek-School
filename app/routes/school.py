@@ -19,17 +19,17 @@ from app.schemas.school import (
     PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
     McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
     TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
-    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum)
+    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum,ExamFilterParams )
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
-from sqlalchemy import delete, insert,extract,case
+from sqlalchemy import delete, insert,extract,case,cast,String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
 from typing import List,Optional
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
-from sqlalchemy import func,and_
+from sqlalchemy import func,and_,or_
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from app.utils.razorpay_client import razorpay_client
 import hmac
@@ -2167,49 +2167,74 @@ def list_exams(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     pagination: PaginationParams = Depends(),
+    filters: ExamFilterParams = Depends()
 ):
-    # ----- SCHOOL -----
+
+    query = db.query(Exam)
+
+    # ----- ROLE BASED FILTER -----
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found")
 
-        query = (
-            db.query(Exam)
-            .filter(
-                Exam.school_id == school.id,
-                Exam.is_published == True
-            )
+        query = query.filter(
+            Exam.school_id == school.id,
+            Exam.is_published == True
         )
 
-    # ----- TEACHER -----
     elif current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
-        query = db.query(Exam).filter(Exam.created_by == teacher.id)
+        query = query.filter(Exam.created_by == teacher.id)
 
-    # ----- STUDENT -----
     elif current_user.role == UserRole.STUDENT:
         student = db.query(Student).filter(Student.user_id == current_user.id).first()
         if not student:
             raise HTTPException(status_code=404, detail="Student profile not found")
 
-        query = (
-            db.query(Exam)
-            .join(Exam.sections)
-            .filter(
-                Exam.school_id == student.school_id,
-                Exam.class_id == student.class_id,
-                Section.id == student.section_id,
-                Exam.status == ExamStatusEnum.ACTIVE,
-                Exam.is_published == True
-            )
+        query = query.join(Exam.sections).filter(
+            Exam.school_id == student.school_id,
+            Exam.class_id == student.class_id,
+            Section.id == student.section_id,
+            Exam.status == ExamStatusEnum.ACTIVE,
+            Exam.is_published == True
         )
-
     else:
         raise HTTPException(status_code=403, detail="Invalid role for viewing exams.")
 
-    # ✅ Apply pagination
+    # ----- APPLY SEARCH FILTERS -----
+
+    if filters.exam_name_or_id:
+        search = f"%{filters.exam_name_or_id.strip()}%"
+        query = query.filter(
+        or_(
+            cast(Exam.id, String).ilike(search),  # exam_id match
+
+            # If you later add an exam name column, it will match here
+            # cast(Exam.name, String).ilike(search)
+        )
+    )
+
+    if filters.exam_type:
+        query = query.filter(Exam.exam_type == filters.exam_type)
+
+    if filters.subject_id:
+        query = query.join(Subject).filter(Subject.id.ilike(f"%{filters.subject_id}%"))
+
+    if filters.teacher_name:
+        query = query.join(Teacher).filter(
+            (Teacher.first_name + " " + Teacher.last_name).ilike(f"%{filters.teacher_name}%")
+        )
+
+    if filters.from_date:
+        query = query.filter(Exam.created_at >= filters.from_date)
+
+    if filters.to_date:
+        query = query.filter(Exam.created_at <= filters.to_date)
+
+    # ----- PAGINATION -----
     total_count = query.count()
+
     exams = (
         query.order_by(Exam.created_at.desc())
         .offset(pagination.offset())
@@ -2217,7 +2242,7 @@ def list_exams(
         .all()
     )
 
-    # ✅ Serialize response
+    # ----- SERIALIZATION -----
     exam_list = [
         ExamListResponse(
             id=exam.id,
@@ -2242,8 +2267,8 @@ def list_exams(
         for exam in exams
     ]
 
-    # ✅ Return paginated response
     return pagination.format_response(exam_list, total_count)
+
 @router.get("/exams/{exam_id}/", response_model=ExamDetailResponse)
 def get_exam_detail(
     exam_id: str,
@@ -2320,13 +2345,6 @@ def update_exam(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ✅ Only school users can update exams
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update exam."
-        )
-
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
         raise HTTPException(
@@ -2334,46 +2352,66 @@ def update_exam(
             detail="Exam not found."
         )
 
+    # --------------------------------------
+    # ROLE BASED ACCESS
+    # --------------------------------------
+
+    # If School → full permission
+    if current_user.role == UserRole.SCHOOL:
+        pass  # no restrictions
+
+    # If Teacher → must be owner AND exam must be pending
+    elif current_user.role == UserRole.TEACHER:
+
+        # Verify teacher exists
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher record not found.")
+
+        # Check if this teacher created the exam
+        if exam.created_by  != teacher.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to update this exam."
+            )
+
+        # Ensure exam status is pending only
+        if exam.status != ExamStatusEnum.PENDING:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only update exams that are in pending status."
+            )
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to update exam."
+        )
+
+    # --------------------------------------
+    # UPDATE EXAM DETAILS
+    # --------------------------------------
     try:
-        # ✅ Update basic scalar fields
         update_data = data.dict(exclude_unset=True)
 
-        # Remove relationship fields from direct setattr update
-        sections_data = update_data.pop("sections", None)
+        sections_data = update_data.pop("section_ids", None)
         chapters_data = update_data.pop("chapters", None)
 
+        # Update normal fields
         for key, value in update_data.items():
             setattr(exam, key, value)
 
-        # ✅ Update sections if provided
+        # Update sections if provided
         if sections_data is not None:
-            section_objs = (
-                db.query(Section)
-                .filter(Section.id.in_(sections_data))
-                .all()
-            )
-            if not section_objs and sections_data:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No valid sections found."
-                )
+            section_objs = db.query(Section).filter(Section.id.in_(sections_data)).all()
             exam.sections = section_objs
 
-        # ✅ Update chapters if provided
+        # Update chapters if provided
         if chapters_data is not None:
-            chapter_objs = (
-                db.query(Chapter)
-                .filter(Chapter.id.in_(chapters_data))
-                .all()
-            )
-            if not chapter_objs and chapters_data:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No valid chapters found."
-                )
+            chapter_objs = db.query(Chapter).filter(Chapter.id.in_(chapters_data)).all()
             exam.chapters = chapter_objs
 
-        # ✅ Enforce business rule: rank exams can only have 1 repeat
+        # Business rule: rank exam → max_repeat fixed to 1
         if data.exam_type == ExamTypeEnum.RANK:
             exam.max_repeat = 1
 
@@ -2385,9 +2423,10 @@ def update_exam(
     except SQLAlchemyError as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Database error: {str(e)}"
         )
+
 
 
 # ✅ Delete Exam
@@ -3023,6 +3062,7 @@ def create_home_task(
 
     class_id = class_subject.class_id
     subject_id = class_subject.subject_id
+    print(f"Class ID: {class_id}, Subject ID: {subject_id},techer:{teacher.id}")
 
     # ✅ Find all sections where this teacher teaches this subject in this class
     teacher_sections = (

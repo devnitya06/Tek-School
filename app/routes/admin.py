@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
 from app.models.admin import AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet
-from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType
+from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus
@@ -654,30 +654,32 @@ def get_chapters_by_subject(
     current_user: User = Depends(get_current_user),
 ):
     """
-    ✅ View all chapters under a given subject.
-    - Admin, School, Student roles allowed.
-    - Shows chapter name, video count, created date.
-    - Paginated.
+    View all chapters under a given subject with:
+    - Video count
+    - Task count (home assignments count)
+    - Pagination
     """
 
-    # ✅ Role check
+    # Role check
     if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT]:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # ✅ Validate subject exists
+    # Check subject exists
     subject = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == subject_id).first()
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
 
-    # ✅ Query chapters with video count
+    # Main query: chapter + video count + task count
     chapters_query = (
         db.query(
             Chapter.id.label("chapter_id"),
             Chapter.title.label("chapter_title"),
+            Chapter.created_at.label("created_at"),
             func.count(ChapterVideo.id).label("video_count"),
-            Chapter.created_at.label("created_at")
+            func.count(HomeAssignment.id).label("task_count")
         )
-        .outerjoin(ChapterVideo, Chapter.id == ChapterVideo.chapter_id)
+        .outerjoin(ChapterVideo, ChapterVideo.chapter_id == Chapter.id)
+        .outerjoin(HomeAssignment, HomeAssignment.chapter_id == Chapter.id)
         .filter(Chapter.school_class_subject_id == subject_id)
         .group_by(Chapter.id)
         .order_by(Chapter.created_at.desc())
@@ -685,15 +687,14 @@ def get_chapters_by_subject(
 
     total_chapters = chapters_query.count()
 
-    # ✅ Apply pagination
     chapters = chapters_query.offset(offset).limit(limit).all()
 
-    # ✅ Format response
     result = [
         {
             "chapter_id": c.chapter_id,
             "chapter_title": c.chapter_title,
             "number_of_videos": c.video_count,
+            "number_of_tasks": c.task_count,
             "created_at": c.created_at,
         }
         for c in chapters
@@ -705,6 +706,7 @@ def get_chapters_by_subject(
         "offset": offset,
         "chapters": result
     }
+
 @router.post("/class_subjects/{subject_id}/chapters/")
 def add_chapter_to_subject(
     subject_id: int,

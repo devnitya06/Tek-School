@@ -3,6 +3,7 @@ from typing import Optional,List,Dict
 from datetime import time
 from datetime import date,datetime
 from enum import Enum
+from fastapi import Query
 class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
@@ -268,6 +269,14 @@ class ExamPublishResponse(BaseModel):
     exam_id: str
     is_published: bool
     published_at: datetime
+
+class ExamFilterParams(BaseModel):
+    exam_name_or_id: Optional[str] = Query(None, description="Search by Exam ID or Name")
+    exam_type: Optional[ExamTypeEnum] = None
+    subject_id: Optional[int] = None
+    teacher_name: Optional[str] = None
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
 
 class McqCreate(BaseModel):
     question: str

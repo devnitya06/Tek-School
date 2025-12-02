@@ -19,6 +19,7 @@ from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
+from app.models.admin import Chapter
 router = APIRouter()
 
 
@@ -547,33 +548,39 @@ def get_teacher_subjects(
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found")
 
-    # Get all subject_ids assigned to this teacher
+    # Get assigned subject IDs
     assignments = db.query(TeacherClassSectionSubject).filter(
         TeacherClassSectionSubject.teacher_id == teacher.id
     ).all()
-    
+
     subject_ids = {a.subject_id for a in assignments}
     if not subject_ids:
         return []
 
-    # Join Subject with class_subjects to get school_class_subject_id
+    # Query subjects + school_class_subject_id + chapter count
     results = db.query(
         Subject.id.label("subject_id"),
         Subject.name.label("subject_name"),
-        class_subjects.c.school_class_subject_id
+        class_subjects.c.school_class_subject_id,
+        func.count(Chapter.id).label("chapter_count")
     ).join(
-        class_subjects,
-        class_subjects.c.subject_id == Subject.id
+        class_subjects, class_subjects.c.subject_id == Subject.id
+    ).outerjoin(
+        Chapter, Chapter.school_class_subject_id == class_subjects.c.school_class_subject_id
     ).filter(
         Subject.id.in_(subject_ids)
+    ).group_by(
+        Subject.id,
+        Subject.name,
+        class_subjects.c.school_class_subject_id
     ).all()
 
-    # Return in structured format
     return [
         {
             "id": r.subject_id,
             "name": r.subject_name,
-            "school_class_subject_id": r.school_class_subject_id
+            "school_class_subject_id": r.school_class_subject_id,
+            "chapter_count": r.chapter_count
         }
         for r in results
     ]
