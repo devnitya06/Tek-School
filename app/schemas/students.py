@@ -105,7 +105,7 @@ class SelfSignedStudentUpdate(BaseModel):
     email: Optional[EmailStr] = None
     profile_image: Optional[str] = None
     select_board: Optional[str] = None
-    select_class: Optional[str] = None
+    select_class: Optional[int] = None
     school_name: Optional[str] = None
     school_location: Optional[str] = None
 

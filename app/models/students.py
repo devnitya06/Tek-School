@@ -50,7 +50,6 @@ class Student(Base):
     student_assignments = relationship("AssignmentStudent",back_populates="student",cascade="all, delete-orphan")
     # Each student’s task completion statuses
     student_task_statuses = relationship("StudentTaskStatus",back_populates="student",cascade="all, delete-orphan")
-    admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
 
 
 
@@ -111,6 +110,7 @@ class SelfSignedStudent(Base):
     email = Column(String(255), nullable=False, unique=True)
 
     select_board = Column(String(50), nullable=True)
+    select_medium = Column(String(50), nullable=True)
     select_class = Column(String(50), nullable=True)
 
     school_name = Column(String(255), nullable=True)
@@ -127,3 +127,4 @@ class SelfSignedStudent(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="self_signed_student_profile")
+    admin_exam_data = relationship("StudentAdminExamData", back_populates="student")

@@ -92,7 +92,7 @@ class ExamQuestionPayloadList(BaseModel):
 
 class QuestionSetCreate(BaseModel):
     board: str
-    class_name: int
+    class_name: str
     set: SetType
     description: Optional[str] = None
 

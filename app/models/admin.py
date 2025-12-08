@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float
+from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float,UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
@@ -7,6 +7,7 @@ from enum import Enum
 from sqlalchemy import Enum as SQLEnum
 import uuid
 from datetime import datetime
+
 
 class ExamType(str, Enum):
     mock = "mock"
@@ -173,7 +174,12 @@ class SchoolClassSubject(Base):
     # ✅ Relationships
     chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
     admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
-
+    __table_args__ = (
+        UniqueConstraint(
+            "school_board", "school_medium", "class_name", "subject",
+            name="uq_board_medium_class_subject"
+        ),
+    )
 
 class Chapter(Base):
     __tablename__ = "chapters"
@@ -254,7 +260,7 @@ class QuestionSet(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     board = Column(String(100), nullable=False)
-    class_name= Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
+    class_name= Column(String(50), nullable=False)
     set = Column(SQLEnum(SetType),default=SetType.A,nullable=False)
     description = Column(Text, nullable=True)
 
@@ -263,7 +269,6 @@ class QuestionSet(Base):
 
     # Relationship
     questions = relationship("QuestionSetBank", back_populates="question_set")
-    school_class_subject = relationship("SchoolClassSubject")
 
 class QuestionSetBank(Base):
     __tablename__ = "question_set_bank"
