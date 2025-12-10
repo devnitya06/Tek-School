@@ -1,12 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
+from fastapi import APIRouter, Depends, HTTPException,status
 from app.models.users import User,Otp
-from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus
+from app.models.students import Student,Parent,PresentAddress,PermanentAddress
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
-from app.models.staff import Staff
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate
-from datetime import timezone
-from sqlalchemy.orm import Session,joinedload,aliased
+from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate
+from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import func
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
@@ -14,13 +12,6 @@ from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
-from datetime import datetime, timedelta,date
-from typing import List
-from app.utils.s3 import upload_base64_to_s3
-from app.services.pagination import PaginationParams
-from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
-from app.utils.staff_logging import log_action
-from app.models.staff import ActionType, ResourceType
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -28,146 +19,77 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow SCHOOL, TEACHER, or STAFF
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only schools, teachers, or staff can create students."
-        )
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only schools can create students.")
 
-    # ✅ Get the correct school_id based on the role
-    if current_user.role == UserRole.SCHOOL:
-        school = getattr(current_user, "school_profile", None)
-        if not school:
-            raise HTTPException(status_code=404, detail="School profile not found.")
-        school_id = school.id
-    elif current_user.role == UserRole.TEACHER:
-        teacher = getattr(current_user, "teacher_profile", None)
-        if not teacher:
-            raise HTTPException(status_code=404, detail="Teacher profile not found.")
-        school_id = teacher.school_id
-    else:  # current_user.role == UserRole.STAFF
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school_id = staff.school_id
-
-    # ✅ Check if email already exists
+    # Ensure email doesn't already exist
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists.")
 
-    # ✅ Validate transport if enabled
+    # Get the school profile for the current user
+    school = getattr(current_user, "school_profile", None)
+    if not school:
+        raise HTTPException(status_code=400, detail="School profile not found.")
+
+    # Validate transport requirement
     if data.is_transport:
         if not data.driver_id:
             raise HTTPException(status_code=400, detail="Driver ID is required when transport is enabled.")
-        driver = db.query(Transport).filter(
-            Transport.id == data.driver_id,
-            Transport.school_id == school_id
-        ).first()
+        driver = db.query(Transport).filter(Transport.id == data.driver_id, Transport.school_id == school.id).first()
         if not driver:
             raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
 
-    try:
-        # ✅ Upload student profile image (if provided)
-        profile_pic_url = None
-        if data.profile_image:
-            try:
-                profile_pic_url = upload_base64_to_s3(data.profile_image, f"students/{school_id}/profile")
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
+    # Step 1: Create User for the student
+    user = User(
+        name=f"{data.first_name} {data.last_name}",
+        email=data.email,
+        role=UserRole.STUDENT
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
-        # ✅ Create User for the student
-        user = User(
-            name=f"{data.first_name} {data.last_name}",
-            email=data.email,
-            role=UserRole.STUDENT
-        )
-        db.add(user)
-        db.flush()  # ensures user.id is available
-
-        # ✅ Create Student profile
-        student = Student(
-            first_name=data.first_name,
-            last_name=data.last_name,
-            gender=data.gender,
-            dob=data.dob,
-            roll_no=data.roll_no,
-            class_id=data.class_id,
-            section_id=data.section_id,
-            is_transport=data.is_transport,
-            driver_id=data.driver_id,
-            pickup_point=data.pickup_point,
-            pickup_time=data.pickup_time,
-            drop_point=data.drop_point,
-            drop_time=data.drop_time,
-            user_id=user.id,
-            school_id=school_id,
-            profile_image=profile_pic_url,
-            status=StudentStatus.TRIAL,
-            status_expiry_date=datetime.utcnow() + timedelta(days=15)
-        )
-
-        db.add(student)
-        db.commit()
-        db.refresh(user)
-        db.refresh(student)
-
-        # ✅ Send verification email
-        token = create_verification_token(user.id)
-        verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
-
-        send_dynamic_email(
-            context_key="account_verification.html",
-            subject="Student Account Verification",
-            recipient_email=user.email,
-            context_data={
-                "name": f"{data.first_name} {data.last_name}",
-                "verification_link": verification_link,
-            },
-            db=db
-        )
-
-        # Log action
-        log_action(
-            db=db,
-            current_user=current_user,
-            action_type=ActionType.CREATE,
-            resource_type=ResourceType.STUDENT,
-            resource_id=str(student.id),
-            description=f"Created student: {data.first_name} {data.last_name}",
-            metadata={"student_id": student.id, "roll_no": data.roll_no, "class_id": data.class_id}
-        )
-
-        return {
-            "detail": "Student account created. Verification email sent.",
-            "student_id": student.id,
-            "user_id": user.id,
-            "profile_pic_url": profile_pic_url
-        }
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create student: {str(e)}")
-
-@router.post("/students/{student_id}/activate")
-def activate_student(student_id: int, db: Session = Depends(get_db)):
-    student = db.query(Student).filter(Student.id == student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-
-    now = datetime.now(timezone.utc)
-    if student.status in [StudentStatus.TRIAL, StudentStatus.INACTIVE]:
-        student.status = StudentStatus.ACTIVE
-        student.status_expiry_date = now + timedelta(days=90)
-    elif student.status == StudentStatus.ACTIVE:
-        # renewal payment → extend expiry
-        student.status_expiry_date = (student.status_expiry_date or now) + timedelta(days=90)
-
+    # Step 2: Create Student profile
+    student = Student(
+        first_name=data.first_name,
+        last_name=data.last_name,
+        gender=data.gender,
+        dob=data.dob,
+        roll_no=data.roll_no,
+        class_id=data.class_id,
+        section_id=data.section_id,
+        is_transport=data.is_transport,
+        driver_id=data.driver_id,
+        user_id=user.id,
+        school_id=school.id
+    )
+    db.add(student)
     db.commit()
     db.refresh(student)
 
-    return {"detail": f"Student activated until {student.status_expiry_date}"}
+    # Step 3: Generate and store OTP
+    otp = generate_otp()
+    otp_entry = Otp(user_id=user.id, otp=otp)
+    db.add(otp_entry)
+    db.commit()
+
+    token = create_verification_token(user.id)
+    verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
+
+    send_dynamic_email(
+        context_key="account_verification.html",
+        subject="Student Account Verification",
+        recipient_email=user.email,
+        context_data={
+            "name": f"{data.first_name} {data.last_name}",
+            "verification_link": verification_link,
+        },
+        db=db
+    )
+
+    return {"detail": "OTP sent to student's email for verification"}
+
 @router.post("/students/{student_id}/add-parent-info")
 def add_parent_and_address(
     student_id: int,
@@ -239,101 +161,19 @@ def add_parent_and_address(
 
     return {"detail": "Parent and address data added successfully."}
 
-@router.put("/students/{student_id}/update-parent-info")
-def update_parent_and_address(
-    student_id: int,
-    data: ParentWithAddressUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    # Allow both school and staff
-    if current_user.role == UserRole.SCHOOL:
-        school_profile = getattr(current_user, "school_profile", None)
-        if not school_profile:
-            raise HTTPException(status_code=404, detail="School profile not found.")
-        school_id = school_profile.id
-    elif current_user.role == UserRole.STAFF:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school_id = staff.school_id
-    else:
-        raise HTTPException(status_code=403, detail="Only school or staff users can update parent and address data.")
-
-    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found or not part of your school.")
-
-    updated_sections: List[str] = []
-
-    # ✅ Parent update
-    parent = db.query(Parent).filter(Parent.student_id == student_id).first()
-    if parent and data.parent:
-        for field, value in data.parent.dict(exclude_unset=True).items():
-            setattr(parent, field, value)
-        updated_sections.append("parent")
-
-    # ✅ Present address update
-    present = db.query(PresentAddress).filter(PresentAddress.student_id == student_id).first()
-    if present and data.present_address:
-        for field, value in data.present_address.dict(exclude_unset=True).items():
-            setattr(present, field, value)
-        updated_sections.append("present_address")
-
-    # ✅ Permanent address handling
-    permanent = db.query(PermanentAddress).filter(PermanentAddress.student_id == student_id).first()
-    if data.present_address and data.present_address.is_this_permanent_as_well:
-        if permanent:
-            db.delete(permanent)
-            updated_sections.append("permanent_address_removed")
-    elif data.permanent_address:
-        if permanent:
-            for field, value in data.permanent_address.dict(exclude_unset=True).items():
-                setattr(permanent, field, value)
-            updated_sections.append("permanent_address")
-        else:
-            permanent = PermanentAddress(
-                **data.permanent_address.dict(exclude_unset=True),
-                student_id=student_id
-            )
-            db.add(permanent)
-            updated_sections.append("permanent_address_created")
-
-    db.commit()
-
-    log_action(
-        db=db,
-        current_user=current_user,
-        action_type=ActionType.UPDATE,
-        resource_type=ResourceType.STUDENT,
-        resource_id=str(student.id),
-        description=f"Updated parent/address info for student {student.first_name} {student.last_name}",
-        metadata={"student_id": student.id, "updated_sections": updated_sections}
-    )
-
-    return {"detail": "Parent and address data updated successfully."}
-
 @router.get("/students/")
 def get_students(
-    pagination: PaginationParams = Depends(),
+    limit: int = 10,
+    offset: int = 0,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF)),
-    roll_no: int | None = Query(None, description="Filter by roll number"),
-    name: str | None = Query(None, description="Filter by student name"),
-    class_name: str | None = Query(None, description="Filter by class name"),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
 ):
-    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    elif current_user.role == UserRole.TEACHER:
+    else:
         school_id = current_user.teacher_profile.school_id
-    else:  # STAFF
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school_id = staff.school_id
 
-    # --- Subqueries ---
+    # Subquery to count attendance per student
     attendance_subquery = (
         db.query(
             Attendance.student_id,
@@ -343,35 +183,12 @@ def get_students(
         .subquery()
     )
 
-    exam_count_subquery = (
-        db.query(
-            StudentExamData.student_id,
-            func.count(StudentExamData.id).label("exam_count")
-        )
-        .group_by(StudentExamData.student_id)
-        .subquery()
-    )
-
-    rank_subquery = (
-        db.query(
-            StudentExamData.student_id,
-            func.max(StudentExamData.class_rank).label("latest_rank")
-        )
-        .group_by(StudentExamData.student_id)
-        .subquery()
-    )
-
-    # --- Base Query ---
-    base_query = (
+    students_query = (
         db.query(
             Student,
-            attendance_subquery.c.attendance_count,
-            exam_count_subquery.c.exam_count,
-            rank_subquery.c.latest_rank,
+            attendance_subquery.c.attendance_count
         )
         .outerjoin(attendance_subquery, Student.id == attendance_subquery.c.student_id)
-        .outerjoin(exam_count_subquery, Student.id == exam_count_subquery.c.student_id)
-        .outerjoin(rank_subquery, Student.id == rank_subquery.c.student_id)
         .join(Class, Student.class_id == Class.id)
         .join(Section, Student.section_id == Section.id)
         .filter(Class.school_id == school_id)
@@ -379,60 +196,34 @@ def get_students(
             joinedload(Student.classes),
             joinedload(Student.section)
         )
+        .offset(offset)
+        .limit(limit)
+        .all()
     )
 
-    # --- Apply Filters ---
-    if roll_no:
-        base_query = base_query.filter(Student.roll_no==roll_no)
-    if name:
-        base_query = base_query.filter(
-            func.concat(Student.first_name, " ", Student.last_name).ilike(f"%{name}%")
-        )
-    if class_name:
-        base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
-
-    # --- Count & Pagination ---
-    total_count = base_query.count()
-    students = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
-
-    # --- Format Response ---
-    data = [
+    return [
         {
-            "sl_no": index + 1 + pagination.offset(),
+            "sl_no": index + 1 + offset,
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
             "roll_no": student.roll_no,
             "class_name": student.classes.name,
             "section_name": student.section.name,
-            "attendance_count": attendance_count or 0,
-            "exam_count": exam_count or 0,
-            "rank": rank or None,
-            "status": student.status.value,
-            "status_expiry_date": student.status_expiry_date,
-            "is_present_today": any(att.is_today_present for att in student.attendances if att.date == date.today()) if student.attendances else False 
+            "attendance_count": attendance_count or 0  # Default to 0 if None
         }
-        for index, (student, attendance_count, exam_count, rank) in enumerate(students)
+        for index, (student, attendance_count) in enumerate(students_query)
     ]
-
-    return pagination.format_response(data, total_count)
-
 
 @router.get("/students/{student_id}")
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
 ):
-    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    elif current_user.role == UserRole.TEACHER:
+    else:
         school_id = current_user.teacher_profile.school_id
-    else:  # STAFF
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school_id = staff.school_id
 
     student = (
         db.query(Student)
@@ -443,8 +234,7 @@ def get_student(
             joinedload(Student.parent),
             joinedload(Student.present_address),
             joinedload(Student.permanent_address),
-            joinedload(Student.exam_data),
-            joinedload(Student.driver),
+            joinedload(Student.exam_data)
         )
         .first()
     )
@@ -460,27 +250,14 @@ def get_student(
 
     return {
         "student_id": student.id,
-        "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
-        "first_name": student.first_name,
-        "last_name": student.last_name,
-        "gender": student.gender,
-        "dob": student.dob,
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
         "created_at": student.created_at,
-        "status": student.status.value,
-        "status_expiry_date": student.status_expiry_date,
         "last_appeared_exam":last_exam.submitted_at if last_exam else None,
         "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
         "exam_result":last_exam.result if last_exam else None,
-        "vechicle_number":student.driver.vechicle_number if student.driver else None,
-        "driver_name":student.driver.driver_name if student.driver else None,
-        "pickup_point":student.pickup_point,
-        "pickup_time":student.pickup_time,
-        "drop_point":student.drop_point,
-        "drop_time":student.drop_time,
         "parent": {
             "parent_name": student.parent.parent_name,
             "relation": student.parent.relation,
@@ -511,145 +288,6 @@ def get_student(
         } if student.permanent_address else None
     }
 
-@router.patch("/students/{student_id}")
-def update_student(
-    student_id: int,
-    data: StudentUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    # Allow only school or teacher
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only schools and teachers can update student profiles."
-        )
-
-    # Identify school_id for both
-    if current_user.role == UserRole.SCHOOL:
-        school = getattr(current_user, "school_profile", None)
-        if not school:
-            raise HTTPException(status_code=400, detail="School profile not found.")
-        school_id = school.id
-    else:
-        teacher = getattr(current_user, "teacher_profile", None)
-        if not teacher:
-            raise HTTPException(status_code=400, detail="Teacher profile not found.")
-        school_id = teacher.school_id
-
-    # Fetch student from same school
-    student = db.query(Student).filter(
-        Student.id == student_id,
-        Student.school_id == school_id
-    ).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found in your school.")
-
-    # Allowed fields by role
-    if current_user.role == UserRole.SCHOOL:
-        allowed_fields = [
-            "first_name", "last_name", "gender", "dob",
-            "class_id", "section_id", "is_transport", "driver_id","pickup_point","pickup_time","drop_point","drop_time"
-        ]
-    else:
-        allowed_fields = ["first_name", "last_name", "gender", "dob", "class_id", "section_id"]
-
-    # Handle transport validation (school only)
-    if current_user.role == UserRole.SCHOOL and data.is_transport is not None:
-        if data.is_transport:
-            if not data.driver_id:
-                raise HTTPException(status_code=400, detail="Driver ID required when transport is enabled.")
-            driver = db.query(Transport).filter(
-                Transport.id == data.driver_id,
-                Transport.school_id == school_id
-            ).first()
-            if not driver:
-                raise HTTPException(status_code=400, detail="Driver not found for the given ID.")
-        else:
-            student.driver_id = None
-
-    # Handle optional profile image
-    if data.profile_image:
-        try:
-            profile_pic_url = upload_base64_to_s3(data.profile_image, f"students/{school_id}/profile")
-            student.profile_image = profile_pic_url
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
-
-    # Update only provided & allowed fields
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if field in allowed_fields and value is not None:
-            setattr(student, field, value)
-
-    # Update User.name if name changed
-    user = db.query(User).filter(User.id == student.user_id).first()
-    if user:
-        new_name = f"{student.first_name or ''} {student.last_name or ''}".strip()
-        if new_name:
-            user.name = new_name
-
-    try:
-        db.commit()
-        db.refresh(student)
-        
-        # Log action
-        log_action(
-            db=db,
-            current_user=current_user,
-            action_type=ActionType.UPDATE,
-            resource_type=ResourceType.STUDENT,
-            resource_id=str(student.id),
-            description=f"Updated student: {student.first_name} {student.last_name}",
-            metadata={"student_id": student.id, "updated_fields": list(update_data.keys())}
-        )
-        
-        return {"detail": "Student profile updated successfully."}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update student: {str(e)}")
-
-
-
-@router.patch("/students/{student_id}/status")
-def update_student_status(
-    student_id: int,
-    new_status:StudentStatus = Body(..., embed=True),
-    db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
-):
-
-    # Identify which school the current user belongs to
-    if current_user.role == UserRole.SCHOOL:
-        school_id = current_user.school_profile.id
-    else:
-        school_id = current_user.teacher_profile.school_id
-
-    # Fetch the student within that school
-    student = (
-        db.query(Student)
-        .filter(Student.id == student_id, Student.school_id == school_id)
-        .first()
-    )
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Student not found or unauthorized to modify."
-        )
-
-    # Update the student's status
-    student.status = new_status
-    student.status_updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(student)
-
-    return {
-        "message": f"Student status changed to {student.status.value}",
-        "student_id": student.id,
-        "new_status": student.status.value,
-        "status_updated_at": getattr(student, "status_updated_at", None)
-    }
 @router.get("/students/profile/")
 def get_own_student_profile(
     db: Session = Depends(get_db),
@@ -680,7 +318,6 @@ def get_own_student_profile(
 
     return {
         "student_id": student.id,
-        "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
@@ -689,10 +326,6 @@ def get_own_student_profile(
         "total_attendance": len(student.attendances) if student.attendances else 0,
         "total_exams": len(student.exam_data) if student.exam_data else 0,
         "last_appeared_exam":last_exam.submitted_at if last_exam else None,
-        "pickup_point":student.pickup_point,
-        "pickup_time":student.pickup_time,
-        "drop_point":student.drop_point,
-        "drop_time":student.drop_time,
         # "exam_given": sum(1 for exam in student.exam_data if exam.is_exam_given) if student.exam_data else 0,
         "parent": {
             "parent_name": student.parent.parent_name,
@@ -722,173 +355,4 @@ def get_own_student_profile(
             "house_no": student.permanent_address.house_no,
             "floor_name": student.permanent_address.floor_name
         } if student.permanent_address else None
-    }
-
-@router.get("/e-books/subjects/")
-def get_student_subjects(
-    db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.STUDENT)),
-):
-    # ✅ Get student info with class + school
-    student = (
-        db.query(Student)
-        .filter(Student.user_id == current_user.id)
-        .options(
-            joinedload(Student.classes).joinedload(Class.school),
-        )
-        .first()
-    )
-
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-    if not student.classes:
-        raise HTTPException(status_code=400, detail="Student class not assigned")
-
-    school = student.classes.school
-    class_name = student.classes.name
-    print(f"Student's class: {class_name}, School ID: {school.id if school else 'N/A'}")
-    school_board = getattr(school, "school_board", None)
-    school_medium = getattr(school, "school_medium", None)
-
-    if not school_board or not school_medium:
-        raise HTTPException(status_code=400, detail="School board/medium missing")
-
-    # ✅ Get subjects for this class, board, medium
-    subjects = (
-        db.query(SchoolClassSubject)
-        .filter(
-            SchoolClassSubject.school_board == school_board,
-            SchoolClassSubject.school_medium == school_medium,
-            SchoolClassSubject.class_name == class_name,
-        )
-        .all()
-    )
-
-    if not subjects:
-        raise HTTPException(status_code=404, detail="No subjects found for this class")
-
-    return [
-        {"subject_id": s.id, "subject_name": s.subject}
-        for s in subjects
-    ]
-
-
-@router.get("/e-book/{subject_id}/chapters/")
-def get_chapters_by_subject(
-    subject_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.STUDENT)),
-):
-    # ✅ Get student
-    student = db.query(Student).filter(Student.user_id == current_user.id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-
-    # ✅ Alias for progress
-    progress_alias = aliased(StudentChapterProgress)
-
-    # ✅ Get chapters + video count + last read time
-    chapters = (
-        db.query(
-            Chapter.id.label("chapter_id"),
-            Chapter.title.label("chapter_title"),
-            func.count(ChapterVideo.id).label("video_count"),
-            progress_alias.last_read_at.label("last_read_at")
-        )
-        .outerjoin(ChapterVideo, Chapter.id == ChapterVideo.chapter_id)
-        .outerjoin(
-            progress_alias,
-            (progress_alias.chapter_id == Chapter.id)
-            & (progress_alias.student_id == student.id)
-        )
-        .filter(Chapter.school_class_subject_id == subject_id)
-        .group_by(Chapter.id, progress_alias.last_read_at)
-        .all()
-    )
-
-    if not chapters:
-        raise HTTPException(status_code=404, detail="No chapters found for this subject")
-
-    return [
-        {
-            "chapter_id": c.chapter_id,
-            "chapter_title": c.chapter_title,
-            "number_of_videos": c.video_count,
-            "last_read_at": c.last_read_at.isoformat() if c.last_read_at else None
-        }
-        for c in chapters
-    ]
-
-@router.get("/e-books/chapter/{chapter_id}/")
-def get_chapter_details(
-    chapter_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.STUDENT)),
-):
-    # 1️⃣ Get student profile
-    student = (
-        db.query(Student)
-        .filter(Student.user_id == current_user.id)
-        .options(joinedload(Student.classes))
-        .first()
-    )
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-
-    # 2️⃣ Fetch chapter
-    chapter = (
-        db.query(Chapter)
-        .options(
-            joinedload(Chapter.videos),
-            joinedload(Chapter.images),
-            joinedload(Chapter.pdfs),
-            joinedload(Chapter.qnas),
-        )
-        .filter(Chapter.id == chapter_id)
-        .first()
-    )
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-
-    # 3️⃣ Check student's class matches chapter
-    class_subject = chapter.school_class_subject
-    if student.classes.name != class_subject.class_name:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to view chapters from another class.",
-        )
-
-    # 4️⃣ Update or create progress
-    progress = (
-        db.query(StudentChapterProgress)
-        .filter_by(student_id=student.id, chapter_id=chapter.id)
-        .first()
-    )
-
-    now = datetime.now(timezone.utc)
-    if progress:
-        progress.last_read_at = now
-    else:
-        progress = StudentChapterProgress(
-            student_id=student.id, chapter_id=chapter.id, last_read_at=now
-        )
-        db.add(progress)
-
-    db.commit()
-    db.refresh(progress)
-
-    # 5️⃣ Return chapter with last_read_at
-    return {
-        "chapter_id": chapter.id,
-        "title": chapter.title,
-        "description": chapter.description,
-        "last_read_at": progress.last_read_at,
-        "total_videos": len(chapter.videos),
-        "total_images": len(chapter.images),
-        "total_pdfs": len(chapter.pdfs),
-        "total_qnas": len(chapter.qnas),
-        "videos": [{"id": v.id, "url": v.url} for v in chapter.videos],
-        "images": [{"id": i.id, "url": i.url} for i in chapter.images],
-        "pdfs": [{"id": p.id, "url": p.url} for p in chapter.pdfs],
-        "qnas": [{"id": q.id, "question": q.question, "answer": q.answer} for q in chapter.qnas],
     }

@@ -3,7 +3,6 @@ from typing import Optional,List,Dict
 from datetime import time
 from datetime import date,datetime
 from enum import Enum
-from fastapi import Query
 class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
@@ -66,20 +65,11 @@ class SchoolProfileUpdate(BaseModel):
     principal_phone: Optional[str]
 
 
-# class ClassWithSubjectCreate(BaseModel):
-#     class_name: str
-#     sections: List[str]
-#     subjects: List[str]
-#     extra_curriculums: List[str] 
-class SubjectItem(BaseModel):
-    name: str
-    school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
-
 class ClassWithSubjectCreate(BaseModel):
     class_name: str
     sections: List[str]
-    subjects: List[SubjectItem]  # 🧠 now supports name + school_class_subject_id
-    extra_curriculums: List[str]   
+    subjects: List[str]
+    extra_curriculums: List[str]    
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]
@@ -109,29 +99,13 @@ class TransportCreate(BaseModel):
     duty_end_time: time
     pickup_stops: List[StopBase]
     drop_stops: List[StopBase]
-    
-class StopUpdate(BaseModel):
-    id: Optional[int] = None  # existing stop id (if updating)
-    stop_name: Optional[str] = None
-    stop_time: Optional[time] = None
-
-
-class TransportUpdate(BaseModel):
-    vehicle_number: Optional[str] = None
-    vehicle_name: Optional[str] = None
-    driver_name: Optional[str] = None
-    phone_no: Optional[str] = None
-    duty_start_time: Optional[time] = None
-    duty_end_time: Optional[time] = None
-    pickup_stops: Optional[List[StopUpdate]] = None
-    drop_stops: Optional[List[StopUpdate]] = None
 
 class StopResponse(StopBase):
     stop_name: str
     stop_time: str
 
 class TransportResponse(BaseModel):
-    driver_id: int
+    id: int
     vehicle_number: str
     vehicle_name: str
     driver_name: str
@@ -148,11 +122,10 @@ class TransportResponse(BaseModel):
 class AttendanceCreate(BaseModel):
     student_id: Optional[int]=None
     teachers_id: Optional[str]=None
-    staff_id: Optional[str]=None
     date: date
     status: str = Field(..., max_length=1)
     is_verified:bool =Field(default=True)
-    is_today_present: bool=Field(default=False)
+
     model_config = {
         "from_attributes": True
     } 
@@ -178,13 +151,7 @@ class TimetableCreate(BaseModel):
     section_id: Optional[int] = None
     day: WeekDay
     periods: List[PeriodCreate]
-
-class TimetableUpdate(BaseModel):
-    day: Optional[WeekDay] = None
-    periods: Optional[List[PeriodCreate]] = None
-    model_config = {
-        "from_attributes": True
-    }
+    
 class CreateSchoolCredit(BaseModel):
     class_id: int
     credit_configuration_id: int
@@ -212,7 +179,7 @@ class ExamStatusEnum(str, Enum):
     DECLINED = "declined"
 class ExamCreateRequest(BaseModel):
     class_id: int
-    sections: Optional[List[int]] = None
+    sections: List[int]
     chapters: List[int]
     exam_type: ExamTypeEnum
     no_of_questions: int
@@ -224,17 +191,16 @@ class ExamCreateRequest(BaseModel):
     status: Optional[ExamStatusEnum] = ExamStatusEnum.PENDING
 
 class ExamUpdateRequest(BaseModel):
-    exam_type: Optional[ExamTypeEnum] = None
-    class_id: Optional[int] = None
-    section_ids: Optional[List[int]] = None
-    chapters: Optional[List[int]] = None
+    exam_type: Optional[str] = None
+    class_id: Optional[str] = None
+    section_ids: Optional[List[str]] = None
+    chapters: Optional[List[str]] = None
     no_of_questions: Optional[int] = None
-    question_time: Optional[int] = None
     pass_percentage: Optional[float] = None
     exam_activation_date: Optional[datetime] = None
     inactive_date: Optional[datetime] = None
     max_repeat: Optional[int] = None
-    status: Optional[ExamStatusEnum] = None
+    status: Optional[str] = None
 
 
 class ExamListResponse(BaseModel):
@@ -259,24 +225,11 @@ class ExamListResponse(BaseModel):
     model_config = {
         "from_attributes": True
     } 
-class ExamDetailResponse(ExamListResponse):
-    school_id: str
-    chapters: List[int]  # override chapters type if needed
-    pass_percentage: float  # override type if needed
-    created_by: Optional[str] = None  # make optional if needed
 
 class ExamPublishResponse(BaseModel):
     exam_id: str
     is_published: bool
     published_at: datetime
-
-class ExamFilterParams(BaseModel):
-    exam_name_or_id: Optional[str] = Query(None, description="Search by Exam ID or Name")
-    exam_type: Optional[ExamTypeEnum] = None
-    subject_id: Optional[int] = None
-    teacher_name: Optional[str] = None
-    from_date: Optional[datetime] = None
-    to_date: Optional[datetime] = None
 
 class McqCreate(BaseModel):
     question: str
@@ -307,54 +260,3 @@ class McqResponse(McqCreate):
     model_config = {
         "from_attributes": True
     } 
-
-class LeaveCreate(BaseModel):
-    subject: str
-    start_date: date
-    end_date: date
-    leave_type: str
-    description: Optional[str] = None
-    attach_file: Optional[str] = None
-
-class LeaveStatusUpdate(BaseModel):
-    status: str
-class LeaveResponse(BaseModel):
-    id: int
-    subject: str
-    start_date: date
-    end_date: date
-    leave_type: str
-    description: Optional[str]
-    status: str
-    user_id: int
-    role: str
-
-    model_config = {
-        "from_attributes": True
-    } 
-# ---------------- Home Task ----------------
-class AssignmentTaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    file: Optional[str] = None
-
-
-class HomeAssignmentCreate(BaseModel):
-    task_title: str
-    # description: Optional[str] = None
-    # file: Optional[str] = None
-    task_type: str
-    chapter_id: int
-    tasks: List[AssignmentTaskCreate]
-    student_ids: Optional[List[int]] = None
-
-class StudentHomeTaskListResponse(BaseModel):
-    id: int
-    teacher_name: str
-    subject_name: str
-    chapter_name: str
-    task_type: str
-    created_at: datetime
-    status: str
-    no_of_tasks_completed: int
-    no_of_tasks_incomplete: int

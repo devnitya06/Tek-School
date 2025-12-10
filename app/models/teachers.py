@@ -24,13 +24,14 @@ class Teacher(Base):
     __tablename__ = "teachers"
 
     id = Column(String, primary_key=True)
-    profile_image=Column(String,nullable=True)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     highest_qualification = Column(String, nullable=False)
     university = Column(String, nullable=False)
     phone = Column(String(10), nullable=False)
     email = Column(String, unique=True, nullable=False)
+    teacher_in_classes = Column(ARRAY(String), nullable=False)
+    subjects = Column(ARRAY(String), nullable=False)            
     start_duty = Column(Time, nullable=False)
     end_duty = Column(Time, nullable=False)
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)
@@ -48,8 +49,6 @@ class Teacher(Base):
     attendances = relationship("Attendance", back_populates="teacher")
     timetable_periods = relationship("TimetablePeriod", back_populates="teacher")
     created_exams = relationship("Exam", back_populates="teacher")
-    leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
-    home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
