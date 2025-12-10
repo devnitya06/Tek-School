@@ -15,6 +15,7 @@ from app.utils.permission import require_roles
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from datetime import datetime, timedelta,date
+from typing import List
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
@@ -316,16 +317,21 @@ def update_parent_and_address(
 def get_students(
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF)),
     roll_no: int | None = Query(None, description="Filter by roll number"),
     name: str | None = Query(None, description="Filter by student name"),
     class_name: str | None = Query(None, description="Filter by class name"),
 ):
-    # Determine school_id
+    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    else:
+    elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # --- Subqueries ---
     attendance_subquery = (
@@ -415,12 +421,18 @@ def get_students(
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
+    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    else:
+    elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     student = (
         db.query(Student)

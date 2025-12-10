@@ -152,19 +152,31 @@ async def update_school_profile(
 
 @router.get("/school")
 async def get_school_profile(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.SCHOOL:
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school users can view school profiles"
+            detail="Only school and staff users can view school profiles"
         )
-    if not current_user.school_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School profile not found"
-        )
-    school = current_user.school_profile
+    
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        if not current_user.school_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School profile not found"
+            )
+        school = current_user.school_profile
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -591,11 +603,11 @@ def get_classes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Allow both SCHOOL and TEACHER
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
-        raise HTTPException(status_code=403, detail="Only school and teacher users can access this resource.")
+    # ✅ Allow SCHOOL, TEACHER, and STAFF
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school, teacher, and staff users can access this resource.")
 
-    # Get the school_id based on role
+    # ✅ Get the school_id based on role
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
@@ -607,6 +619,12 @@ def get_classes(
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher profile not found.")
         school_id = teacher.school_id
+    
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # Query classes of this school
     classes = (
@@ -725,6 +743,53 @@ def get_time_table(
                 "days_count": len(timetable.days)
             })
 
+    # ---------- Staff User ----------
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+
+        timetables = (
+            db.query(Timetable)
+            .options(joinedload(Timetable.days))
+            .filter(Timetable.school_id == school.id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        for timetable in timetables:
+            class_ = db.query(Class).filter(Class.id == timetable.class_id).first()
+            section = db.query(Section).filter(Section.id == timetable.section_id).first()
+
+            student_count = db.query(func.count(Student.id)).filter(
+                Student.class_id == class_.id,
+                Student.section_id == section.id,
+                Student.school_id == school.id
+            ).scalar()
+
+            teacher_assignments = db.query(TeacherClassSectionSubject).filter(
+                TeacherClassSectionSubject.class_id == class_.id,
+                TeacherClassSectionSubject.section_id == section.id,
+                TeacherClassSectionSubject.school_id == school.id
+            ).all()
+
+            response.append({
+                "timetable_id": timetable.id,
+                "class_id": class_.id,
+                "class_name": class_.name,
+                "section_id": section.id,
+                "section_name": section.name,
+                "students": student_count,
+                "teachers": len(teacher_assignments),
+                "is_published": timetable.is_published,
+                "published_at": timetable.published_at,
+                "days_count": len(timetable.days)
+            })
+
     # ---------- Teacher User ----------
     elif current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
@@ -775,7 +840,7 @@ def get_time_table(
                 })
 
     else:
-        raise HTTPException(status_code=403, detail="Only school or teacher users can access this resource.")
+        raise HTTPException(status_code=403, detail="Only school, staff, or teacher users can access this resource.")
 
     if not response:
         raise HTTPException(status_code=404, detail="No timetables found.")
@@ -832,9 +897,9 @@ def publish_timetable(
 def get_timetable_periods(
     timetable_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
-    # If school user → verify school ownership
+    # ✅ If school user → verify school ownership
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
@@ -848,7 +913,24 @@ def get_timetable_periods(
         if not timetable:
             raise HTTPException(status_code=404, detail="Timetable not found for this school.")
 
-    # If teacher user → only allow published timetable
+    # ✅ If staff user → verify school ownership
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+
+        timetable = db.query(Timetable).filter(
+            Timetable.id == timetable_id,
+            Timetable.school_id == school.id
+        ).first()
+
+        if not timetable:
+            raise HTTPException(status_code=404, detail="Timetable not found for this school.")
+
+    # ✅ If teacher user → only allow published timetable
     elif current_user.role == UserRole.TEACHER:
         timetable = db.query(Timetable).filter(
             Timetable.id == timetable_id,
@@ -983,20 +1065,32 @@ def get_sections(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
-        raise HTTPException(status_code=403, detail="Only school or teacher users can access this resource.")
-    # Get school for SCHOOL users
+    # ✅ Allow school, teacher, and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school, teacher, or staff users can access this resource.")
+    
+    # ✅ Get school for SCHOOL users
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this user.")
         school_id = school.id
 
-    # Get school for TEACHER users
+    # ✅ Get school for TEACHER users
     elif current_user.role == UserRole.TEACHER:
         school = db.query(School).join(School.teachers).filter(User.id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this teacher.")
+        school_id = school.id
+    
+    # ✅ Get school for STAFF users
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
         school_id = school.id
 
 
@@ -1023,13 +1117,22 @@ def get_subjects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can access this resource.")
     
-    # Get the school associated with the current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School not found for this user.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this user.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     subjects = db.query(Subject).join(
         class_subjects, class_subjects.c.subject_id == Subject.id
@@ -1198,13 +1301,18 @@ def update_transport(
 def get_transport_detail(
     driver_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER)),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF)),
 ):
-    # Determine school_id
+    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    else:
+    elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # Query transport by driver_id & school_id
     transport = db.query(Transport).filter(
@@ -1242,14 +1350,18 @@ def get_transport_detail(
 def get_transports(
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
-    # Determine school ID
-    school_id = (
-        current_user.school_profile.id
-        if current_user.role == UserRole.SCHOOL
-        else current_user.teacher_profile.school_id
-    )
+    # ✅ Determine school ID based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school_id = current_user.school_profile.id
+    elif current_user.role == UserRole.TEACHER:
+        school_id = current_user.teacher_profile.school_id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # Query all transports of that school
     query = db.query(Transport).filter(Transport.school_id == school_id)
@@ -1297,12 +1409,18 @@ def get_transports(
 @router.get("/school-dashboard/")
 def get_school_dashboard(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
+    # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
-    else:
+    elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # Get school by school_id (not user_id, for TEACHER this fails)
     school = db.query(School).filter(School.id == school_id).first()
@@ -1830,13 +1948,22 @@ def get_account_credit_configuration(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can access this resource.")
 
-    # Get the school associated with the current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School not found for this user.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this user.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     if configs := db.query(CreditConfiguration).all():
         return [
@@ -1937,9 +2064,16 @@ def create_school_credit_configuration(
 @router.get("/margin-config/")
 def get_school_margin_config(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
 ):
-    school_id = current_user.school_profile.id
+    # ✅ Get school_id based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school_id = current_user.school_profile.id
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
 
     # Load all credit configurations with related school margins + class
     credit_configs = (
