@@ -449,66 +449,99 @@ def update_class_section_fields(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Fetch class
-    class_obj = db.query(Class).filter(Class.id == class_id).first()
+    # Determine school context for current user
+    if current_user.role == UserRole.SCHOOL:
+        school_profile = current_user.school_profile
+        if not school_profile:
+            raise HTTPException(status_code=404, detail="School profile not found")
+        school_id = school_profile.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school_id = staff.school_id
+    else:
+        raise HTTPException(status_code=403, detail="Only school or staff users can update classes")
+
+    # Fetch class and ensure it belongs to same school
+    class_obj = db.query(Class).filter(
+        Class.id == class_id,
+        Class.school_id == school_id
+    ).first()
     if not class_obj:
         raise HTTPException(status_code=404, detail="Class not found")
-    # Ensure the class belongs to the current user's school
-    if class_obj.school_id != current_user.school_profile.id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this class")
 
     # Ensure the section is linked to the class and belongs to the same school
     section_obj = db.query(Section).filter(
         Section.id == section_id,
-        Section.school_id == current_user.school_profile.id
+        Section.school_id == school_id
     ).first()
     if not section_obj or section_obj not in class_obj.sections:
         raise HTTPException(status_code=404, detail="Section not found or not linked to this class")
 
+    updated_fields: List[str] = []
+
     # Update start and end time
     if data.start_time:
         class_obj.start_time = data.start_time
+        updated_fields.append("start_time")
     if data.end_time:
         class_obj.end_time = data.end_time
+        updated_fields.append("end_time")
 
     # Update assigned teachers
     if data.assigned_teacher_ids:
         class_obj.assigned_teachers = db.query(Teacher).filter(
             Teacher.id.in_(data.assigned_teacher_ids),
-            Teacher.school_id == current_user.school_profile.id
+            Teacher.school_id == school_id
         ).all()
+        updated_fields.append("assigned_teacher_ids")
 
     # Update extra curricular activities
     if data.extra_activity_ids:
         class_obj.extra_curricular_activities = db.query(ExtraCurricularActivity).filter(
             ExtraCurricularActivity.id.in_(data.extra_activity_ids),
-            ExtraCurricularActivity.school_id == current_user.school_profile.id
+            ExtraCurricularActivity.school_id == school_id
         ).all()
+        updated_fields.append("extra_activity_ids")
 
     # ✅ Update mandatory subjects
     if data.mandatory_subject_ids is not None:
         db.execute(class_subjects.delete().where(class_subjects.c.class_id == class_id))
-        # Insert new ones
         for subject_id in data.mandatory_subject_ids:
             db.execute(class_subjects.insert().values(
                 class_id=class_id,
                 subject_id=subject_id
             ))
+        updated_fields.append("mandatory_subject_ids")
 
     # ✅ Update optional subjects (new many-to-many table)
     if data.optional_subject_ids is not None:
-        # First clear old optional subjects
         db.execute(delete(class_optional_subjects).where(class_optional_subjects.class_id == class_id))
-        # Insert new ones
         for subject_id in data.optional_subject_ids:
             db.execute(insert(class_optional_subjects).values(
-                            class_id=class_id,
-                            subject_id=subject_id
-                        ))
-
+                class_id=class_id,
+                subject_id=subject_id
+            ))
+        updated_fields.append("optional_subject_ids")
 
     db.commit()
     db.refresh(class_obj)
+
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.UPDATE,
+        resource_type=ResourceType.CLASS,
+        resource_id=str(class_obj.id),
+        description=f"Updated class {class_obj.name} (section {section_obj.name})",
+        metadata={
+            "class_id": class_obj.id,
+            "section_id": section_obj.id,
+            "updated_fields": updated_fields
+        }
+    )
+
     return {"detail": "Class section details updated successfully"}
 
 @router.get("/school-classes/")
