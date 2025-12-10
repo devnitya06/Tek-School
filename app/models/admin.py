@@ -94,7 +94,7 @@ class StudentAdminExamData(Base):
     __tablename__ = "student_admin_exam_data"
 
     id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(Integer, ForeignKey("self_signed_students.id", ondelete="CASCADE"), nullable=False)
     exam_id = Column(String, ForeignKey("admin_exams.id", ondelete="CASCADE"), nullable=False)
 
     attempt_no = Column(Integer, default=1)
@@ -105,7 +105,7 @@ class StudentAdminExamData(Base):
     class_rank = Column(Integer, nullable=True)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    student = relationship("Student", back_populates="admin_exam_data")
+    student = relationship("SelfSignedStudent", back_populates="admin_exam_data")
 
     exam = relationship("AdminExam", back_populates="student_admin_exam_data")
 
