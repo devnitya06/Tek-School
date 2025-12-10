@@ -245,49 +245,71 @@ def update_parent_and_address(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can update parent and address data.")
+    # Allow both school and staff
+    if current_user.role == UserRole.SCHOOL:
+        school_profile = getattr(current_user, "school_profile", None)
+        if not school_profile:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        school_id = school_profile.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+    else:
+        raise HTTPException(status_code=403, detail="Only school or staff users can update parent and address data.")
 
-    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
-
-    student = db.query(Student).filter(Student.id == student_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     if not student:
-        raise HTTPException(status_code=404, detail="Student not found.")
+        raise HTTPException(status_code=404, detail="Student not found or not part of your school.")
 
-    if student.classes.school_id != school.id:
-        raise HTTPException(status_code=403, detail="You do not have permission to modify this student.")
+    updated_sections: List[str] = []
 
     # ✅ Parent update
     parent = db.query(Parent).filter(Parent.student_id == student_id).first()
     if parent and data.parent:
         for field, value in data.parent.dict(exclude_unset=True).items():
             setattr(parent, field, value)
+        updated_sections.append("parent")
 
     # ✅ Present address update
     present = db.query(PresentAddress).filter(PresentAddress.student_id == student_id).first()
     if present and data.present_address:
         for field, value in data.present_address.dict(exclude_unset=True).items():
             setattr(present, field, value)
+        updated_sections.append("present_address")
 
     # ✅ Permanent address handling
     permanent = db.query(PermanentAddress).filter(PermanentAddress.student_id == student_id).first()
     if data.present_address and data.present_address.is_this_permanent_as_well:
         if permanent:
             db.delete(permanent)
+            updated_sections.append("permanent_address_removed")
     elif data.permanent_address:
         if permanent:
             for field, value in data.permanent_address.dict(exclude_unset=True).items():
                 setattr(permanent, field, value)
+            updated_sections.append("permanent_address")
         else:
             permanent = PermanentAddress(
                 **data.permanent_address.dict(exclude_unset=True),
                 student_id=student_id
             )
             db.add(permanent)
+            updated_sections.append("permanent_address_created")
 
     db.commit()
+
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.UPDATE,
+        resource_type=ResourceType.STUDENT,
+        resource_id=str(student.id),
+        description=f"Updated parent/address info for student {student.first_name} {student.last_name}",
+        metadata={"student_id": student.id, "updated_sections": updated_sections}
+    )
+
     return {"detail": "Parent and address data updated successfully."}
 
 @router.get("/students/")
