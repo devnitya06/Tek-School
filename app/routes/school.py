@@ -1128,18 +1128,24 @@ def update_transport(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can update transport records.")
-
-    # Get school
-    school = db.query(School).filter(School.id == current_user.school_profile.id).first()
-    if not school:
-        raise HTTPException(status_code=400, detail="School profile not found.")
+    # Determine school context
+    if current_user.role == UserRole.SCHOOL:
+        school_profile = current_user.school_profile
+        if not school_profile:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        school_id = school_profile.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+    else:
+        raise HTTPException(status_code=403, detail="Only school and staff users can update transport records.")
 
     # Get transport record
     transport = (
         db.query(Transport)
-        .filter(Transport.id == transport_id, Transport.school_id == school.id)
+        .filter(Transport.id == transport_id, Transport.school_id == school_id)
         .first()
     )
     if not transport:
