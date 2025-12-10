@@ -13,24 +13,24 @@ class UserRole(str,Enum):
     SCHOOL = "school"
     TEACHER = "teacher"
     STUDENT  = "student" 
+    STAFF = "staff"
     
 # Base schema for user-related actions
 class UserBase(BaseModel):
-    name: str
+    # name: str
+    # location: Optional[str] = None
+    # phone: Optional[str] = None
+    # website: Optional[str] = None
+    # email: EmailStr
+
+    name: Optional[str] = None 
     location: Optional[str] = None
-    phone: Optional[str] = None
+    phone: str
     website: Optional[str] = None
     email: EmailStr
 
-    @field_validator("phone")
-    def validate_phone(cls, v):
-        if v is not None:
-            if not v.isdigit():
-                raise ValueError("Phone must contain digits only")
-            if len(v) != 10:
-                raise ValueError("Phone must be exactly 10 digits")
-        return v
-
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
 # Schema used when creating a new user (no password, role is handled later)
 class UserCreate(UserBase):
@@ -77,6 +77,7 @@ class TokenResponse(BaseModel):
     token_type: str
     role: str
     detail: str
+    id: int
 
 # OTP schema for OTP-related actions
 class OtpCreate(BaseModel):

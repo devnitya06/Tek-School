@@ -2,12 +2,18 @@ from datetime import datetime, timedelta,timezone
 from typing import Optional,Dict,Any
 from fastapi import HTTPException
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
+import warnings
 
 from app.core.config import settings
 from fastapi.security import OAuth2PasswordBearer
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Suppress bcrypt version warnings from passlib
+warnings.filterwarnings("ignore", category=UserWarning, module="passlib")
+
+# Use bcrypt directly for bcrypt 4.x compatibility
+# passlib has issues with bcrypt 4.x, so we'll use bcrypt directly
+pwd_context = None  # We'll use bcrypt directly instead
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def create_access_token(
@@ -62,10 +68,18 @@ def create_refresh_token(
     return encoded_jwt
 
 def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against a hash using bcrypt directly."""
+    # Handle both string and bytes for hashed_password
+    if isinstance(hashed_password, str):
+        hashed_password = hashed_password.encode('utf-8')
+    
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password)
 
 def get_password_hash(password: str):
-    return pwd_context.hash(password)
+    """Hash a password using bcrypt directly."""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 def decode_token(token: str):
     try:

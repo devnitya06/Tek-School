@@ -1,0 +1,2 @@
+TRUNCATE TABLE timetable_days CASCADE;
+ for time table

@@ -2,6 +2,8 @@ from datetime import time
 from sqlalchemy.orm import Session
 from app.models.school import McqBank
 from app.schemas.school import McqBulkCreate
+from app.utils.s3 import upload_base64_to_s3
+from fastapi import HTTPException
 def is_time_overlap(start1: time, end1: time, start2: time, end2: time) -> bool:
     return max(start1, start2) < min(end1, end2)
 
@@ -16,12 +18,23 @@ def create_mcq(db: Session, exam_id: str, mcq_bulk: McqBulkCreate):
             raise ValueError("Single correct MCQ can only have one correct option")
         if mcq.mcq_type == "2" and len(mcq.correct_option) < 2:
             raise ValueError("Multiple correct MCQ must have at least two correct options")
+        
+        image_url = None
+        if mcq.image:
+            try:
+                print("🔹 Uploading MCQ image to S3...")
+                image_url = upload_base64_to_s3(
+                    base64_string=mcq.image,
+                    filename_prefix="exam_mcq"
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Image upload failed: {str(e)}")
 
         new_mcq = McqBank(
             exam_id=exam_id,
             question=mcq.question,
             mcq_type=mcq.mcq_type,
-            image=mcq.image,
+            image=image_url,
             option_a=mcq.option_a,
             option_b=mcq.option_b,
             option_c=mcq.option_c,

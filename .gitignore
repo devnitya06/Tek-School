@@ -1,13 +1,29 @@
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
 *.sqlite3
 
 # Env files
 .env
+.tldr
+note.txt
 
 # Virtual environment
 env/
+venv/
 
 # Alembic
 alembic.ini
+
+# Logs
+*.log
+
+# IDEs
+.vscode/
+.idea/
+
+# Pycharm
+*.iml
+
+run.bat
+run.sh

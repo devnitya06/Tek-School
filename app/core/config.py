@@ -31,9 +31,12 @@ class Settings(BaseSettings):
     #Razorpay
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
+
+    #Redis
+    REDIS_URL: Optional[str] = None
     
     # CORS
-    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000","http://localhost:3001","http://localhost:3002",]
+    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000","http://localhost:3001","http://localhost:3002","*","https://tekschool-school.vercel.app/signin"]
 
     class Config:
         env_file = ".env"
