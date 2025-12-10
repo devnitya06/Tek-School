@@ -224,6 +224,9 @@ def get_staff_profile(
     if staff.annual_salary:
         monthly_salary = float(staff.annual_salary) / 12
 
+    # Get staff permissions
+    permissions = get_staff_permissions(staff.id, db)
+
     return {
         "id": staff.id,
         "school_id": staff.school_id,
@@ -238,6 +241,7 @@ def get_staff_profile(
         "emergency_leave": staff.emergency_leave or 0,
         "casual_leave": staff.casual_leave or 0,
         "is_active": staff.is_active,
+        "permissions": permissions,
         "created_at": staff.created_at.isoformat() if staff.created_at else None,
         "updated_at": staff.updated_at.isoformat() if staff.updated_at else None,
     }
