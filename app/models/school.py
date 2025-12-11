@@ -455,6 +455,7 @@ class LeaveRequest(Base):
     school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
     teacher_id = Column(String, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True)
     student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+    staff_id = Column(String, ForeignKey("staff.id", ondelete="CASCADE"), nullable=True)
 
     # metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -464,6 +465,7 @@ class LeaveRequest(Base):
     school = relationship("School", back_populates="leave_requests")
     teacher = relationship("Teacher", back_populates="leave_requests")
     student = relationship("Student", back_populates="leave_requests")
+    staff = relationship("Staff", back_populates="leave_requests")
 
     def __repr__(self):
         return f"<LeaveRequest(subject={self.subject}, status={self.status})>"

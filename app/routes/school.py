@@ -2908,8 +2908,9 @@ def create_leave_request(
 ):
     print("🔹 create_leave_request called")
     print(f"🔹 request.attach_file: {request.attach_file}")
-    if current_user.role not in [UserRole.TEACHER, UserRole.STUDENT]:
-        raise HTTPException(status_code=403, detail="Only teacher or student can request leave")
+    # ✅ Allow teacher, student, and staff to request leave
+    if current_user.role not in [UserRole.TEACHER, UserRole.STUDENT, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only teacher, student, or staff can request leave")
 
     attach_file_url = None
     if request.attach_file:
@@ -2924,6 +2925,8 @@ def create_leave_request(
 
     if current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
         school_id = teacher.school_id
         leave = LeaveRequest(
             subject=request.subject,
@@ -2934,11 +2937,14 @@ def create_leave_request(
             status=LeaveStatus.PENDING,
             teacher_id=teacher.id,
             student_id=None,
+            staff_id=None,
             school_id=school_id,
             attach_file=attach_file_url
         )
-    else:
+    elif current_user.role == UserRole.STUDENT:
         student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found.")
         school_id = student.school_id
         leave = LeaveRequest(
             subject=request.subject,
@@ -2949,6 +2955,25 @@ def create_leave_request(
             status=LeaveStatus.PENDING,
             student_id=student.id,
             teacher_id=None,
+            staff_id=None,
+            school_id=school_id,
+            attach_file=attach_file_url
+        )
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+        leave = LeaveRequest(
+            subject=request.subject,
+            leave_type=request.leave_type,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            description=request.description,
+            status=LeaveStatus.PENDING,
+            staff_id=staff.id,
+            teacher_id=None,
+            student_id=None,
             school_id=school_id,
             attach_file=attach_file_url
         )
@@ -2983,9 +3008,10 @@ def get_all_leaves(
 ):
     """
     Get leave requests:
-    - School → all leave requests (teachers + students)
+    - School → all leave requests (teachers + students + staff)
     - Teacher → their own leaves
     - Student → their own leaves
+    - Staff → all leave requests from their school (excluding their own)
     Filters:
       - username (partial match)
       - from_date, end_date
@@ -3001,6 +3027,18 @@ def get_all_leaves(
         query = query.filter(LeaveRequest.teacher_id == current_user.teacher_profile.id)
     elif current_user.role == UserRole.STUDENT:
         query = query.filter(LeaveRequest.student_id == current_user.student_profile.id)
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        # ✅ Staff can see all leave requests from their school, but exclude their own
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+        query = query.filter(
+            LeaveRequest.school_id == school.id,
+            LeaveRequest.staff_id != staff.id  # Exclude current staff's own requests
+        )
     else:
         raise HTTPException(status_code=403, detail="Not authorized to view leave requests")
 
@@ -3036,6 +3074,8 @@ def get_all_leaves(
                 (l.teacher and username.lower() in f"{l.teacher.first_name} {l.teacher.last_name}".lower())
                 or
                 (l.student and username.lower() in f"{l.student.first_name} {l.student.last_name}".lower())
+                or
+                (l.staff and username.lower() in f"{l.staff.first_name} {l.staff.last_name}".lower())
             )
         ]
         total_count = len(leaves)  # adjust count if username filter used
@@ -3055,6 +3095,13 @@ def get_all_leaves(
         .all()
     )
 
+    staff_counts = dict(
+        db.query(LeaveRequest.staff_id, func.count(LeaveRequest.id))
+        .filter(LeaveRequest.staff_id.isnot(None))
+        .group_by(LeaveRequest.staff_id)
+        .all()
+    )
+
     # --- Build final response ---
     result = []
     for leave in leaves:
@@ -3068,6 +3115,11 @@ def get_all_leaves(
             user_name = f"{leave.student.first_name} {leave.student.last_name}"
             role = "STUDENT"
             leave_count = student_counts.get(user_id, 0)
+        elif leave.staff_id:
+            user_id = leave.staff_id
+            user_name = f"{leave.staff.first_name} {leave.staff.last_name}"
+            role = "STAFF"
+            leave_count = staff_counts.get(user_id, 0)
         else:
             user_id = None
             user_name = None
@@ -3116,6 +3168,10 @@ def get_leave_by_id(
         user_id = leave.student_id
         user_name = f"{leave.student.first_name} {leave.student.last_name}"
         role = "STUDENT"
+    elif leave.staff_id:
+        user_id = leave.staff_id
+        user_name = f"{leave.staff.first_name} {leave.staff.last_name}"
+        role = "STAFF"
     else:
         user_id = None
         user_name = None
@@ -3180,6 +3236,12 @@ def update_leave_status(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Leave request does not belong to your school"
             )
+        # ✅ Prevent staff from approving their own leave requests
+        if leave.staff_id == staff.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot approve or decline your own leave request"
+            )
 
     status_value = status.status.lower()  # extract string from model
 
@@ -3190,7 +3252,7 @@ def update_leave_status(
     db.commit()
     db.refresh(leave)
 
-    # Determine user info
+    # ✅ Determine user info
     if leave.teacher_id:
         user_id = leave.teacher_id
         user_name = f"{leave.teacher.first_name} {leave.teacher.last_name}"
@@ -3199,21 +3261,35 @@ def update_leave_status(
         user_id = leave.student_id
         user_name = f"{leave.student.first_name} {leave.student.last_name}"
         role = "STUDENT"
+    elif leave.staff_id:
+        user_id = leave.staff_id
+        user_name = f"{leave.staff.first_name} {leave.staff.last_name}"
+        role = "STAFF"
     else:
         user_id = None
         user_name = None
         role = None
 
-    # Log action
+    # ✅ Log action
     action = ActionType.APPROVE if status_value == "approved" else ActionType.DECLINE
+    approver_role = "STAFF" if current_user.role == UserRole.STAFF else "SCHOOL"
     log_action(
         db=db,
         current_user=current_user,
         action_type=action,
         resource_type=ResourceType.LEAVE_REQUEST,
         resource_id=str(leave.id),
-        description=f"{status_value.capitalize()} leave request for {user_name} ({role})",
-        metadata={"leave_id": leave.id, "user_name": user_name, "role": role, "subject": leave.subject}
+        description=f"{status_value.capitalize()} leave request for {user_name} ({role}) by {approver_role}",
+        metadata={
+            "leave_id": leave.id,
+            "user_name": user_name,
+            "user_role": role,
+            "approver_role": approver_role,
+            "subject": leave.subject,
+            "leave_type": leave.leave_type.value if hasattr(leave.leave_type, 'value') else str(leave.leave_type),
+            "start_date": str(leave.start_date),
+            "end_date": str(leave.end_date)
+        }
     )
 
     return {

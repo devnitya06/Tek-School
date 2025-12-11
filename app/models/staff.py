@@ -52,6 +52,7 @@ class Staff(Base):
     school = relationship("School", back_populates="staff_members")
     user = relationship("User", back_populates="staff_profile")
     attendances = relationship("Attendance", back_populates="staff")
+    leave_requests = relationship("LeaveRequest", back_populates="staff", cascade="all, delete")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
