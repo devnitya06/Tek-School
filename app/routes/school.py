@@ -561,8 +561,9 @@ def get_school_classes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
-        raise HTTPException(status_code=403, detail="Only school and teacher users can access this resource.")
+    # ✅ Allow school, teacher, and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school, teacher, and staff users can access this resource.")
 
     if current_user.role == UserRole.SCHOOL:
         # Get the school associated with the current user
@@ -580,6 +581,14 @@ def get_school_classes(
         school = db.query(School).filter(School.id == teacher.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this teacher.")
+    
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     # Common query for both roles
     classes = db.query(Class).filter(Class.school_id == school.id).all()
@@ -2350,6 +2359,19 @@ def list_exams(
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found")
+
+        query = query.filter(
+            Exam.school_id == school.id,
+            Exam.is_published == True
+        )
+
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
         query = query.filter(
             Exam.school_id == school.id,
