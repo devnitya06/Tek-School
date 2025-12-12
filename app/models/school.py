@@ -163,6 +163,9 @@ class Class(Base):
     start_time = Column(Time)
     end_time = Column(Time)
     school_id = Column(String, ForeignKey("schools.id"))
+    annual_course_fee = Column(Float, default=10000.0)
+    annual_transport_fee = Column(Float, default=3000.0)
+    tek_school_payment_annually = Column(Float, default=1000.0)
     
     # Relationships
     school = relationship("School", back_populates="classes")

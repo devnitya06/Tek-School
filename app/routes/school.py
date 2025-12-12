@@ -361,7 +361,13 @@ def create_class(
         )
 
     # ✅ Create new class
-    new_class = Class(name=class_data.class_name, school_id=school.id)
+    new_class = Class(
+        name=class_data.class_name, 
+        school_id=school.id,
+        annual_course_fee=class_data.annual_course_fee if class_data.annual_course_fee is not None else 10000.0,
+        annual_transport_fee=class_data.annual_transport_fee if class_data.annual_transport_fee is not None else 3000.0,
+        tek_school_payment_annually=class_data.tek_school_payment_annually if class_data.tek_school_payment_annually is not None else 1000.0
+    )
     db.add(new_class)
     db.commit()
     db.refresh(new_class)
@@ -500,6 +506,17 @@ def update_class_section_fields(
     if data.end_time:
         class_obj.end_time = data.end_time
         updated_fields.append("end_time")
+    
+    # Update fee fields
+    if data.annual_course_fee is not None:
+        class_obj.annual_course_fee = data.annual_course_fee
+        updated_fields.append("annual_course_fee")
+    if data.annual_transport_fee is not None:
+        class_obj.annual_transport_fee = data.annual_transport_fee
+        updated_fields.append("annual_transport_fee")
+    if data.tek_school_payment_annually is not None:
+        class_obj.tek_school_payment_annually = data.tek_school_payment_annually
+        updated_fields.append("tek_school_payment_annually")
 
     # Update assigned teachers
     if data.assigned_teacher_ids:
@@ -600,6 +617,9 @@ def get_school_classes(
         {
             "class_id": class_.id,
             "class_name": class_.name,
+            "annual_course_fee": class_.annual_course_fee,
+            "annual_transport_fee": class_.annual_transport_fee,
+            "tek_school_payment_annually": class_.tek_school_payment_annually,
         }
         for class_ in classes
     ]
@@ -693,6 +713,9 @@ def get_classes(
                 "exams":exam_count,
                 "start_time": class_.start_time.strftime("%H:%M") if class_.start_time else None,
                 "end_time": class_.end_time.strftime("%H:%M") if class_.end_time else None,
+                "annual_course_fee": class_.annual_course_fee,
+                "annual_transport_fee": class_.annual_transport_fee,
+                "tek_school_payment_annually": class_.tek_school_payment_annually,
             })
             sl_no += 1
 
