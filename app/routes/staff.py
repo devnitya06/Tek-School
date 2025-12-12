@@ -502,7 +502,7 @@ def get_activity_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
     pagination: PaginationParams = Depends(),
-    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID (integer) or profile ID (e.g., STF-123, TCH-456)"),
     action_type: Optional[str] = Query(None, description="Filter by action type (create, update, delete, approve, decline)"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type (student, teacher, leave_request, class, transport)"),
     from_date: Optional[date] = Query(None, description="Filter from this start date"),
@@ -528,9 +528,41 @@ def get_activity_logs(
     # Build query
     query = db.query(ActivityLog).filter(ActivityLog.school_id == school_id)
     
-    # Apply filters
+    # ✅ Apply user_id filter (handles both integer user_id and profile IDs like STF-123, TCH-456)
     if user_id:
-        query = query.filter(ActivityLog.user_id == user_id)
+        try:
+            # Try to parse as integer (user_id)
+            user_id_int = int(user_id)
+            query = query.filter(ActivityLog.user_id == user_id_int)
+        except ValueError:
+            # If not an integer, treat as profile ID and look up the user_id
+            if user_id.startswith("STF-"):
+                staff = db.query(Staff).filter(Staff.id == user_id).first()
+                if staff:
+                    query = query.filter(ActivityLog.user_id == staff.user_id)
+                else:
+                    # Staff not found, return empty result
+                    query = query.filter(ActivityLog.user_id == -1)
+            elif user_id.startswith("TCH-"):
+                from app.models.teachers import Teacher
+                teacher = db.query(Teacher).filter(Teacher.id == user_id).first()
+                if teacher:
+                    query = query.filter(ActivityLog.user_id == teacher.user_id)
+                else:
+                    query = query.filter(ActivityLog.user_id == -1)
+            else:
+                # Try to find student by ID (students have integer IDs)
+                try:
+                    student_id = int(user_id)
+                    from app.models.students import Student
+                    student = db.query(Student).filter(Student.id == student_id).first()
+                    if student:
+                        query = query.filter(ActivityLog.user_id == student.user_id)
+                    else:
+                        query = query.filter(ActivityLog.user_id == -1)
+                except ValueError:
+                    # Invalid format, return empty result
+                    query = query.filter(ActivityLog.user_id == -1)
     if action_type:
         query = query.filter(ActivityLog.action_type == action_type)
     if resource_type:
