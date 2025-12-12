@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 import re
+from datetime import date
 
 from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
@@ -14,7 +16,6 @@ from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
 from app.utils.permission import get_staff_permissions, require_roles
 from app.services.pagination import PaginationParams
-from sqlalchemy import func
 from typing import Optional
 
 router = APIRouter()
@@ -504,6 +505,8 @@ def get_activity_logs(
     user_id: Optional[int] = Query(None, description="Filter by user ID"),
     action_type: Optional[str] = Query(None, description="Filter by action type (create, update, delete, approve, decline)"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type (student, teacher, leave_request, class, transport)"),
+    from_date: Optional[date] = Query(None, description="Filter from this start date"),
+    to_date: Optional[date] = Query(None, description="Filter until this end date"),
 ):
     """
     Get activity logs for all users.
@@ -532,6 +535,19 @@ def get_activity_logs(
         query = query.filter(ActivityLog.action_type == action_type)
     if resource_type:
         query = query.filter(ActivityLog.resource_type == resource_type)
+    
+    # ✅ Date filtering
+    if from_date and to_date:
+        query = query.filter(
+            and_(
+                func.date(ActivityLog.created_at) >= from_date,
+                func.date(ActivityLog.created_at) <= to_date,
+            )
+        )
+    elif from_date:
+        query = query.filter(func.date(ActivityLog.created_at) >= from_date)
+    elif to_date:
+        query = query.filter(func.date(ActivityLog.created_at) <= to_date)
     
     # Get total count
     total_count = query.count()
