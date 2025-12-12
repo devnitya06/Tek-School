@@ -620,11 +620,14 @@ def get_staff_list(
     current_user: User = Depends(require_roles(UserRole.SCHOOL)),
     pagination: PaginationParams = Depends(),
     staff_name: Optional[str] = Query(None, description="Filter by staff name"),
+    permission: Optional[str] = Query(None, description="Filter by permission type(s). Can be comma-separated for multiple (e.g., 'teacher,students,exams')"),
+    from_date: Optional[date] = Query(None, description="Filter from this start date (date of joining)"),
+    to_date: Optional[date] = Query(None, description="Filter until this end date (date of joining)"),
 ):
     """
     Get list of all staff members under the school.
     Only school users can access this endpoint.
-    Returns: staff name, permissions, roll number (staff.id), date of joining, and activity logs count.
+    Returns: staff name, permissions, email, phone, date of joining, and activity logs count.
     """
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -634,12 +637,48 @@ def get_staff_list(
     # Build base query for staff
     query = db.query(Staff).filter(Staff.school_id == school.id)
     
-    # Apply name filter
+    # ✅ Apply name filter (searches in concatenated full name)
     if staff_name:
         query = query.filter(
-            (Staff.first_name.ilike(f"%{staff_name}%")) |
-            (Staff.last_name.ilike(f"%{staff_name}%"))
+            func.concat(Staff.first_name, " ", Staff.last_name).ilike(f"%{staff_name.strip()}%")
         )
+    
+    # ✅ Apply date filters (date of joining)
+    if from_date and to_date:
+        query = query.filter(
+            and_(
+                func.date(Staff.created_at) >= from_date,
+                func.date(Staff.created_at) <= to_date,
+            )
+        )
+    elif from_date:
+        query = query.filter(func.date(Staff.created_at) >= from_date)
+    elif to_date:
+        query = query.filter(func.date(Staff.created_at) <= to_date)
+    
+    # ✅ Apply permission filter (supports multiple comma-separated permissions)
+    if permission:
+        permission_list = [p.strip() for p in permission.split(",") if p.strip()]
+        valid_permissions = []
+        
+        for perm_str in permission_list:
+            try:
+                perm_enum = StaffPermissionType(perm_str)
+                valid_permissions.append(perm_enum)
+            except ValueError:
+                continue  # Skip invalid permissions
+        
+        if valid_permissions:
+            # Join with staff_permissions table to filter by any of the specified permissions
+            query = query.join(
+                staff_permissions,
+                Staff.id == staff_permissions.c.staff_id
+            ).filter(
+                staff_permissions.c.permission.in_(valid_permissions)
+            ).distinct()
+        else:
+            # No valid permissions, return empty result
+            query = query.filter(Staff.id == None)
     
     # Get total count before pagination
     total_count = query.count()
@@ -667,7 +706,8 @@ def get_staff_list(
         result.append({
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
-            "roll_number": staff.id,  # Using staff.id as roll number
+            "email": staff.email,
+            "phone": staff.phone,
             "permissions": permissions,
             "date_of_joining": staff.created_at.isoformat() if staff.created_at else None,
             "activity_logs_count": activity_logs_count

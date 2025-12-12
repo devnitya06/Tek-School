@@ -2942,8 +2942,7 @@ def create_leave_request(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    print("🔹 create_leave_request called")
-    print(f"🔹 request.attach_file: {request.attach_file}")
+
     # ✅ Allow teacher, student, and staff to request leave
     if current_user.role not in [UserRole.TEACHER, UserRole.STUDENT, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only teacher, student, or staff can request leave")
@@ -3038,19 +3037,21 @@ def get_all_leaves(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     pagination: PaginationParams = Depends(),
-    username: Optional[str] = Query(None, description="Filter by user name (teacher/student)"),
+    username: Optional[str] = Query(None, description="Filter by user name (teacher/student/staff)"),
     from_date: Optional[date] = Query(None, description="Filter from this start date"),
     end_date: Optional[date] = Query(None, description="Filter until this end date"),
+    view: Optional[str] = Query("all", description="For staff: 'all' to see all school leave requests, 'own' to see only own requests"),
 ):
     """
     Get leave requests:
     - School → all leave requests (teachers + students + staff)
     - Teacher → their own leaves
     - Student → their own leaves
-    - Staff → all leave requests from their school (excluding their own)
+    - Staff → can see all leave requests (view=all) or only own (view=own)
     Filters:
       - username (partial match)
       - from_date, end_date
+      - view (for staff only: 'all' or 'own')
     Includes leave_count and pagination.
     """
 
@@ -3067,14 +3068,24 @@ def get_all_leaves(
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
-        # ✅ Staff can see all leave requests from their school, but exclude their own
         school = db.query(School).filter(School.id == staff.school_id).first()
+
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this staff member.")
-        query = query.filter(
-            LeaveRequest.school_id == school.id,
-            LeaveRequest.staff_id != staff.id  # Exclude current staff's own requests
-        )
+        
+        # ✅ Staff can choose: view all leave requests or only their own
+        if view and view.lower() == "own":
+            query = query.filter(
+                and_(
+                    LeaveRequest.school_id == school.id,
+                    LeaveRequest.staff_id == staff.id,
+                    LeaveRequest.teacher_id.is_(None),
+                    LeaveRequest.student_id.is_(None)
+                )
+            )
+        else:
+            # Staff wants to see all leave requests from their school (default behavior)
+            query = query.filter(LeaveRequest.school_id == school.id)
     else:
         raise HTTPException(status_code=403, detail="Not authorized to view leave requests")
 
@@ -3176,6 +3187,7 @@ def get_all_leaves(
             "applied_at": leave.created_at,
             "updated_at": leave.updated_at,
             "leave_count": leave_count,
+            "school_id": leave.school_id,
         })
 
     return pagination.format_response(result, total_count)
