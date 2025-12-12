@@ -1876,12 +1876,22 @@ def update_timetable(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != "school":
-        raise HTTPException(status_code=403, detail="Only schools can update timetables.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only schools and staff can update timetables.")
 
-    school = current_user.school_profile
-    if not school:
-        raise HTTPException(status_code=400, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile
+        if not school:
+            raise HTTPException(status_code=400, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     # ✅ Get the base timetable (one per class + section)
     timetable = db.query(Timetable).filter_by(
@@ -1949,6 +1959,32 @@ def update_timetable(
 
     db.commit()
     db.refresh(day)
+    db.refresh(timetable)
+
+    # ✅ Get class and section info for logging
+    class_obj = db.query(Class).filter(Class.id == timetable.class_id).first()
+    section_obj = db.query(Section).filter(Section.id == timetable.section_id).first()
+    class_name = class_obj.name if class_obj else f"Class {timetable.class_id}"
+    section_name = section_obj.name if section_obj else f"Section {timetable.section_id}"
+
+    # ✅ Log action
+    log_action(
+        db=db,
+        current_user=current_user,
+        action_type=ActionType.UPDATE,
+        resource_type=ResourceType.CLASS,
+        resource_id=str(timetable.id),
+        description=f"Updated timetable for {class_name} - {section_name} on {day.day}",
+        metadata={
+            "timetable_id": timetable.id,
+            "class_id": timetable.class_id,
+            "class_name": class_name,
+            "section_id": timetable.section_id,
+            "section_name": section_name,
+            "day": day.day,
+            "periods_added": len(data.periods)
+        }
+    )
 
     return {"detail": f"Timetable updated for {day.day}"}
 
