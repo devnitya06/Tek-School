@@ -122,9 +122,19 @@ class SelfSignedStudent(Base):
     state = Column(String(100), nullable=True)
 
     plot = Column(String(255), nullable=True)
+    status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False)
+    status_expiry_date = Column(DateTime, nullable=True)
+
+    #parent details
+    parent_name = Column(String(100), nullable=True)
+    relation = Column(String(50), nullable=True)
+    parent_phone = Column(String(15), nullable=True)
+    parent_email = Column(String(100), nullable=True)
+    occupation = Column(String(100), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="self_signed_student_profile")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
+    subscriptions = relationship("StudentSubscription",back_populates="student",cascade="all, delete-orphan")

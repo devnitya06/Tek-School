@@ -1,8 +1,8 @@
-from pydantic import BaseModel
-from typing import List,Optional
+from pydantic import BaseModel, Field
+from typing import List,Optional,Union
 from app.models.school import SchoolBoard,SchoolMedium
-from app.models.admin import ExamType,QuestionType,SetType
-from datetime import datetime,date
+from app.models.admin import ExamType,QuestionType,SetType,PlanDuration
+from datetime import datetime,date,time
 # Reuse previously defined base schemas
 class AccountConfigurationBase(BaseModel):
     name: str
@@ -111,3 +111,46 @@ class QuestionUpdate(BaseModel):
     probability_ratio: Optional[int] = None
     no_of_teacher_verified: Optional[int] = None
     question: Optional[str] = None
+
+class StudentAnswer(BaseModel):
+    question_id: int
+    selected_option: Union[str, List[str]]
+
+
+class StudentExamSubmitRequest(BaseModel):
+    answers: List[StudentAnswer]
+
+class RechargePlanCreate(BaseModel):
+    class_name: str = Field(..., min_length=1)
+    duration: PlanDuration
+    amount: int = Field(..., gt=0)
+
+class RechargePlanResponse(BaseModel):
+    id: int
+    class_name: str
+    duration: PlanDuration
+    amount: int
+    validity_days: int
+    is_active: bool
+    model_config = {
+        "from_attributes": True
+    }
+class RechargePlanListResponse(BaseModel):
+    id: int
+    class_name: str
+    duration: PlanDuration
+    amount: int
+    validity_days: int
+
+    model_config = {
+        "from_attributes": True
+    }
+
+class StudentPurchaseRequest(BaseModel):
+    duration: PlanDuration
+class StudentPurchaseResponse(BaseModel):
+    subscription_id: int
+    payment_id: int
+    amount: int
+    currency: str = "INR"
+    status: str

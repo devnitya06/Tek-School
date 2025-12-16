@@ -1,25 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
-from app.models.admin import AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet
+from app.models.admin import ( AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,
+                            QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet,StudentExamStatus,RechargePlan)
 from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus,SelfSignedStudent
 from app.schemas.admin import (
     ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate,AdminExamCreate,
-    AdminExamUpdate,ExamQuestionPayloadList,QuestionSetCreate,BulkQuestionCreate,QuestionUpdate
+    AdminExamUpdate,ExamQuestionPayloadList,QuestionSetCreate,BulkQuestionCreate,QuestionUpdate,
+    StudentExamSubmitRequest,RechargePlanCreate,RechargePlanResponse,RechargePlanListResponse,
+    StudentPurchaseRequest,StudentPurchaseResponse
 )
-from app.models.admin import CreditMaster,SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA
+from app.services.students import update_admin_exam_class_ranks
+from app.models.admin import ( CreditMaster,SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,
+                            ChapterPDF,ChapterQnA,PlanDuration,StudentSubscription,Payment,
+                            PaymentStatus)
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
-from sqlalchemy import func,cast, String
+from sqlalchemy import func,cast, String,case
 from collections import defaultdict
 from app.core.dependencies import get_current_user
 from typing import Optional
 from app.services.pagination import PaginationParams
-from datetime import datetime
+from datetime import datetime, timedelta
+from app.utils.services import get_validity_days
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -1413,11 +1420,120 @@ def get_exam_details(
         "duration": exam.duration,
         "passing_mark": exam.passing_mark,
         "total_questions": total_questions,
+        "attempts_allowed": exam.repeat,
         "total_students_appeared": total_students_appeared,
         "status": exam.status.value,
         "description": exam.description,
         "exam_validity": exam.exam_validity
     }
+@router.post("/admin-exams/{exam_id}/submit")
+def submit_admin_exam(
+    exam_id: str,
+    submission: StudentExamSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 1️⃣ Role check
+    if current_user.role != UserRole.STUDENT:
+        raise HTTPException(
+            status_code=403,
+            detail="Only students can submit admin exams"
+        )
+
+    # 2️⃣ Student profile check
+    student_profile = current_user.self_signed_student_profile
+    if not student_profile:
+        raise HTTPException(
+            status_code=400,
+            detail="Student profile not found"
+        )
+
+    # 3️⃣ Attempt number
+    last_attempt = (
+        db.query(StudentAdminExamData)
+        .filter(
+            StudentAdminExamData.student_id == student_profile.id,
+            StudentAdminExamData.exam_id == exam_id
+        )
+        .order_by(StudentAdminExamData.attempt_no.desc())
+        .first()
+    )
+    next_attempt_no = last_attempt.attempt_no + 1 if last_attempt else 1
+
+    # 4️⃣ Fetch admin MCQs
+    mcqs = (
+        db.query(AdminExamBank)
+        .filter(AdminExamBank.exam_id == exam_id)
+        .all()
+    )
+
+    if not mcqs:
+        raise HTTPException(
+            status_code=404,
+            detail="No questions found for this exam"
+        )
+
+    mcq_map = {mcq.id: mcq for mcq in mcqs}
+
+    # 5️⃣ Evaluation
+    correct_count = 0
+    total = len(submission.answers)
+
+    for ans in submission.answers:
+        mcq = mcq_map.get(ans.question_id)
+        if not mcq:
+            continue
+
+        correct_options = mcq.correct_option
+        selected_options = ans.selected_option
+
+        # Normalize to list
+        if not isinstance(correct_options, list):
+            correct_options = [correct_options]
+        if not isinstance(selected_options, list):
+            selected_options = [selected_options]
+
+        matched = [opt for opt in selected_options if opt in correct_options]
+        correct_count += len(matched)
+
+    result_percentage = (correct_count / total * 100) if total > 0 else 0
+    status_result = (
+        StudentExamStatus.pass_
+        if result_percentage >= 40
+        else StudentExamStatus.fail
+    )
+
+    # 6️⃣ Save submission
+    student_exam = StudentAdminExamData(
+        student_id=student_profile.id,
+        exam_id=exam_id,
+        attempt_no=next_attempt_no,
+        answers=[ans.dict() for ans in submission.answers],
+        result=result_percentage,
+        status=status_result,
+        appeared_count=1,
+        submitted_at=datetime.utcnow()
+    )
+
+    db.add(student_exam)
+    db.commit()
+    db.refresh(student_exam)
+
+    # 7️⃣ Update class rank
+    update_admin_exam_class_ranks(
+        db=db,
+        exam_id=exam_id,
+        class_name=student_profile.select_class
+    )
+
+    return {
+        "detail": "Admin exam submitted successfully",
+        "exam_id": exam_id,
+        "attempt_no": next_attempt_no,
+        "result": result_percentage,
+        "status": status_result
+    }
+
 @router.post("/set/")
 def create_question_set(
     payload: QuestionSetCreate, 
@@ -1650,6 +1766,161 @@ def delete_question(
     return {"message": f"Question {question_id} deleted successfully"}
 
 
+@router.post(
+    "/admin/recharge-plans/",
+    response_model=RechargePlanResponse,
+    status_code=201
+)
+def create_recharge_plan(
+    payload: RechargePlanCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔐 Admin check
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can create recharge plans"
+        )
 
+    # 🔁 Prevent duplicate plan for same class & duration
+    existing_plan = db.query(RechargePlan).filter(
+        RechargePlan.class_name == payload.class_name,
+        RechargePlan.duration == payload.duration,
+        RechargePlan.is_active == True
+    ).first()
+
+    if existing_plan:
+        raise HTTPException(
+            status_code=400,
+            detail="Recharge plan already exists for this class and duration"
+        )
+
+    validity_days = get_validity_days(payload.duration)
+
+    plan = RechargePlan(
+        class_name=payload.class_name,
+        duration=payload.duration,
+        amount=payload.amount,
+        validity_days=validity_days
+    )
+
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+
+    return plan
+
+@router.get(
+    "/recharge-plans/",
+    response_model=list[RechargePlanListResponse]
+)
+def get_recharge_plans(
+    class_name: str = Query(..., description="Student class (eg: 10)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    plans = db.query(RechargePlan).filter(
+        RechargePlan.class_name == class_name,
+        RechargePlan.is_active == True
+    ).order_by(
+        case(
+            (RechargePlan.duration == PlanDuration.MONTHLY, 1),
+            (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
+            (RechargePlan.duration == PlanDuration.YEARLY, 3),
+        )
+    ).all()
+
+    if not plans:
+        raise HTTPException(
+            status_code=404,
+            detail="No recharge plans found for this class"
+        )
+
+    return plans
+
+@router.post(
+    "/student/purchase-plan/",
+    response_model=StudentPurchaseResponse,
+    status_code=201
+)
+def student_purchase_plan(
+    payload: StudentPurchaseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔐 Student only
+    if current_user.role != UserRole.STUDENT:
+        raise HTTPException(
+            status_code=403,
+            detail="Only students can purchase plans"
+        )
+
+    # 1️⃣ Fetch student profile
+    student = db.query(SelfSignedStudent).filter(
+        SelfSignedStudent.user_id == current_user.id
+    ).first()
+
+    if not student:
+        raise HTTPException(404, "Student profile not found")
+
+    if not student.select_class:
+        raise HTTPException(400, "Student has not selected a class")
+
+    # 2️⃣ Find recharge plan based on class + duration
+    plan = db.query(RechargePlan).filter(
+        RechargePlan.class_name == student.select_class,
+        RechargePlan.duration == payload.duration,
+        RechargePlan.is_active == True
+    ).first()
+
+    if not plan:
+        raise HTTPException(
+            status_code=404,
+            detail="Recharge plan not available for selected duration"
+        )
+
+    # 3️⃣ Deactivate old subscriptions
+    db.query(StudentSubscription).filter(
+        StudentSubscription.student_id == student.id,
+        StudentSubscription.is_current == True
+    ).update({"is_current": False})
+
+    # 4️⃣ Create subscription
+    start_date = datetime.utcnow()
+    end_date = start_date + timedelta(days=plan.validity_days)
+
+    subscription = StudentSubscription(
+        student_id=student.id,
+        plan_id=plan.id,
+        start_date=start_date,
+        end_date=end_date,
+        amount_paid=plan.amount,
+        is_current=True
+    )
+
+    db.add(subscription)
+    db.flush()  # to get subscription.id
+
+    # 5️⃣ Create payment entry
+    payment = Payment(
+        student_id=student.id,
+        subscription_id=subscription.id,
+        amount=plan.amount,
+        payment_status=PaymentStatus.PENDING
+    )
+
+    db.add(payment)
+    db.commit()
+
+    db.refresh(subscription)
+    db.refresh(payment)
+
+    return {
+        "subscription_id": subscription.id,
+        "payment_id": payment.id,
+        "amount": plan.amount,
+        "status": "pending"
+    }
 
 
