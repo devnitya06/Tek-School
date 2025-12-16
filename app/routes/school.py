@@ -2558,6 +2558,15 @@ def get_exam_detail(
         ):
             raise HTTPException(status_code=403, detail="You are not allowed to view this exam")
 
+    # 👨‍💼 Staff access
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+
+        if exam.school_id != staff.school_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this exam")
+
     else:
         raise HTTPException(status_code=403, detail="Invalid role for viewing exam details")
 
@@ -2836,10 +2845,10 @@ def delete_mcq_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in [UserRole.TEACHER]:
+    if current_user.role not in [UserRole.TEACHER, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school or teacher can delete MCQs"
+            detail="Only teacher or staff can delete MCQs"
         )
     success = delete_mcq(db, mcq_id)
     if not success:
@@ -3262,7 +3271,7 @@ def get_leave_by_id(
 @router.put("/leave-request/{leave_id}/")
 def update_leave_status(
     leave_id: int,
-    status: LeaveStatusUpdate,  # Pydantic model
+    status_update: LeaveStatusUpdate,  # Pydantic model
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -3306,7 +3315,7 @@ def update_leave_status(
                 detail="You cannot approve or decline your own leave request"
             )
 
-    status_value = status.status.lower()  # extract string from model
+    status_value = status_update.status.lower()  # extract string from model
 
     if status_value not in ["approved", "declined"]:
         raise HTTPException(status_code=400, detail="Invalid status. Must be 'approved' or 'declined'")
