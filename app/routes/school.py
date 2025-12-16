@@ -155,28 +155,19 @@ async def get_school_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # ✅ Allow both school and staff users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+    # ✅ Only school users can access
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school and staff users can view school profiles"
+            detail="Only school users can view school profiles"
         )
     
-    # ✅ Get school based on user role
-    if current_user.role == UserRole.SCHOOL:
-        if not current_user.school_profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="School profile not found"
-            )
-        school = current_user.school_profile
-    else:  # STAFF
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school = db.query(School).filter(School.id == staff.school_id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+    if not current_user.school_profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School profile not found"
+        )
+    school = current_user.school_profile
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -361,7 +352,13 @@ def create_class(
         )
 
     # ✅ Create new class
-    new_class = Class(name=class_data.class_name, school_id=school.id)
+    new_class = Class(
+        name=class_data.class_name, 
+        school_id=school.id,
+        annual_course_fee=class_data.annual_course_fee if class_data.annual_course_fee is not None else 10000.0,
+        annual_transport_fee=class_data.annual_transport_fee if class_data.annual_transport_fee is not None else 3000.0,
+        tek_school_payment_annually=class_data.tek_school_payment_annually if class_data.tek_school_payment_annually is not None else 1000.0
+    )
     db.add(new_class)
     db.commit()
     db.refresh(new_class)
@@ -500,6 +497,17 @@ def update_class_section_fields(
     if data.end_time:
         class_obj.end_time = data.end_time
         updated_fields.append("end_time")
+    
+    # Update fee fields
+    if data.annual_course_fee is not None:
+        class_obj.annual_course_fee = data.annual_course_fee
+        updated_fields.append("annual_course_fee")
+    if data.annual_transport_fee is not None:
+        class_obj.annual_transport_fee = data.annual_transport_fee
+        updated_fields.append("annual_transport_fee")
+    if data.tek_school_payment_annually is not None:
+        class_obj.tek_school_payment_annually = data.tek_school_payment_annually
+        updated_fields.append("tek_school_payment_annually")
 
     # Update assigned teachers
     if data.assigned_teacher_ids:
@@ -600,6 +608,9 @@ def get_school_classes(
         {
             "class_id": class_.id,
             "class_name": class_.name,
+            "annual_course_fee": class_.annual_course_fee,
+            "annual_transport_fee": class_.annual_transport_fee,
+            "tek_school_payment_annually": class_.tek_school_payment_annually,
         }
         for class_ in classes
     ]
@@ -686,6 +697,7 @@ def get_classes(
                 "sl_no": sl_no,
                 "class_id": class_.id,
                 "class_name": class_.name,
+                "section_id": section.id,
                 "section_name": section.name,
                 "subjects": [subject.name for subject in class_.subjects],
                 "teachers": teacher_names,
@@ -693,6 +705,9 @@ def get_classes(
                 "exams":exam_count,
                 "start_time": class_.start_time.strftime("%H:%M") if class_.start_time else None,
                 "end_time": class_.end_time.strftime("%H:%M") if class_.end_time else None,
+                "annual_course_fee": class_.annual_course_fee,
+                "annual_transport_fee": class_.annual_transport_fee,
+                "tek_school_payment_annually": class_.tek_school_payment_annually,
             })
             sl_no += 1
 
@@ -2832,10 +2847,10 @@ def delete_mcq_endpoint(
     return {"detail": "MCQ deleted successfully"}
 @router.get("/exam/{exam_id}")
 def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = Depends(get_current_user)):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER,UserRole.STUDENT]:
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school or teacher can fetch MCQs"
+            detail="Only school, teacher, staff, or student can fetch MCQs"
         )
     mcqs = get_mcqs_by_exam(db, exam_id)
     if current_user.role == UserRole.STUDENT:
@@ -2854,7 +2869,7 @@ def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = 
             for mcq in mcqs
         ]
 
-    # For school and teacher, return full rows from DB
+    # For school, teacher, and staff, return full rows from DB
     return mcqs
 
 @router.post("/{exam_id}/submit")
@@ -3201,8 +3216,8 @@ def get_leave_by_id(
     """
     Get details of a specific leave request with user info.
     """
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can view leave details")
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view leave details")
 
     leave = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
     if not leave:

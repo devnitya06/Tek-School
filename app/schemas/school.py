@@ -79,14 +79,20 @@ class ClassWithSubjectCreate(BaseModel):
     class_name: str
     sections: List[str]
     subjects: List[SubjectItem]  # 🧠 now supports name + school_class_subject_id
-    extra_curriculums: List[str]   
+    extra_curriculums: List[str]
+    annual_course_fee: Optional[float] = 10000.0
+    annual_transport_fee: Optional[float] = 3000.0
+    tek_school_payment_annually: Optional[float] = 1000.0   
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]
     assigned_teacher_ids: Optional[List[str]]
     extra_activity_ids: Optional[List[int]]
     start_time: time
-    end_time: time    
+    end_time: time
+    annual_course_fee: Optional[float] = None
+    annual_transport_fee: Optional[float] = None
+    tek_school_payment_annually: Optional[float] = None    
     
 class ClassOut(BaseModel):
     id: int
