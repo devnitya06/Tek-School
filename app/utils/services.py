@@ -4,6 +4,7 @@ from app.models.school import McqBank
 from app.schemas.school import McqBulkCreate
 from app.utils.s3 import upload_base64_to_s3
 from fastapi import HTTPException
+from app.models.admin import PlanDuration
 def is_time_overlap(start1: time, end1: time, start2: time, end2: time) -> bool:
     return max(start1, start2) < min(end1, end2)
 
@@ -86,3 +87,11 @@ def evaluate_exam(db: Session, exam_id: str, answers: dict):
         "percentage": percentage,
         "status": status
     }
+
+def get_validity_days(duration: PlanDuration) -> int:
+    if duration == PlanDuration.MONTHLY:
+        return 30
+    if duration == PlanDuration.QUARTERLY:
+        return 90
+    if duration == PlanDuration.YEARLY:
+        return 365
