@@ -155,28 +155,19 @@ async def get_school_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # ✅ Allow both school and staff users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+    # ✅ Only school users can access
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school and staff users can view school profiles"
+            detail="Only school users can view school profiles"
         )
     
-    # ✅ Get school based on user role
-    if current_user.role == UserRole.SCHOOL:
-        if not current_user.school_profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="School profile not found"
-            )
-        school = current_user.school_profile
-    else:  # STAFF
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school = db.query(School).filter(School.id == staff.school_id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+    if not current_user.school_profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School profile not found"
+        )
+    school = current_user.school_profile
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -706,6 +697,7 @@ def get_classes(
                 "sl_no": sl_no,
                 "class_id": class_.id,
                 "class_name": class_.name,
+                "section_id": section.id,
                 "section_name": section.name,
                 "subjects": [subject.name for subject in class_.subjects],
                 "teachers": teacher_names,
@@ -2855,10 +2847,10 @@ def delete_mcq_endpoint(
     return {"detail": "MCQ deleted successfully"}
 @router.get("/exam/{exam_id}")
 def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = Depends(get_current_user)):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER,UserRole.STUDENT]:
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school or teacher can fetch MCQs"
+            detail="Only school, teacher, staff, or student can fetch MCQs"
         )
     mcqs = get_mcqs_by_exam(db, exam_id)
     if current_user.role == UserRole.STUDENT:
@@ -2877,7 +2869,7 @@ def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = 
             for mcq in mcqs
         ]
 
-    # For school and teacher, return full rows from DB
+    # For school, teacher, and staff, return full rows from DB
     return mcqs
 
 @router.post("/{exam_id}/submit")
@@ -3224,8 +3216,8 @@ def get_leave_by_id(
     """
     Get details of a specific leave request with user info.
     """
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only school users can view leave details")
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view leave details")
 
     leave = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
     if not leave:
