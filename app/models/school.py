@@ -180,6 +180,7 @@ class Class(Base):
     school_margins = relationship("SchoolMarginConfiguration", back_populates="class_")
     exams = relationship("Exam", back_populates="class_obj")
     timetables = relationship("Timetable", back_populates="class_")
+    student_payments = relationship("StudentPayment", back_populates="classes")
     
     # Unique constraint to prevent duplicate class names within a school
     __table_args__ = (
