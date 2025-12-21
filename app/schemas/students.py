@@ -1,6 +1,52 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import date, time
+from enum import Enum
+
+class InstallmentTypeEnum(str, Enum):
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    HALF_YEARLY = "half_yearly"
+    YEARLY = "yearly"
+
+class StudentPaymentCreate(BaseModel):
+    course_fee: float
+    course_fee_installment_type: InstallmentTypeEnum
+    transport_fee: float
+    transport_fee_installment_type: InstallmentTypeEnum
+    tek_school_fee: float
+    tek_school_fee_installment_type: InstallmentTypeEnum
+
+class StudentPaymentUpdate(BaseModel):
+    course_fee: Optional[float] = None
+    course_fee_installment_type: Optional[InstallmentTypeEnum] = None
+    transport_fee: Optional[float] = None
+    transport_fee_installment_type: Optional[InstallmentTypeEnum] = None
+    tek_school_fee: Optional[float] = None
+    tek_school_fee_installment_type: Optional[InstallmentTypeEnum] = None
+    # Payment clear amounts (how much has been paid)
+    course_fee_paid: Optional[float] = None
+    transport_fee_paid: Optional[float] = None
+    tek_school_fee_paid: Optional[float] = None
+    # Payment documents and description (optional)
+    files: Optional[List[str]] = None  # List of base64 encoded files (payslips, receipts, etc.)
+    description: Optional[str] = None  # Description/notes about the payment
+
+class PaymentTransactionCreate(BaseModel):
+    """Schema for creating payment transaction(s).
+    You can pay one, two, or all three fees in a single request.
+    At least one payment amount must be provided.
+    """
+    # Optional amounts for each fee type - at least one must be provided
+    course_fee_amount: Optional[float] = None  # Amount to pay for course fee
+    transport_fee_amount: Optional[float] = None  # Amount to pay for transport fee
+    tek_school_fee_amount: Optional[float] = None  # Amount to pay for tek school fee
+    
+    # Common fields for all transactions
+    description: Optional[str] = None  # Description/notes about the payment
+    files: Optional[List[str]] = None  # List of base64 encoded files (payslips, receipts, etc.)
+    payment_method: Optional[str] = None  # "cash", "bank_transfer", "cheque", etc.
+    transaction_reference: Optional[str] = None  # Transaction ID, cheque number, etc.
 
 class StudentCreateRequest(BaseModel):
     profile_image:Optional[str]=None
@@ -18,6 +64,7 @@ class StudentCreateRequest(BaseModel):
     pickup_time: Optional[str] = None
     drop_point: Optional[str] = None
     drop_time: Optional[str] = None
+    payment: StudentPaymentCreate
     # school_id: str
 
 class StudentUpdateRequest(BaseModel):
