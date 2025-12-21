@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
+from app.models.admin import StudentAdminExamData
 from app.models.school import SchoolBoard,SchoolMedium,SchoolType
 from app.schemas.students import SelfSignedStudentUpdate
 from app.models.students import SelfSignedStudent
@@ -87,6 +88,18 @@ def get_self_signed_student_profile(
 
         if not profile:
             raise HTTPException(status_code=404, detail="Student profile not found")
+        latest_exam_rank = (
+            db.query(StudentAdminExamData)
+            .filter(StudentAdminExamData.student_id == profile.id)
+            .order_by(StudentAdminExamData.submitted_at.desc())
+            .first()
+        )
+
+        latest_rank = (
+            latest_exam_rank.class_rank
+            if latest_exam_rank
+            else None
+        )
 
         return {
             "id": current_user.id,
@@ -98,9 +111,23 @@ def get_self_signed_student_profile(
             "phone": current_user.phone,
             "board": profile.select_board,
             "class": profile.select_class,
+            "medium": profile.select_medium,
+            "pin": profile.pin,
+            "division": profile.division,
+            "district": profile.district,
+            "state": profile.state,
+            "plot": profile.plot,
             "school_name": profile.school_name,
             "school_location": profile.school_location,
-            "created_at": current_user.created_at
+            "status": profile.status,
+            "status_expiry_date": profile.status_expiry_date,
+            "parenrt_name": profile.parent_name,
+            "relation": profile.relation,
+            "parent_phone": profile.parent_phone,
+            "parent_email": profile.parent_email,
+            "occupation": profile.occupation,
+            "created_at": current_user.created_at,
+            "class_rank": latest_rank,
         }
 
     except HTTPException:

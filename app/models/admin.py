@@ -30,6 +30,16 @@ class SetType(str, Enum):
     B = "B"
     C = "C"
     ALL = "ALL"
+class PlanDuration(str,Enum):
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    YEARLY = "yearly"
+
+
+class PaymentStatus(str,Enum):
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
 
 class AdminExam(Base):
     __tablename__ = "admin_exams"
@@ -288,3 +298,57 @@ class QuestionSetBank(Base):
     # Relationship
     question_set = relationship("QuestionSet", back_populates="questions")
     school_class_subject = relationship("SchoolClassSubject")
+
+class RechargePlan(Base):
+    __tablename__ = "recharge_plans"
+
+    id = Column(Integer, primary_key=True)
+    class_name= Column(String(50), nullable=False)
+
+    duration = Column(SQLEnum(PlanDuration), nullable=False)
+    amount = Column(Integer, nullable=False)
+    validity_days = Column(Integer, nullable=False)
+
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("class_name", "duration", name="uq_class_duration_plan"),
+    )
+
+class StudentSubscription(Base):
+    __tablename__ = "student_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+
+    student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=False)
+    plan_id = Column(Integer, ForeignKey("recharge_plans.id"), nullable=False)
+
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=False)
+    amount_paid = Column(Integer, nullable=False)
+    is_current = Column(Boolean, default=True)
+
+    created_at = Column(DateTime, default=func.now())
+    # relationships
+    student = relationship("SelfSignedStudent", back_populates="subscriptions")
+    payments = relationship("Payment", back_populates="subscription")
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True)
+
+    student_id = Column(Integer, ForeignKey("self_signed_students.id"),nullable=False)
+    subscription_id = Column(Integer, ForeignKey("student_subscriptions.id"),nullable=False)
+
+    amount = Column(Integer, nullable=False)
+    payment_status = Column(SQLEnum(PaymentStatus), default=PaymentStatus.PENDING)
+
+    gateway_order_id = Column(String, nullable=True)
+    gateway_payment_id = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=func.now())
+    # relationships
+    subscription = relationship("StudentSubscription", back_populates="payments")

@@ -161,3 +161,10 @@ class SelfSignedStudentUpdate(BaseModel):
     district: Optional[str] = None
     state: Optional[str] = None
     plot: Optional[str] = None
+
+    parent_name : Optional[str] = None
+    relation : Optional[str] = None
+    parent_phone : Optional[str] = None
+    parent_email : Optional[EmailStr] = None
+    occupation : Optional[str] = None
+
