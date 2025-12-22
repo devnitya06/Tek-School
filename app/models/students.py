@@ -145,6 +145,7 @@ class SelfSignedStudent(Base):
 
     user = relationship("User", back_populates="self_signed_student_profile")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
+    subscriptions = relationship("StudentSubscription", back_populates="student")
 
 
 class StudentPayment(Base):
