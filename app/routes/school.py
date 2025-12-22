@@ -714,6 +714,172 @@ def get_classes(
     return response
 
 
+@router.get("/classes/{class_id}/")
+def get_class_details(
+    class_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get detailed information about a specific class by class_id.
+    Returns class details including sections, subjects, teachers, students, and fees.
+    """
+    # ✅ Allow SCHOOL, TEACHER, and STAFF
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school, teacher, and staff users can access this resource.")
+
+    # ✅ Get the school_id based on role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this user.")
+        school_id = school.id
+
+    elif current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        school_id = teacher.school_id
+    
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+
+    # Query the specific class with all relationships
+    class_obj = (
+        db.query(Class)
+        .options(
+            joinedload(Class.sections),
+            joinedload(Class.subjects),
+            joinedload(Class.optional_subjects),
+            joinedload(Class.assigned_teachers),
+            joinedload(Class.school)
+        )
+        .filter(
+            Class.id == class_id,
+            Class.school_id == school_id
+        )
+        .first()
+    )
+
+    if not class_obj:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Class with id {class_id} not found or not part of your school."
+        )
+
+    # Get student count for each section
+    sections_data = []
+    for section in class_obj.sections:
+        student_count = db.query(func.count(Student.id)).filter(
+            Student.class_id == class_obj.id,
+            Student.section_id == section.id,
+            Student.school_id == school_id
+        ).scalar()
+
+        # Get teachers assigned to this class-section
+        teacher_assignments = (
+            db.query(Teacher)
+            .join(TeacherClassSectionSubject)
+            .filter(
+                TeacherClassSectionSubject.class_id == class_obj.id,
+                TeacherClassSectionSubject.section_id == section.id,
+                TeacherClassSectionSubject.school_id == school_id
+            )
+            .all()
+        )
+
+        teachers_data = [
+            {
+                "teacher_id": teacher.id,
+                "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+                "email": teacher.email,
+                "phone": teacher.phone
+            }
+            for teacher in teacher_assignments
+        ]
+
+        # Get exam count for this class-section
+        exam_count = (
+            db.query(func.count(Exam.id))
+            .join(Exam.sections)
+            .filter(
+                Exam.class_id == class_obj.id,
+                Section.id == section.id,
+                Exam.school_id == school_id
+            )
+            .scalar()
+        )
+
+        sections_data.append({
+            "section_id": section.id,
+            "section_name": section.name,
+            "student_count": student_count,
+            "teachers": teachers_data,
+            "exam_count": exam_count
+        })
+
+    # Get all subjects (mandatory and optional)
+    mandatory_subjects = [
+        {
+            "subject_id": subject.id,
+            "subject_name": subject.name
+        }
+        for subject in class_obj.subjects
+    ]
+
+    optional_subjects = [
+        {
+            "subject_id": subject.id,
+            "subject_name": subject.name
+        }
+        for subject in class_obj.optional_subjects
+    ]
+
+    # Get total student count across all sections
+    total_students = db.query(func.count(Student.id)).filter(
+        Student.class_id == class_obj.id,
+        Student.school_id == school_id
+    ).scalar()
+
+    # Get total exam count
+    total_exams = db.query(func.count(Exam.id)).filter(
+        Exam.class_id == class_obj.id,
+        Exam.school_id == school_id
+    ).scalar()
+
+    # Get assigned teachers (unique across all sections)
+    all_assigned_teachers = [
+        {
+            "teacher_id": teacher.id,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+            "email": teacher.email,
+            "phone": teacher.phone
+        }
+        for teacher in class_obj.assigned_teachers
+    ]
+
+    return {
+        "class_id": class_obj.id,
+        "class_name": class_obj.name,
+        "school_id": class_obj.school_id,
+        "school_name": class_obj.school.school_name if class_obj.school else None,
+        "start_time": class_obj.start_time.strftime("%H:%M") if class_obj.start_time else None,
+        "end_time": class_obj.end_time.strftime("%H:%M") if class_obj.end_time else None,
+        "annual_course_fee": class_obj.annual_course_fee,
+        "annual_transport_fee": class_obj.annual_transport_fee,
+        "tek_school_payment_annually": class_obj.tek_school_payment_annually,
+        "total_students": total_students,
+        "total_exams": total_exams,
+        "sections": sections_data,
+        "mandatory_subjects": mandatory_subjects,
+        "optional_subjects": optional_subjects,
+        "assigned_teachers": all_assigned_teachers
+    }
+
+
 @router.get("/time-table/")
 def get_time_table(
     limit: int = 10,
