@@ -10,7 +10,7 @@ from app.models.school import (
     Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,
     TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,
     LeaveRequest,LeaveStatus,AssignmentStatus,HomeAssignment,AssignmentStudent,AssignmentTask,
-    StudentTaskStatus)
+    StudentTaskStatus,BankAccount)
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
 from app.schemas.school import (
@@ -19,7 +19,8 @@ from app.schemas.school import (
     PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
     McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
     TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
-    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum,ExamFilterParams )
+    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum,ExamFilterParams,BankAccountCreate,
+    BankAccountUpdate,BankAccountResponse)
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case,cast,String
@@ -357,7 +358,9 @@ def create_class(
         school_id=school.id,
         annual_course_fee=class_data.annual_course_fee if class_data.annual_course_fee is not None else 10000.0,
         annual_transport_fee=class_data.annual_transport_fee if class_data.annual_transport_fee is not None else 3000.0,
-        tek_school_payment_annually=class_data.tek_school_payment_annually if class_data.tek_school_payment_annually is not None else 1000.0
+        tek_school_payment_annually=class_data.tek_school_payment_annually if class_data.tek_school_payment_annually is not None else 1000.0,
+        class_start_date=class_data.class_start_date,
+        class_end_date=class_data.class_end_date
     )
     db.add(new_class)
     db.commit()
@@ -611,6 +614,8 @@ def get_school_classes(
             "annual_course_fee": class_.annual_course_fee,
             "annual_transport_fee": class_.annual_transport_fee,
             "tek_school_payment_annually": class_.tek_school_payment_annually,
+            "class_start_date": class_.class_start_date.isoformat() if class_.class_start_date else None,
+            "class_end_date": class_.class_end_date.isoformat() if class_.class_end_date else None,
         }
         for class_ in classes
     ]
@@ -708,6 +713,8 @@ def get_classes(
                 "annual_course_fee": class_.annual_course_fee,
                 "annual_transport_fee": class_.annual_transport_fee,
                 "tek_school_payment_annually": class_.tek_school_payment_annually,
+                "class_start_date": class_.class_start_date.isoformat() if class_.class_start_date else None,
+                "class_end_date": class_.class_end_date.isoformat() if class_.class_end_date else None,
             })
             sl_no += 1
 
@@ -871,6 +878,8 @@ def get_class_details(
         "annual_course_fee": class_obj.annual_course_fee,
         "annual_transport_fee": class_obj.annual_transport_fee,
         "tek_school_payment_annually": class_obj.tek_school_payment_annually,
+        "class_start_date": class_obj.class_start_date.isoformat() if class_obj.class_start_date else None,
+        "class_end_date": class_obj.class_end_date.isoformat() if class_obj.class_end_date else None,
         "total_students": total_students,
         "total_exams": total_exams,
         "sections": sections_data,
@@ -4085,3 +4094,332 @@ def update_assignment_task_status(
         "completed_tasks": completed_tasks,
         "total_tasks": total_tasks
     }
+
+# ==================== Bank Account Management ====================
+
+@router.post("/bank-accounts/", status_code=status.HTTP_201_CREATED, response_model=BankAccountResponse)
+def create_bank_account(
+    bank_data: BankAccountCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new bank account for the school.
+    If is_primary is True, all other accounts for this school will be set to is_primary=False.
+    """
+    # ✅ Allow only SCHOOL and STAFF users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can manage bank accounts"
+        )
+
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+
+    # ✅ Validate: Account number must be unique
+    existing_account = db.query(BankAccount).filter(
+        BankAccount.account_number == bank_data.account_number
+    ).first()
+    
+    if existing_account:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Account number '{bank_data.account_number}' already exists. Please use a different account number."
+        )
+
+    # ✅ Validate: Only one primary account per school
+    if bank_data.is_primary:
+        existing_primary = db.query(BankAccount).filter(
+            BankAccount.school_id == school.id,
+            BankAccount.is_primary == True
+        ).first()
+        
+        if existing_primary:
+            # Unset the existing primary account to make room for the new one
+            existing_primary.is_primary = False
+            db.flush()  # Flush to ensure the update is applied before creating new account
+
+    # ✅ Create new bank account
+    new_account = BankAccount(
+        school_id=school.id,
+        account_holder_name=bank_data.account_holder_name,
+        account_number=bank_data.account_number,
+        ifsc_code=bank_data.ifsc_code.upper(),  # Store IFSC in uppercase
+        bank_name=bank_data.bank_name,
+        branch_name=bank_data.branch_name,
+        account_type=bank_data.account_type.lower(),  # Store in lowercase
+        is_primary=bank_data.is_primary
+    )
+    
+    db.add(new_account)
+    
+    try:
+        db.commit()
+        db.refresh(new_account)
+    except IntegrityError as e:
+        db.rollback()
+        error_str = str(e.orig).lower()
+        # Check if it's the account number uniqueness violation
+        if "account_number" in error_str or "unique" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Account number '{bank_data.account_number}' already exists. Please use a different account number."
+            )
+        # Check if it's the primary account constraint violation
+        elif "is_primary" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only one bank account can be set as primary for a school. Please set another account as non-primary first."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to create bank account: {str(e)}"
+        )
+
+    return new_account
+
+
+@router.get("/bank-accounts/", response_model=List[BankAccountResponse])
+def get_bank_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all bank accounts for the school.
+    """
+    # ✅ Allow only SCHOOL and STAFF users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can view bank accounts"
+        )
+
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+
+    # ✅ Get all bank accounts for this school
+    bank_accounts = db.query(BankAccount).filter(
+        BankAccount.school_id == school.id
+    ).order_by(BankAccount.is_primary.desc(), BankAccount.created_at.desc()).all()
+
+    return bank_accounts
+
+
+@router.get("/bank-accounts/{account_id}/", response_model=BankAccountResponse)
+def get_bank_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a specific bank account by ID.
+    """
+    # ✅ Allow only SCHOOL and STAFF users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can view bank accounts"
+        )
+
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+
+    # ✅ Get the bank account
+    bank_account = db.query(BankAccount).filter(
+        BankAccount.id == account_id,
+        BankAccount.school_id == school.id
+    ).first()
+
+    if not bank_account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found or you don't have access to it"
+        )
+
+    return bank_account
+
+
+@router.put("/bank-accounts/{account_id}/", response_model=BankAccountResponse)
+def update_bank_account(
+    account_id: int,
+    bank_data: BankAccountUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a bank account. If is_primary is set to True, all other accounts will be set to is_primary=False.
+    """
+    # ✅ Allow only SCHOOL and STAFF users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can update bank accounts"
+        )
+
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+
+    # ✅ Get the bank account
+    bank_account = db.query(BankAccount).filter(
+        BankAccount.id == account_id,
+        BankAccount.school_id == school.id
+    ).first()
+
+    if not bank_account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found or you don't have access to it"
+        )
+
+    # ✅ Validate: Account number must be unique (if being updated)
+    update_data = bank_data.model_dump(exclude_unset=True)
+    
+    if "account_number" in update_data:
+        existing_account = db.query(BankAccount).filter(
+            BankAccount.account_number == update_data["account_number"],
+            BankAccount.id != account_id
+        ).first()
+        
+        if existing_account:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Account number '{update_data['account_number']}' already exists. Please use a different account number."
+            )
+
+    # ✅ Validate: Only one primary account per school
+    if "is_primary" in update_data and update_data["is_primary"] is True:
+        # Check if there's already another primary account
+        existing_primary = db.query(BankAccount).filter(
+            BankAccount.school_id == school.id,
+            BankAccount.id != account_id,
+            BankAccount.is_primary == True
+        ).first()
+        
+        if existing_primary:
+            # Unset the existing primary account
+            existing_primary.is_primary = False
+            db.flush()  # Flush to ensure the update is applied
+
+    # ✅ Update fields
+    if "ifsc_code" in update_data:
+        update_data["ifsc_code"] = update_data["ifsc_code"].upper()
+    if "account_type" in update_data:
+        update_data["account_type"] = update_data["account_type"].lower()
+    
+    for field, value in update_data.items():
+        setattr(bank_account, field, value)
+
+    # updated_at will be automatically updated by the model's onupdate
+    try:
+        db.commit()
+        db.refresh(bank_account)
+    except IntegrityError as e:
+        db.rollback()
+        error_str = str(e.orig).lower()
+        # Check if it's the account number uniqueness violation
+        if "account_number" in error_str or ("unique" in error_str and "account" in error_str):
+            account_num = update_data.get("account_number", bank_account.account_number)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Account number '{account_num}' already exists. Please use a different account number."
+            )
+        # Check if it's the primary account constraint violation
+        elif "is_primary" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only one bank account can be set as primary for a school. Please set another account as non-primary first."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update bank account: {str(e)}"
+        )
+
+    return bank_account
+
+
+@router.delete("/bank-accounts/{account_id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bank_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a bank account.
+    """
+    # ✅ Allow only SCHOOL and STAFF users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can delete bank accounts"
+        )
+
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+
+    # ✅ Get the bank account
+    bank_account = db.query(BankAccount).filter(
+        BankAccount.id == account_id,
+        BankAccount.school_id == school.id
+    ).first()
+
+    if not bank_account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found or you don't have access to it"
+        )
+
+    db.delete(bank_account)
+    db.commit()
+
+    return None
