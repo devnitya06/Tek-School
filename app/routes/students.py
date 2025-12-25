@@ -7,7 +7,7 @@ from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentUpdate,PaymentTransactionCreate
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
@@ -500,9 +500,75 @@ def get_students(
     total_count = base_query.count()
     students = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
 
+    # --- Get Payment History for each student ---
+    # Create mapping of (student_id, class_id) -> payment_id
+    student_payment_ids = {}
+    if students:
+        # Get payment IDs for students' current classes
+        student_class_pairs = [(student.id, student.class_id) for student, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in students]
+        if student_class_pairs:
+            # Build filter conditions for matching (student_id, class_id) pairs
+            conditions = []
+            for student_id, class_id in student_class_pairs:
+                conditions.append(
+                    and_(
+                        StudentPayment.student_id == student_id,
+                        StudentPayment.class_id == class_id
+                    )
+                )
+            
+            if conditions:
+                payments = db.query(StudentPayment.id, StudentPayment.student_id, StudentPayment.class_id).filter(
+                    or_(*conditions)
+                ).all()
+                for payment in payments:
+                    key = (payment.student_id, payment.class_id)
+                    student_payment_ids[key] = payment.id
+    
+    # Get last 5 transactions for each payment (for list view)
+    payment_history = {}
+    if student_payment_ids:
+        payment_ids_list = list(student_payment_ids.values())
+        # Get transactions grouped by payment_id, limit 5 per payment
+        transactions = db.query(StudentPaymentTransaction).filter(
+            StudentPaymentTransaction.student_payment_id.in_(payment_ids_list)
+        ).order_by(
+            StudentPaymentTransaction.student_payment_id,
+            StudentPaymentTransaction.transaction_date.desc()
+        ).all()
+        
+        # Group by payment_id and limit to 5 per payment
+        for txn in transactions:
+            payment_id = txn.student_payment_id
+            if payment_id not in payment_history:
+                payment_history[payment_id] = []
+            if len(payment_history[payment_id]) < 5:  # Limit to last 5 transactions
+                payment_history[payment_id].append({
+                    "transaction_id": txn.id,
+                    "amount": float(txn.amount),
+                    "payment_type": txn.payment_type,
+                    "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,
+                    "transaction_date": txn.transaction_date.isoformat() if txn.transaction_date else None,
+                    "description": txn.description,
+                    "files": txn.files if txn.files else [],
+                    "payment_method": txn.payment_method,
+                    "transaction_reference": txn.transaction_reference,
+                    "created_at": txn.created_at.isoformat() if txn.created_at else None,
+                })
+
     # --- Format Response ---
-    data = [
-        {
+    data = []
+    for index, (student, attendance_count, exam_count, rank, course_fee, course_fee_paid, 
+               course_fee_installment_type, transport_fee, transport_fee_paid, 
+               transport_fee_installment_type, tek_school_fee, tek_school_fee_paid, 
+               tek_school_fee_installment_type, total_paid, total_remaining, 
+               class_start_date, class_end_date) in enumerate(students):
+        
+        # Get payment history for this student's current class
+        payment_id = student_payment_ids.get((student.id, student.class_id))
+        payment_history_list = payment_history.get(payment_id, []) if payment_id else []
+        
+        data.append({
             "sl_no": index + 1 + pagination.offset(),
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
@@ -532,14 +598,9 @@ def get_students(
                 "tek_school_fee_installment_type": tek_school_fee_installment_type.value if tek_school_fee_installment_type else None,
                 "total_paid": float(total_paid) if total_paid is not None else 0.0,
                 "total_remaining": float(total_remaining) if total_remaining is not None else 0.0,
-            }
-        }
-        for index, (student, attendance_count, exam_count, rank, course_fee, course_fee_paid, 
-                   course_fee_installment_type, transport_fee, transport_fee_paid, 
-                   transport_fee_installment_type, tek_school_fee, tek_school_fee_paid, 
-                   tek_school_fee_installment_type, total_paid, total_remaining, 
-                   class_start_date, class_end_date) in enumerate(students)
-    ]
+            },
+            "payment_history": payment_history_list
+        })
 
     return pagination.format_response(data, total_count)
 
@@ -588,6 +649,30 @@ def get_student(
         )
         .first()
     )
+    
+    # Get payment history for this student's current class payment
+    payment_history = []
+    if student_payment:
+        transactions = (
+            db.query(StudentPaymentTransaction)
+            .filter(StudentPaymentTransaction.student_payment_id == student_payment.id)
+            .order_by(StudentPaymentTransaction.transaction_date.desc())
+            .all()
+        )
+        
+        for txn in transactions:
+            payment_history.append({
+                "transaction_id": txn.id,
+                "amount": float(txn.amount),
+                "payment_type": txn.payment_type,
+                "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,
+                "transaction_date": txn.transaction_date.isoformat() if txn.transaction_date else None,
+                "description": txn.description,
+                "files": txn.files if txn.files else [],
+                "payment_method": txn.payment_method,
+                "transaction_reference": txn.transaction_reference,
+                "created_at": txn.created_at.isoformat() if txn.created_at else None,
+            })
     
     last_exam = (
     db.query(StudentExamData)
@@ -672,7 +757,8 @@ def get_student(
                 ((float(student_payment.transport_fee) if student_payment else 0.0) - (float(student_payment.transport_fee_paid) if student_payment else 0.0)) + 
                 ((float(student_payment.tek_school_fee) if student_payment else 0.0) - (float(student_payment.tek_school_fee_paid) if student_payment else 0.0)), 2
             ) if student_payment else 0.0,
-        }
+        },
+        "payment_history": payment_history
     }
 
 @router.patch("/students/{student_id}")
