@@ -82,7 +82,9 @@ class ClassWithSubjectCreate(BaseModel):
     extra_curriculums: List[str]
     annual_course_fee: Optional[float] = 10000.0
     annual_transport_fee: Optional[float] = 3000.0
-    tek_school_payment_annually: Optional[float] = 1000.0   
+    tek_school_payment_annually: Optional[float] = 1000.0
+    class_start_date: date
+    class_end_date: date   
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]
@@ -364,3 +366,39 @@ class StudentHomeTaskListResponse(BaseModel):
     status: str
     no_of_tasks_completed: int
     no_of_tasks_incomplete: int
+
+# Bank Account Schemas
+class BankAccountCreate(BaseModel):
+    account_holder_name: str
+    account_number: str
+    ifsc_code: str = Field(..., min_length=11, max_length=11, description="IFSC code must be 11 characters")
+    bank_name: str
+    branch_name: Optional[str] = None
+    account_type: str = Field(..., pattern="^(savings|current)$", description="Account type must be 'savings' or 'current'")
+    is_primary: bool = False
+
+class BankAccountUpdate(BaseModel):
+    account_holder_name: Optional[str] = None
+    account_number: Optional[str] = None
+    ifsc_code: Optional[str] = Field(None, min_length=11, max_length=11)
+    bank_name: Optional[str] = None
+    branch_name: Optional[str] = None
+    account_type: Optional[str] = Field(None, pattern="^(savings|current)$")
+    is_primary: Optional[bool] = None
+
+class BankAccountResponse(BaseModel):
+    id: int
+    school_id: str
+    account_holder_name: str
+    account_number: str
+    ifsc_code: str
+    bank_name: str
+    branch_name: Optional[str] = None
+    account_type: str
+    is_primary: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = {
+        "from_attributes": True
+    }

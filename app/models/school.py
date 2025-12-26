@@ -87,6 +87,7 @@ class School(Base):
     exams = relationship("Exam", back_populates="school")
     exam_data = relationship("StudentExamData", back_populates="school")
     leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
+    bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
 
 
     
@@ -166,6 +167,8 @@ class Class(Base):
     annual_course_fee = Column(Float, default=10000.0)
     annual_transport_fee = Column(Float, default=3000.0)
     tek_school_payment_annually = Column(Float, default=1000.0)
+    class_start_date = Column(Date, nullable=False)
+    class_end_date = Column(Date, nullable=False)
     
     # Relationships
     school = relationship("School", back_populates="classes")
@@ -581,3 +584,26 @@ class StudentTaskStatus(Base):
     assignment_student = relationship("AssignmentStudent", back_populates="student_tasks")
     task = relationship("AssignmentTask", back_populates="student_task_statuses")
     student = relationship("Student", back_populates="student_task_statuses")
+
+# Bank Account Model
+class BankAccount(Base):
+    __tablename__ = "bank_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    account_holder_name = Column(String, nullable=False)
+    account_number = Column(String, nullable=False, unique=True)  # Account number must be unique
+    ifsc_code = Column(String(11), nullable=False)  # IFSC code is 11 characters
+    bank_name = Column(String, nullable=False)
+    branch_name = Column(String, nullable=True)
+    account_type = Column(String, nullable=False)  # 'savings' or 'current'
+    is_primary = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    school = relationship("School", back_populates="bank_accounts")
+    
+    # Note: Only one primary account per school is enforced at application level
+    # A partial unique index can be added at database level for PostgreSQL:
+    # CREATE UNIQUE INDEX uq_school_primary_account ON bank_accounts (school_id) WHERE is_primary = true;

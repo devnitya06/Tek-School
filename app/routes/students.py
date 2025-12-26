@@ -7,7 +7,7 @@ from app.schemas.users import UserRole
 from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentUpdate,PaymentTransactionCreate
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
-from sqlalchemy import func
+from sqlalchemy import func, and_, or_
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
@@ -420,6 +420,32 @@ def get_students(
         .subquery()
     )
 
+    # Payment subquery - get payment info for student's current class
+    # We'll join this in the main query using student_id and matching class_id
+    # Note: Rounding is done in Python to avoid PostgreSQL type issues
+    payment_subquery = (
+        db.query(
+            StudentPayment.student_id,
+            StudentPayment.class_id,
+            StudentPayment.course_fee,
+            StudentPayment.course_fee_paid,
+            StudentPayment.course_fee_installment_type,
+            StudentPayment.transport_fee,
+            StudentPayment.transport_fee_paid,
+            StudentPayment.transport_fee_installment_type,
+            StudentPayment.tek_school_fee,
+            StudentPayment.tek_school_fee_paid,
+            StudentPayment.tek_school_fee_installment_type,
+            (StudentPayment.course_fee_paid + 
+             StudentPayment.transport_fee_paid + 
+             StudentPayment.tek_school_fee_paid).label("total_paid"),
+            ((StudentPayment.course_fee - StudentPayment.course_fee_paid) + 
+             (StudentPayment.transport_fee - StudentPayment.transport_fee_paid) + 
+             (StudentPayment.tek_school_fee - StudentPayment.tek_school_fee_paid)).label("total_remaining")
+        )
+        .subquery()
+    )
+
     # --- Base Query ---
     base_query = (
         db.query(
@@ -427,10 +453,30 @@ def get_students(
             attendance_subquery.c.attendance_count,
             exam_count_subquery.c.exam_count,
             rank_subquery.c.latest_rank,
+            payment_subquery.c.course_fee,
+            payment_subquery.c.course_fee_paid,
+            payment_subquery.c.course_fee_installment_type,
+            payment_subquery.c.transport_fee,
+            payment_subquery.c.transport_fee_paid,
+            payment_subquery.c.transport_fee_installment_type,
+            payment_subquery.c.tek_school_fee,
+            payment_subquery.c.tek_school_fee_paid,
+            payment_subquery.c.tek_school_fee_installment_type,
+            payment_subquery.c.total_paid,
+            payment_subquery.c.total_remaining,
+            Class.class_start_date,
+            Class.class_end_date,
         )
         .outerjoin(attendance_subquery, Student.id == attendance_subquery.c.student_id)
         .outerjoin(exam_count_subquery, Student.id == exam_count_subquery.c.student_id)
         .outerjoin(rank_subquery, Student.id == rank_subquery.c.student_id)
+        .outerjoin(
+            payment_subquery, 
+            and_(
+                Student.id == payment_subquery.c.student_id,
+                Student.class_id == payment_subquery.c.class_id
+            )
+        )
         .join(Class, Student.class_id == Class.id)
         .join(Section, Student.section_id == Section.id)
         .filter(Class.school_id == school_id)
@@ -454,24 +500,107 @@ def get_students(
     total_count = base_query.count()
     students = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
 
+    # --- Get Payment History for each student ---
+    # Create mapping of (student_id, class_id) -> payment_id
+    student_payment_ids = {}
+    if students:
+        # Get payment IDs for students' current classes
+        student_class_pairs = [(student.id, student.class_id) for student, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in students]
+        if student_class_pairs:
+            # Build filter conditions for matching (student_id, class_id) pairs
+            conditions = []
+            for student_id, class_id in student_class_pairs:
+                conditions.append(
+                    and_(
+                        StudentPayment.student_id == student_id,
+                        StudentPayment.class_id == class_id
+                    )
+                )
+            
+            if conditions:
+                payments = db.query(StudentPayment.id, StudentPayment.student_id, StudentPayment.class_id).filter(
+                    or_(*conditions)
+                ).all()
+                for payment in payments:
+                    key = (payment.student_id, payment.class_id)
+                    student_payment_ids[key] = payment.id
+    
+    # Get last 5 transactions for each payment (for list view)
+    payment_history = {}
+    if student_payment_ids:
+        payment_ids_list = list(student_payment_ids.values())
+        # Get transactions grouped by payment_id, limit 5 per payment
+        transactions = db.query(StudentPaymentTransaction).filter(
+            StudentPaymentTransaction.student_payment_id.in_(payment_ids_list)
+        ).order_by(
+            StudentPaymentTransaction.student_payment_id,
+            StudentPaymentTransaction.transaction_date.desc()
+        ).all()
+        
+        # Group by payment_id and limit to 5 per payment
+        for txn in transactions:
+            payment_id = txn.student_payment_id
+            if payment_id not in payment_history:
+                payment_history[payment_id] = []
+            if len(payment_history[payment_id]) < 5:  # Limit to last 5 transactions
+                payment_history[payment_id].append({
+                    "transaction_id": txn.id,
+                    "amount": float(txn.amount),
+                    "payment_type": txn.payment_type,
+                    "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,
+                    "transaction_date": txn.transaction_date.isoformat() if txn.transaction_date else None,
+                    "description": txn.description,
+                    "files": txn.files if txn.files else [],
+                    "payment_method": txn.payment_method,
+                    "transaction_reference": txn.transaction_reference,
+                    "created_at": txn.created_at.isoformat() if txn.created_at else None,
+                })
+
     # --- Format Response ---
-    data = [
-        {
+    data = []
+    for index, (student, attendance_count, exam_count, rank, course_fee, course_fee_paid, 
+               course_fee_installment_type, transport_fee, transport_fee_paid, 
+               transport_fee_installment_type, tek_school_fee, tek_school_fee_paid, 
+               tek_school_fee_installment_type, total_paid, total_remaining, 
+               class_start_date, class_end_date) in enumerate(students):
+        
+        # Get payment history for this student's current class
+        payment_id = student_payment_ids.get((student.id, student.class_id))
+        payment_history_list = payment_history.get(payment_id, []) if payment_id else []
+        
+        data.append({
             "sl_no": index + 1 + pagination.offset(),
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
             "roll_no": student.roll_no,
             "class_name": student.classes.name,
             "section_name": student.section.name,
+            "class_start_date": class_start_date.isoformat() if class_start_date else None,
+            "class_end_date": class_end_date.isoformat() if class_end_date else None,
             "attendance_count": attendance_count or 0,
             "exam_count": exam_count or 0,
             "rank": rank or None,
             "status": student.status.value,
             "status_expiry_date": student.status_expiry_date,
-            "is_present_today": any(att.is_today_present for att in student.attendances if att.date == date.today()) if student.attendances else False 
-        }
-        for index, (student, attendance_count, exam_count, rank) in enumerate(students)
-    ]
+            "is_present_today": any(att.is_today_present for att in student.attendances if att.date == date.today()) if student.attendances else False,
+            "fee": {
+                "course_fee": float(course_fee) if course_fee is not None else 0.0,
+                "course_fee_paid": float(course_fee_paid) if course_fee_paid is not None else 0.0,
+                "course_fee_remaining": round(float(course_fee) - float(course_fee_paid), 2) if course_fee is not None and course_fee_paid is not None else 0.0,
+                "course_fee_installment_type": course_fee_installment_type.value if course_fee_installment_type else None,
+                "transport_fee": float(transport_fee) if transport_fee is not None else 0.0,
+                "transport_fee_paid": float(transport_fee_paid) if transport_fee_paid is not None else 0.0,
+                "transport_fee_remaining": round(float(transport_fee) - float(transport_fee_paid), 2) if transport_fee is not None and transport_fee_paid is not None else 0.0,
+                "transport_fee_installment_type": transport_fee_installment_type.value if transport_fee_installment_type else None,
+                "tek_school_fee": float(tek_school_fee) if tek_school_fee is not None else 0.0,
+                "tek_school_fee_paid": float(tek_school_fee_paid) if tek_school_fee_paid is not None else 0.0,
+                "tek_school_fee_remaining": round(float(tek_school_fee) - float(tek_school_fee_paid), 2) if tek_school_fee is not None and tek_school_fee_paid is not None else 0.0,
+                "tek_school_fee_installment_type": tek_school_fee_installment_type.value if tek_school_fee_installment_type else None,
+                "total_paid": float(total_paid) if total_paid is not None else 0.0,
+                "total_remaining": float(total_remaining) if total_remaining is not None else 0.0,
+            },
+            "payment_history": payment_history_list
+        })
 
     return pagination.format_response(data, total_count)
 
@@ -510,6 +639,41 @@ def get_student(
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found.")
+    
+    # Get student payment for current class
+    student_payment = (
+        db.query(StudentPayment)
+        .filter(
+            StudentPayment.student_id == student.id,
+            StudentPayment.class_id == student.class_id
+        )
+        .first()
+    )
+    
+    # Get payment history for this student's current class payment
+    payment_history = []
+    if student_payment:
+        transactions = (
+            db.query(StudentPaymentTransaction)
+            .filter(StudentPaymentTransaction.student_payment_id == student_payment.id)
+            .order_by(StudentPaymentTransaction.transaction_date.desc())
+            .all()
+        )
+        
+        for txn in transactions:
+            payment_history.append({
+                "transaction_id": txn.id,
+                "amount": float(txn.amount),
+                "payment_type": txn.payment_type,
+                "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,
+                "transaction_date": txn.transaction_date.isoformat() if txn.transaction_date else None,
+                "description": txn.description,
+                "files": txn.files if txn.files else [],
+                "payment_method": txn.payment_method,
+                "transaction_reference": txn.transaction_reference,
+                "created_at": txn.created_at.isoformat() if txn.created_at else None,
+            })
+    
     last_exam = (
     db.query(StudentExamData)
     .filter(StudentExamData.student_id == student.id)
@@ -528,6 +692,8 @@ def get_student(
         "roll_no": student.roll_no,
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
+        "class_start_date": student.classes.class_start_date.isoformat() if student.classes and student.classes.class_start_date else None,
+        "class_end_date": student.classes.class_end_date.isoformat() if student.classes and student.classes.class_end_date else None,
         "created_at": student.created_at,
         "status": student.status.value,
         "status_expiry_date": student.status_expiry_date,
@@ -567,7 +733,32 @@ def get_student(
             "building": student.permanent_address.building,
             "house_no": student.permanent_address.house_no,
             "floor_name": student.permanent_address.floor_name
-        } if student.permanent_address else None
+        } if student.permanent_address else None,
+        "fee": {
+            "course_fee": float(student_payment.course_fee) if student_payment else 0.0,
+            "course_fee_paid": float(student_payment.course_fee_paid) if student_payment else 0.0,
+            "course_fee_remaining": round(float(student_payment.course_fee) - float(student_payment.course_fee_paid), 2) if student_payment and student_payment.course_fee is not None and student_payment.course_fee_paid is not None else 0.0,
+            "course_fee_installment_type": student_payment.course_fee_installment_type.value if student_payment and student_payment.course_fee_installment_type else None,
+            "transport_fee": float(student_payment.transport_fee) if student_payment else 0.0,
+            "transport_fee_paid": float(student_payment.transport_fee_paid) if student_payment else 0.0,
+            "transport_fee_remaining": round(float(student_payment.transport_fee) - float(student_payment.transport_fee_paid), 2) if student_payment and student_payment.transport_fee is not None and student_payment.transport_fee_paid is not None else 0.0,
+            "transport_fee_installment_type": student_payment.transport_fee_installment_type.value if student_payment and student_payment.transport_fee_installment_type else None,
+            "tek_school_fee": float(student_payment.tek_school_fee) if student_payment else 0.0,
+            "tek_school_fee_paid": float(student_payment.tek_school_fee_paid) if student_payment else 0.0,
+            "tek_school_fee_remaining": round(float(student_payment.tek_school_fee) - float(student_payment.tek_school_fee_paid), 2) if student_payment and student_payment.tek_school_fee is not None and student_payment.tek_school_fee_paid is not None else 0.0,
+            "tek_school_fee_installment_type": student_payment.tek_school_fee_installment_type.value if student_payment and student_payment.tek_school_fee_installment_type else None,
+            "total_paid": round(
+                (float(student_payment.course_fee_paid) if student_payment else 0.0) + 
+                (float(student_payment.transport_fee_paid) if student_payment else 0.0) + 
+                (float(student_payment.tek_school_fee_paid) if student_payment else 0.0), 2
+            ) if student_payment else 0.0,
+            "total_remaining": round(
+                ((float(student_payment.course_fee) if student_payment else 0.0) - (float(student_payment.course_fee_paid) if student_payment else 0.0)) + 
+                ((float(student_payment.transport_fee) if student_payment else 0.0) - (float(student_payment.transport_fee_paid) if student_payment else 0.0)) + 
+                ((float(student_payment.tek_school_fee) if student_payment else 0.0) - (float(student_payment.tek_school_fee_paid) if student_payment else 0.0)), 2
+            ) if student_payment else 0.0,
+        },
+        "payment_history": payment_history
     }
 
 @router.patch("/students/{student_id}")
