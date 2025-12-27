@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
+from sqlalchemy import Enum as SQLEnum
 
 class StudentStatus(PyEnum):
     TRIAL = "TRIAL"
@@ -184,6 +185,16 @@ class StudentPayment(Base):
     transactions = relationship("StudentPaymentTransaction", back_populates="payment", cascade="all, delete-orphan")
 
 
+class PaymentTransactionStatus(str, PyEnum):
+    SCHOOL_REQUEST = "school_request"  # School sent payment reminder/request
+    PAYMENT_UPDATE_BY_STUDENT = "payment_update_by_student"  # Student filled/updated the payment form
+    DONE = "done"  # School verified and amounts calculated
+    CANCEL = "cancel"  # School cancelled the request
+    # Legacy statuses for backward compatibility
+    PENDING = "pending"  # Old: Waiting for school verification
+    VERIFIED = "verified"  # Old: Verified by school, amounts updated
+    REJECTED = "rejected"  # Old: Rejected by school
+
 class StudentPaymentTransaction(Base):
     __tablename__ = "student_payment_transactions"
 
@@ -202,9 +213,20 @@ class StudentPaymentTransaction(Base):
     payment_method = Column(String(50), nullable=True)  # "cash", "bank_transfer", "cheque", etc.
     transaction_reference = Column(String(100), nullable=True)  # Transaction ID, cheque number, etc.
     
+    # Bank account (optional) - which bank account was used for this payment
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)  # Bank account selected for payment
+    
+    # Verification status - Using String instead of SQLEnum to match database values
+    status = Column(String(50), default=PaymentTransactionStatus.VERIFIED.value, nullable=False)  # Default to "verified" for backward compatibility
+    verified_at = Column(DateTime, nullable=True)  # When school verified the payment
+    verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who verified the payment
+    rejection_reason = Column(String(500), nullable=True)  # Reason if rejected
+    
     created_at = Column(DateTime, default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who recorded this payment
     
     # Relationships
     payment = relationship("StudentPayment", back_populates="transactions")
-    created_by_user = relationship("User")
+    created_by_user = relationship("User", foreign_keys=[created_by])
+    verified_by_user = relationship("User", foreign_keys=[verified_by])
+    bank_account = relationship("BankAccount", foreign_keys=[bank_account_id])

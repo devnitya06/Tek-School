@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
-from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction
-from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData
+from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction,PaymentTransactionStatus
+from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount
 from app.models.staff import Staff
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentUpdate,PaymentTransactionCreate
+from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentCreate,StudentPaymentUpdate,PaymentTransactionCreate,PaymentReminderRequest,StudentPaymentSubmit,PaymentVerificationRequest
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func, and_, or_
@@ -556,6 +556,10 @@ def get_students(
                     "files": txn.files if txn.files else [],
                     "payment_method": txn.payment_method,
                     "transaction_reference": txn.transaction_reference,
+                    "bank_account_id": txn.bank_account_id if txn.bank_account_id else None,
+                    "status": txn.status if txn.status else 'verified',
+                    "verified_at": txn.verified_at.isoformat() if txn.verified_at else None,
+                    "rejection_reason": txn.rejection_reason if txn.rejection_reason else None,
                     "created_at": txn.created_at.isoformat() if txn.created_at else None,
                 })
 
@@ -576,6 +580,7 @@ def get_students(
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
             "roll_no": student.roll_no,
+            "class_id": student.class_id,
             "class_name": student.classes.name,
             "section_name": student.section.name,
             "class_start_date": class_start_date.isoformat() if class_start_date else None,
@@ -674,6 +679,10 @@ def get_student(
                 "files": txn.files if txn.files else [],
                 "payment_method": txn.payment_method,
                 "transaction_reference": txn.transaction_reference,
+                "bank_account_id": txn.bank_account_id if txn.bank_account_id else None,
+                "status": txn.status if txn.status else 'verified',
+                "verified_at": txn.verified_at.isoformat() if txn.verified_at else None,
+                "rejection_reason": txn.rejection_reason if txn.rejection_reason else None,
                 "created_at": txn.created_at.isoformat() if txn.created_at else None,
             })
     
@@ -842,9 +851,103 @@ def update_student(
         if new_name:
             user.name = new_name
 
+    # ✅ Handle payment update if provided (similar to create_student)
+    payment_updated = False
+    payment_response = None
+    updated_payment_obj = None  # Store the payment object for refreshing
+    
+    if data.payment is not None:
+        # Determine which class_id to use for payment update
+        # If class_id is being updated, use the new class_id; otherwise use current class_id
+        target_class_id = data.class_id if data.class_id is not None else student.class_id
+        
+        if target_class_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot update payment: student must have a class_id. Please set class_id first."
+            )
+        
+        # Verify class exists and belongs to school
+        class_obj = db.query(Class).filter(
+            Class.id == target_class_id,
+            Class.school_id == school_id
+        ).first()
+        
+        if not class_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Class {target_class_id} not found or does not belong to your school."
+            )
+        
+        # Map string enum values to InstallmentType enum
+        installment_type_map = {
+            "monthly": InstallmentType.MONTHLY,
+            "quarterly": InstallmentType.QUARTERLY,
+            "half_yearly": InstallmentType.HALF_YEARLY,
+            "yearly": InstallmentType.YEARLY
+        }
+        
+        # Check if payment record exists for this student and class
+        existing_payment = db.query(StudentPayment).filter(
+            StudentPayment.student_id == student.id,
+            StudentPayment.class_id == target_class_id
+        ).first()
+        
+        if existing_payment:
+            # Update existing payment record
+            existing_payment.course_fee = data.payment.course_fee
+            existing_payment.course_fee_installment_type = installment_type_map[data.payment.course_fee_installment_type.value]
+            existing_payment.transport_fee = data.payment.transport_fee
+            existing_payment.transport_fee_installment_type = installment_type_map[data.payment.transport_fee_installment_type.value]
+            existing_payment.tek_school_fee = data.payment.tek_school_fee
+            existing_payment.tek_school_fee_installment_type = installment_type_map[data.payment.tek_school_fee_installment_type.value]
+            payment_updated = True
+            updated_payment_obj = existing_payment
+            payment_response = {
+                "payment_id": existing_payment.id,
+                "class_id": existing_payment.class_id,
+                "course_fee": existing_payment.course_fee,
+                "course_fee_installment_type": existing_payment.course_fee_installment_type.value,
+                "transport_fee": existing_payment.transport_fee,
+                "transport_fee_installment_type": existing_payment.transport_fee_installment_type.value,
+                "tek_school_fee": existing_payment.tek_school_fee,
+                "tek_school_fee_installment_type": existing_payment.tek_school_fee_installment_type.value,
+                "action": "updated"
+            }
+        else:
+            # Create new payment record for this class
+            new_payment = StudentPayment(
+                student_id=student.id,
+                class_id=target_class_id,
+                course_fee=data.payment.course_fee,
+                course_fee_installment_type=installment_type_map[data.payment.course_fee_installment_type.value],
+                transport_fee=data.payment.transport_fee,
+                transport_fee_installment_type=installment_type_map[data.payment.transport_fee_installment_type.value],
+                tek_school_fee=data.payment.tek_school_fee,
+                tek_school_fee_installment_type=installment_type_map[data.payment.tek_school_fee_installment_type.value]
+            )
+            db.add(new_payment)
+            payment_updated = True
+            updated_payment_obj = new_payment
+            payment_response = {
+                "payment_id": new_payment.id,
+                "class_id": new_payment.class_id,
+                "course_fee": new_payment.course_fee,
+                "course_fee_installment_type": new_payment.course_fee_installment_type.value,
+                "transport_fee": new_payment.transport_fee,
+                "transport_fee_installment_type": new_payment.transport_fee_installment_type.value,
+                "tek_school_fee": new_payment.tek_school_fee,
+                "tek_school_fee_installment_type": new_payment.tek_school_fee_installment_type.value,
+                "action": "created"
+            }
+
     try:
         db.commit()
         db.refresh(student)
+        
+        # Refresh payment if it was updated
+        if payment_updated and updated_payment_obj:
+            db.refresh(updated_payment_obj)
         
         # Log action
         log_action(
@@ -854,10 +957,18 @@ def update_student(
             resource_type=ResourceType.STUDENT,
             resource_id=str(student.id),
             description=f"Updated student: {student.first_name} {student.last_name}",
-            metadata={"student_id": student.id, "updated_fields": list(update_data.keys())}
+            metadata={
+                "student_id": student.id,
+                "updated_fields": list(update_data.keys()),
+                "payment_updated": payment_updated
+            }
         )
         
-        return {"detail": "Student profile updated successfully."}
+        response = {"detail": "Student profile updated successfully."}
+        if payment_updated and payment_response:
+            response["payment"] = payment_response
+        
+        return response
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update student: {str(e)}")
@@ -1232,6 +1343,154 @@ def get_student_payments(
         "payments": payment_list
     }
 
+@router.put("/students/{student_id}/payment-structure/{class_id}/")
+def update_student_payment_structure(
+    student_id: int,
+    class_id: int,
+    data: StudentPaymentCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
+):
+    """
+    Update payment structure (fee structure) for a student in a specific class.
+    This updates the fee amounts and installment types, similar to student creation.
+    Only SCHOOL and STAFF roles can update payment structure.
+    """
+    # ✅ Determine school_id based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school_id = current_user.school_profile.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only schools and staff can update payment structure."
+        )
+
+    # Verify student belongs to the school
+    student = db.query(Student).filter(
+        Student.id == student_id,
+        Student.school_id == school_id
+    ).first()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found or not part of your school.")
+
+    # Verify class exists and belongs to school
+    class_obj = db.query(Class).filter(
+        Class.id == class_id,
+        Class.school_id == school_id
+    ).first()
+    
+    if not class_obj:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Class {class_id} not found or does not belong to your school."
+        )
+
+    # Map string enum values to InstallmentType enum
+    installment_type_map = {
+        "monthly": InstallmentType.MONTHLY,
+        "quarterly": InstallmentType.QUARTERLY,
+        "half_yearly": InstallmentType.HALF_YEARLY,
+        "yearly": InstallmentType.YEARLY
+    }
+
+    # Check if payment record exists for this student and class
+    existing_payment = db.query(StudentPayment).filter(
+        StudentPayment.student_id == student_id,
+        StudentPayment.class_id == class_id
+    ).first()
+
+    # ✅ VALIDATION: If payment exists, ensure new fees are not less than already paid amounts
+    if existing_payment:
+        if data.course_fee < existing_payment.course_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot set course fee to {data.course_fee}. Student has already paid {existing_payment.course_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        if data.transport_fee < existing_payment.transport_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot set transport fee to {data.transport_fee}. Student has already paid {existing_payment.transport_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        if data.tek_school_fee < existing_payment.tek_school_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot set tek school fee to {data.tek_school_fee}. Student has already paid {existing_payment.tek_school_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        
+        # Update existing payment structure
+        existing_payment.course_fee = data.course_fee
+        existing_payment.course_fee_installment_type = installment_type_map[data.course_fee_installment_type.value]
+        existing_payment.transport_fee = data.transport_fee
+        existing_payment.transport_fee_installment_type = installment_type_map[data.transport_fee_installment_type.value]
+        existing_payment.tek_school_fee = data.tek_school_fee
+        existing_payment.tek_school_fee_installment_type = installment_type_map[data.tek_school_fee_installment_type.value]
+        
+        payment_obj = existing_payment
+        action = "updated"
+    else:
+        # Create new payment record for this class
+        new_payment = StudentPayment(
+            student_id=student_id,
+            class_id=class_id,
+            course_fee=data.course_fee,
+            course_fee_installment_type=installment_type_map[data.course_fee_installment_type.value],
+            transport_fee=data.transport_fee,
+            transport_fee_installment_type=installment_type_map[data.transport_fee_installment_type.value],
+            tek_school_fee=data.tek_school_fee,
+            tek_school_fee_installment_type=installment_type_map[data.tek_school_fee_installment_type.value]
+        )
+        db.add(new_payment)
+        payment_obj = new_payment
+        action = "created"
+
+    try:
+        db.commit()
+        db.refresh(payment_obj)
+        
+        # Log action
+        log_action(
+            db=db,
+            current_user=current_user,
+            action_type=ActionType.UPDATE if action == "updated" else ActionType.CREATE,
+            resource_type=ResourceType.STUDENT,
+            resource_id=str(student.id),
+            description=f"{action.capitalize()} payment structure for student {student.first_name} {student.last_name} in class {class_id}",
+            metadata={
+                "student_id": student.id,
+                "class_id": class_id,
+                "payment_id": payment_obj.id,
+                "action": action
+            }
+        )
+        
+        return {
+            "detail": f"Payment structure {action} successfully.",
+            "payment_id": payment_obj.id,
+            "student_id": student_id,
+            "student_name": f"{student.first_name} {student.last_name}",
+            "class_id": class_id,
+            "class_name": class_obj.name,
+            "course_fee": payment_obj.course_fee,
+            "course_fee_installment_type": payment_obj.course_fee_installment_type.value,
+            "transport_fee": payment_obj.transport_fee,
+            "transport_fee_installment_type": payment_obj.transport_fee_installment_type.value,
+            "tek_school_fee": payment_obj.tek_school_fee,
+            "tek_school_fee_installment_type": payment_obj.tek_school_fee_installment_type.value,
+            "course_fee_paid": payment_obj.course_fee_paid,
+            "transport_fee_paid": payment_obj.transport_fee_paid,
+            "tek_school_fee_paid": payment_obj.tek_school_fee_paid,
+            "action": action
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update payment structure: {str(e)}")
+
 @router.get("/students/{student_id}/payments/{class_id}/")
 def get_student_payment_by_class(
     student_id: int,
@@ -1285,19 +1544,28 @@ def get_student_payment_by_class(
     for txn in transactions:
         transaction_data = {
             "transaction_id": txn.id,
-            "amount": txn.amount,
+            "amount": float(txn.amount),
             "payment_type": txn.payment_type,
-            "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,  # Include breakdown from model
-            "transaction_date": txn.transaction_date,
+            "payment_breakdown": txn.payment_breakdown if txn.payment_breakdown else None,
+            "transaction_date": txn.transaction_date.isoformat() if txn.transaction_date else None,
             "description": txn.description,
             "files": txn.files if txn.files else [],
             "payment_method": txn.payment_method,
             "transaction_reference": txn.transaction_reference,
-            "created_at": txn.created_at,
+            "bank_account_id": txn.bank_account_id if txn.bank_account_id else None,  # Add bank_account_id
+            "status": txn.status if txn.status else 'verified',  # Add status field
+            "verified_at": txn.verified_at.isoformat() if txn.verified_at else None,  # Add verified_at
+            "verified_by": txn.verified_by,  # Add verified_by
+            "rejection_reason": txn.rejection_reason if txn.rejection_reason else None,  # Add rejection_reason
+            "created_at": txn.created_at.isoformat() if txn.created_at else None,
             "created_by": txn.created_by
         }
         
         transaction_list.append(transaction_data)
+    
+    # Get class dates
+    class_start_date = payment.classes.class_start_date if payment.classes else None
+    class_end_date = payment.classes.class_end_date if payment.classes else None
     
     return {
         "payment_id": payment.id,
@@ -1305,17 +1573,19 @@ def get_student_payment_by_class(
         "student_name": f"{student.first_name} {student.last_name}",
         "class_id": payment.class_id,
         "class_name": payment.classes.name if payment.classes else None,
-        "course_fee": payment.course_fee,
-        "course_fee_installment_type": payment.course_fee_installment_type.value,
-        "course_fee_paid": payment.course_fee_paid,
+        "class_start_date": class_start_date.isoformat() if class_start_date else None,  # Add class_start_date
+        "class_end_date": class_end_date.isoformat() if class_end_date else None,  # Add class_end_date
+        "course_fee": float(payment.course_fee),
+        "course_fee_installment_type": payment.course_fee_installment_type.value if payment.course_fee_installment_type else None,
+        "course_fee_paid": float(payment.course_fee_paid),
         "course_fee_remaining": round(payment.course_fee - payment.course_fee_paid, 2),
-        "transport_fee": payment.transport_fee,
-        "transport_fee_installment_type": payment.transport_fee_installment_type.value,
-        "transport_fee_paid": payment.transport_fee_paid,
+        "transport_fee": float(payment.transport_fee),
+        "transport_fee_installment_type": payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else None,
+        "transport_fee_paid": float(payment.transport_fee_paid),
         "transport_fee_remaining": round(payment.transport_fee - payment.transport_fee_paid, 2),
-        "tek_school_fee": payment.tek_school_fee,
-        "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value,
-        "tek_school_fee_paid": payment.tek_school_fee_paid,
+        "tek_school_fee": float(payment.tek_school_fee),
+        "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else None,
+        "tek_school_fee_paid": float(payment.tek_school_fee_paid),
         "tek_school_fee_remaining": round(payment.tek_school_fee - payment.tek_school_fee_paid, 2),
         "total_paid": round(payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2),
         "total_remaining": round(
@@ -1323,10 +1593,10 @@ def get_student_payment_by_class(
             (payment.transport_fee - payment.transport_fee_paid) + 
             (payment.tek_school_fee - payment.tek_school_fee_paid), 2
         ),
-        "transactions": transaction_list,
+        "transactions": transaction_list,  # Now includes status, verified_at, verified_by, rejection_reason
         "total_transactions": len(transaction_list),
-        "created_at": payment.created_at,
-        "updated_at": payment.updated_at
+        "created_at": payment.created_at.isoformat() if payment.created_at else None,
+        "updated_at": payment.updated_at.isoformat() if payment.updated_at else None
     }
 
 @router.post("/students/{student_id}/payments/{class_id}/")
@@ -1643,20 +1913,40 @@ def update_student_payment(
     # Update only provided fields
     update_data = data.model_dump(exclude_unset=True)
     
+    # ✅ VALIDATION: If reducing fee amounts, ensure existing paid amounts don't exceed new fee amounts
+    # Check before updating to validate against current paid amounts
     if "course_fee" in update_data and update_data["course_fee"] is not None:
-        payment.course_fee = update_data["course_fee"]
+        new_course_fee = update_data["course_fee"]
+        if new_course_fee < payment.course_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot reduce course fee to {new_course_fee}. Student has already paid {payment.course_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        payment.course_fee = new_course_fee
+    
+    if "transport_fee" in update_data and update_data["transport_fee"] is not None:
+        new_transport_fee = update_data["transport_fee"]
+        if new_transport_fee < payment.transport_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot reduce transport fee to {new_transport_fee}. Student has already paid {payment.transport_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        payment.transport_fee = new_transport_fee
+    
+    if "tek_school_fee" in update_data and update_data["tek_school_fee"] is not None:
+        new_tek_school_fee = update_data["tek_school_fee"]
+        if new_tek_school_fee < payment.tek_school_fee_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot reduce tek school fee to {new_tek_school_fee}. Student has already paid {payment.tek_school_fee_paid}. Please reduce paid amount first or set a higher fee."
+            )
+        payment.tek_school_fee = new_tek_school_fee
     
     if "course_fee_installment_type" in update_data and update_data["course_fee_installment_type"] is not None:
         payment.course_fee_installment_type = installment_type_map[update_data["course_fee_installment_type"].value]
     
-    if "transport_fee" in update_data and update_data["transport_fee"] is not None:
-        payment.transport_fee = update_data["transport_fee"]
-    
     if "transport_fee_installment_type" in update_data and update_data["transport_fee_installment_type"] is not None:
         payment.transport_fee_installment_type = installment_type_map[update_data["transport_fee_installment_type"].value]
-    
-    if "tek_school_fee" in update_data and update_data["tek_school_fee"] is not None:
-        payment.tek_school_fee = update_data["tek_school_fee"]
     
     if "tek_school_fee_installment_type" in update_data and update_data["tek_school_fee_installment_type"] is not None:
         payment.tek_school_fee_installment_type = installment_type_map[update_data["tek_school_fee_installment_type"].value]
@@ -1688,6 +1978,20 @@ def update_student_payment(
                 detail=f"Tek School fee paid amount ({update_data['tek_school_fee_paid']}) cannot exceed the actual tek school fee ({payment.tek_school_fee})"
             )
     
+    # ✅ VALIDATION: Validate bank_account_id if provided
+    bank_account = None
+    if "bank_account_id" in update_data and update_data["bank_account_id"] is not None:
+        bank_account = db.query(BankAccount).filter(
+            BankAccount.id == update_data["bank_account_id"],
+            BankAccount.school_id == school_id
+        ).first()
+        
+        if not bank_account:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Bank account with ID {update_data['bank_account_id']} not found or does not belong to your school."
+            )
+
     # Handle file uploads (if provided) - upload to S3 and get URLs
     uploaded_file_urls = []
     if "files" in update_data and update_data["files"] is not None:
@@ -1731,6 +2035,7 @@ def update_student_payment(
                 transaction_date=datetime.utcnow(),
                 description=update_data.get("description"),
                 files=uploaded_file_urls if uploaded_file_urls else None,
+                bank_account_id=update_data.get("bank_account_id") if "bank_account_id" in update_data else None,
                 created_by=current_user.id
             )
             db.add(transaction)
@@ -1751,6 +2056,7 @@ def update_student_payment(
                 transaction_date=datetime.utcnow(),
                 description=update_data.get("description"),
                 files=uploaded_file_urls if uploaded_file_urls else None,
+                bank_account_id=update_data.get("bank_account_id") if "bank_account_id" in update_data else None,
                 created_by=current_user.id
             )
             db.add(transaction)
@@ -1771,6 +2077,7 @@ def update_student_payment(
                 transaction_date=datetime.utcnow(),
                 description=update_data.get("description"),
                 files=uploaded_file_urls if uploaded_file_urls else None,
+                bank_account_id=update_data.get("bank_account_id") if "bank_account_id" in update_data else None,
                 created_by=current_user.id
             )
             db.add(transaction)
@@ -1823,4 +2130,870 @@ def update_student_payment(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update student payment: {str(e)}")
+
+# ==================== Payment Reminder and Verification Flow ====================
+
+@router.post("/students/{student_id}/payments/{class_id}/send-reminder/")
+def send_payment_reminder(
+    student_id: int,
+    class_id: int,
+    data: PaymentReminderRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
+):
+    """
+    School sends payment reminder/request to student.
+    This creates a notification/request that student can respond to by submitting payment.
+    """
+    try:
+        # ✅ VALIDATION: student_id and class_id must be positive
+        if student_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid student_id. Must be a positive integer.")
+        if class_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid class_id. Must be a positive integer.")
+
+        # ✅ Determine school_id based on user role
+        if current_user.role == UserRole.SCHOOL:
+            school_id = current_user.school_profile.id
+        elif current_user.role == UserRole.STAFF:
+            staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+            if not staff:
+                raise HTTPException(status_code=404, detail="Staff profile not found.")
+            school_id = staff.school_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only schools and staff can send payment reminders."
+            )
+
+        # ✅ VALIDATION: Verify student belongs to the school
+        student = db.query(Student).options(joinedload(Student.classes)).filter(
+            Student.id == student_id,
+            Student.school_id == school_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found or not part of your school.")
+
+        # ✅ VALIDATION: Verify class exists and belongs to school
+        class_obj = db.query(Class).filter(
+            Class.id == class_id,
+            Class.school_id == school_id
+        ).first()
+        
+        if not class_obj:
+            raise HTTPException(status_code=404, detail="Class not found or does not belong to your school.")
+
+        # ✅ VALIDATION: Verify student is in the specified class
+        if student.class_id != class_id:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Student is not enrolled in class {class_id}. Current class: {student.class_id}"
+            )
+
+        # ✅ VALIDATION: Get payment record
+        payment = db.query(StudentPayment).filter(
+            StudentPayment.student_id == student_id,
+            StudentPayment.class_id == class_id
+        ).first()
+
+        if not payment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Payment record not found for student {student_id} in class {class_id}."
+            )
+        
+        # Helper function to calculate remaining amount based on installment type
+        def calculate_remaining_by_installment(fee_amount, fee_paid, installment_type, class_start_date, class_end_date):
+            """
+            Calculate remaining amount based on installment type and class dates.
+            Returns the remaining amount for the current installment period.
+            """
+            remaining_total = fee_amount - fee_paid
+            if remaining_total <= 0:
+                return 0.0
+            
+            today = date.today()
+            
+            # If class has ended, return total remaining
+            if today >= class_end_date:
+                return round(remaining_total, 2)
+            
+            # Calculate period based on installment type
+            if installment_type == InstallmentType.MONTHLY.value:
+                # Calculate months from today to class_end_date
+                months_remaining = (class_end_date.year - today.year) * 12 + (class_end_date.month - today.month)
+                if class_end_date.day >= today.day:
+                    months_remaining += 1
+                if months_remaining <= 0:
+                    months_remaining = 1
+                
+                # Calculate total months in class period
+                total_months = (class_end_date.year - class_start_date.year) * 12 + (class_end_date.month - class_start_date.month)
+                if class_end_date.day >= class_start_date.day:
+                    total_months += 1
+                if total_months <= 0:
+                    total_months = 1
+                
+                # Monthly amount
+                monthly_amount = fee_amount / total_months
+                # Remaining amount for remaining months
+                remaining_amount = monthly_amount * months_remaining
+                
+            elif installment_type == InstallmentType.QUARTERLY.value:
+                # Calculate quarters from today to class_end_date
+                start_quarter = (class_start_date.month - 1) // 3 + 1
+                end_quarter = (class_end_date.month - 1) // 3 + 1
+                today_quarter = (today.month - 1) // 3 + 1
+                
+                total_quarters = (class_end_date.year - class_start_date.year) * 4 + (end_quarter - start_quarter) + 1
+                if total_quarters <= 0:
+                    total_quarters = 1
+                
+                # Calculate remaining quarters
+                if today.year == class_end_date.year:
+                    quarters_remaining = end_quarter - today_quarter + 1
+                else:
+                    quarters_remaining = (class_end_date.year - today.year - 1) * 4 + (4 - today_quarter + 1) + end_quarter
+                
+                if quarters_remaining <= 0:
+                    quarters_remaining = 1
+                
+                # Quarterly amount
+                quarterly_amount = fee_amount / total_quarters
+                # Remaining amount for remaining quarters
+                remaining_amount = quarterly_amount * quarters_remaining
+                
+            elif installment_type == InstallmentType.HALF_YEARLY.value:
+                # Calculate half-years from today to class_end_date
+                start_half = 1 if class_start_date.month <= 6 else 2
+                end_half = 1 if class_end_date.month <= 6 else 2
+                today_half = 1 if today.month <= 6 else 2
+                
+                total_half_years = (class_end_date.year - class_start_date.year) * 2 + (end_half - start_half) + 1
+                if total_half_years <= 0:
+                    total_half_years = 1
+                
+                # Calculate remaining half-years
+                if today.year == class_end_date.year:
+                    half_years_remaining = end_half - today_half + 1
+                else:
+                    half_years_remaining = (class_end_date.year - today.year - 1) * 2 + (2 - today_half + 1) + end_half
+                
+                if half_years_remaining <= 0:
+                    half_years_remaining = 1
+                
+                # Half-yearly amount
+                half_yearly_amount = fee_amount / total_half_years
+                # Remaining amount for remaining half-years
+                remaining_amount = half_yearly_amount * half_years_remaining
+                
+            elif installment_type == InstallmentType.YEARLY.value:
+                # For yearly, return total remaining
+                remaining_amount = remaining_total
+            else:
+                # Default: return total remaining
+                remaining_amount = remaining_total
+            
+            # Ensure remaining_amount doesn't exceed total remaining
+            remaining_amount = min(remaining_amount, remaining_total)
+            return round(remaining_amount, 2)
+        
+        # Calculate remaining amounts based on installment types
+        course_fee_remaining = calculate_remaining_by_installment(
+            payment.course_fee,
+            payment.course_fee_paid,
+            payment.course_fee_installment_type.value if payment.course_fee_installment_type else InstallmentType.YEARLY.value,
+            class_obj.class_start_date,
+            class_obj.class_end_date
+        )
+        
+        transport_fee_remaining = calculate_remaining_by_installment(
+            payment.transport_fee,
+            payment.transport_fee_paid,
+            payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else InstallmentType.YEARLY.value,
+            class_obj.class_start_date,
+            class_obj.class_end_date
+        )
+        
+        tek_school_fee_remaining = calculate_remaining_by_installment(
+            payment.tek_school_fee,
+            payment.tek_school_fee_paid,
+            payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else InstallmentType.YEARLY.value,
+            class_obj.class_start_date,
+            class_obj.class_end_date
+        )
+        
+        # Calculate total due based on installment-based remaining amounts
+        total_due = course_fee_remaining + transport_fee_remaining + tek_school_fee_remaining
+
+        # ✅ VALIDATION: Check if there's any amount due
+        if total_due <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No payment due. All fees have been paid."
+            )
+
+        # ✅ VALIDATION: If fee amounts are provided, validate them against calculated remaining amounts
+        validation_errors = []
+        if data.course_fee is not None and data.course_fee > 0:
+            if data.course_fee > course_fee_remaining:
+                validation_errors.append(
+                    f"Course fee amount ({data.course_fee}) exceeds calculated remaining amount ({course_fee_remaining:.2f}) for {payment.course_fee_installment_type.value if payment.course_fee_installment_type else 'yearly'} installment."
+                )
+        
+        if data.transport_fee is not None and data.transport_fee > 0:
+            if data.transport_fee > transport_fee_remaining:
+                validation_errors.append(
+                    f"Transport fee amount ({data.transport_fee}) exceeds calculated remaining amount ({transport_fee_remaining:.2f}) for {payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else 'yearly'} installment."
+                )
+        
+        if data.tek_school_fee is not None and data.tek_school_fee > 0:
+            if data.tek_school_fee > tek_school_fee_remaining:
+                validation_errors.append(
+                    f"Tek School fee amount ({data.tek_school_fee}) exceeds calculated remaining amount ({tek_school_fee_remaining:.2f}) for {payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else 'yearly'} installment."
+                )
+        
+        if validation_errors:
+            raise HTTPException(
+                status_code=400,
+                detail="; ".join(validation_errors)
+            )
+
+        # ✅ VALIDATION: Validate amount_due if provided
+        # If fee amounts are provided, amount_due should match their sum
+        # Otherwise, it should match the calculated total_due
+        if data.amount_due is not None:
+            if data.amount_due < 0:
+                raise HTTPException(status_code=400, detail="Amount due cannot be negative.")
+            
+            # Calculate expected amount_due
+            provided_fee_sum = (data.course_fee or 0) + (data.transport_fee or 0) + (data.tek_school_fee or 0)
+            
+            if provided_fee_sum > 0:
+                # If fee amounts are provided, amount_due should be their sum
+                if abs(data.amount_due - provided_fee_sum) > 0.01:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Provided amount_due ({data.amount_due}) does not match sum of provided fee amounts ({provided_fee_sum:.2f})."
+                    )
+            else:
+                # If no fee amounts provided, amount_due should match calculated total
+                if abs(data.amount_due - total_due) > 0.01:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Provided amount_due ({data.amount_due}) does not match calculated remaining amount ({total_due:.2f})."
+                    )
+
+        # ✅ VALIDATION: Validate bank_account_id if provided
+        bank_account = None
+        if data.bank_account_id is not None:
+            bank_account = db.query(BankAccount).filter(
+                BankAccount.id == data.bank_account_id,
+                BankAccount.school_id == school_id
+            ).first()
+            
+            if not bank_account:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bank account with ID {data.bank_account_id} not found or does not belong to your school."
+                )
+
+        # Create payment request transaction with status "school_request"
+        # Check if there's already a pending school_request for this payment
+        existing_request = db.query(StudentPaymentTransaction).filter(
+            StudentPaymentTransaction.student_payment_id == payment.id,
+            StudentPaymentTransaction.status == PaymentTransactionStatus.SCHOOL_REQUEST.value
+        ).first()
+
+        # Calculate payment breakdown from provided fee fields
+        payment_breakdown = {}
+        total_amount = 0.0
+        
+        if data.course_fee is not None and data.course_fee > 0:
+            payment_breakdown["course_fee"] = round(data.course_fee, 2)
+            total_amount += data.course_fee
+        
+        if data.transport_fee is not None and data.transport_fee > 0:
+            payment_breakdown["transport_fee"] = round(data.transport_fee, 2)
+            total_amount += data.transport_fee
+        
+        if data.tek_school_fee is not None and data.tek_school_fee > 0:
+            payment_breakdown["tek_school_fee"] = round(data.tek_school_fee, 2)
+            total_amount += data.tek_school_fee
+
+        # Determine primary payment type
+        primary_payment_type = "course_fee"
+        if data.transport_fee and data.transport_fee > 0:
+            primary_payment_type = "transport_fee"
+        if data.tek_school_fee and data.tek_school_fee > 0:
+            primary_payment_type = "tek_school_fee"
+
+        if existing_request:
+            # Update existing request
+            existing_request.transaction_date = datetime.utcnow()
+            existing_request.description = data.message if data.message else existing_request.description
+            existing_request.amount = round(total_amount, 2) if total_amount > 0 else existing_request.amount
+            existing_request.payment_type = primary_payment_type if total_amount > 0 else existing_request.payment_type
+            existing_request.payment_breakdown = payment_breakdown if payment_breakdown else existing_request.payment_breakdown
+            existing_request.bank_account_id = data.bank_account_id if data.bank_account_id else existing_request.bank_account_id
+            transaction = existing_request
+            db.commit()
+            db.refresh(transaction)
+        else:
+            # Create new payment request
+            transaction = StudentPaymentTransaction(
+                student_payment_id=payment.id,
+                amount=round(total_amount, 2) if total_amount > 0 else 0.0,  # Amount from fee fields or 0
+                payment_type=primary_payment_type if total_amount > 0 else "course_fee",  # Default, will be updated by student
+                payment_breakdown=payment_breakdown if payment_breakdown else None,  # Fee breakdown from request
+                transaction_date=datetime.utcnow(),
+                description=data.message if data.message else f"Payment request for {student.first_name} {student.last_name}",
+                files=None,
+                payment_method=None,
+                transaction_reference=None,
+                bank_account_id=data.bank_account_id if data.bank_account_id else None,
+                status=PaymentTransactionStatus.SCHOOL_REQUEST.value,
+                created_by=current_user.id
+            )
+            db.add(transaction)
+            db.commit()
+            db.refresh(transaction)
+
+        # Send email to student/parent if they have email
+        email_sent = None
+        if student.parent and student.parent.email:
+            try:
+                class_name = student.classes.name if student.classes else 'Class'
+                email_subject = f"Payment Request - {class_name}"
+                # Build requested amounts section if provided
+                requested_section = ""
+                if payment_breakdown:
+                    requested_section = "<p><strong>Requested Payment Amounts:</strong></p><ul>"
+                    if "course_fee" in payment_breakdown:
+                        installment_type = data.course_fee_installment_type.value if data.course_fee_installment_type else "N/A"
+                        requested_section += f"<li>Course Fee: ₹{payment_breakdown['course_fee']:.2f} ({installment_type})</li>"
+                    if "transport_fee" in payment_breakdown:
+                        installment_type = data.transport_fee_installment_type.value if data.transport_fee_installment_type else "N/A"
+                        requested_section += f"<li>Transport Fee: ₹{payment_breakdown['transport_fee']:.2f} ({installment_type})</li>"
+                    if "tek_school_fee" in payment_breakdown:
+                        installment_type = data.tek_school_fee_installment_type.value if data.tek_school_fee_installment_type else "N/A"
+                        requested_section += f"<li>Tek School Fee: ₹{payment_breakdown['tek_school_fee']:.2f} ({installment_type})</li>"
+                    requested_section += "</ul>"
+                
+                email_body = f"""
+                <h2>Payment Request</h2>
+                <p>Dear {student.parent.parent_name},</p>
+                <p>This is a payment request for {student.first_name} {student.last_name} (Roll No: {student.roll_no}).</p>
+                <p><strong>Total Amount Due (Based on Installment Type): ₹{total_due:.2f}</strong></p>
+                <p>Remaining Balances (Calculated by Installment Type):</p>
+                <ul>
+                    <li>Course Fee Remaining ({payment.course_fee_installment_type.value if payment.course_fee_installment_type else 'yearly'}): ₹{course_fee_remaining:.2f}</li>
+                    <li>Transport Fee Remaining ({payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else 'yearly'}): ₹{transport_fee_remaining:.2f}</li>
+                    <li>Tek School Fee Remaining ({payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else 'yearly'}): ₹{tek_school_fee_remaining:.2f}</li>
+                </ul>
+                <p><small>Note: Amounts are calculated based on remaining time period from today ({date.today().isoformat()}) to class end date ({class_obj.class_end_date.isoformat()}) and installment type.</small></p>
+                {requested_section}
+                {f'<p>{data.message}</p>' if data.message else ''}
+                <p>Please fill the payment form in the student portal.</p>
+                <p>Thank you.</p>
+                """
+                send_dynamic_email(
+                    recipient_email=student.parent.email,
+                    subject=email_subject,
+                    body=email_body
+                )
+                email_sent = student.parent.email
+            except Exception as e:
+                print(f"Warning: Failed to send email reminder: {str(e)}")
+                # Continue even if email fails
+
+        return {
+            "detail": "Payment request created successfully",
+            "transaction_id": transaction.id,
+            "student_id": student_id,
+            "student_name": f"{student.first_name} {student.last_name}",
+            "total_due": round(total_due, 2),
+            "status": transaction.status,
+            "payment_breakdown": transaction.payment_breakdown if transaction.payment_breakdown else None,
+            "calculated_remaining_amounts": {
+                "course_fee_remaining": course_fee_remaining,
+                "course_fee_installment_type": payment.course_fee_installment_type.value if payment.course_fee_installment_type else None,
+                "transport_fee_remaining": transport_fee_remaining,
+                "transport_fee_installment_type": payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else None,
+                "tek_school_fee_remaining": tek_school_fee_remaining,
+                "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else None,
+            },
+            "requested_amounts": {
+                "course_fee": data.course_fee if data.course_fee else None,
+                "course_fee_installment_type": data.course_fee_installment_type.value if data.course_fee_installment_type else None,
+                "transport_fee": data.transport_fee if data.transport_fee else None,
+                "transport_fee_installment_type": data.transport_fee_installment_type.value if data.transport_fee_installment_type else None,
+                "tek_school_fee": data.tek_school_fee if data.tek_school_fee else None,
+                "tek_school_fee_installment_type": data.tek_school_fee_installment_type.value if data.tek_school_fee_installment_type else None,
+            },
+            "email_sent": email_sent,
+            "message": "Student can now fill the payment form with amounts and documents."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send payment reminder: {str(e)}")
+
+
+@router.put("/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/")
+def student_update_payment_transaction(
+    student_id: int,
+    class_id: int,
+    transaction_id: int,
+    data: StudentPaymentSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Student updates a payment transaction.
+    Updates an existing payment request (status: school_request) with payment amounts and documents.
+    Status automatically changes to "payment_update_by_student" after update.
+    """
+    try:
+        # ✅ VALIDATION: student_id, class_id, and transaction_id must be positive
+        if student_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid student_id. Must be a positive integer.")
+        if class_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid class_id. Must be a positive integer.")
+        if transaction_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid transaction_id. Must be a positive integer.")
+
+        # ✅ VALIDATION: Only STUDENT role can update payment transactions
+        if current_user.role != UserRole.STUDENT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only students can update payment transactions."
+            )
+
+        # ✅ VALIDATION: Verify student exists and belongs to current user
+        student = db.query(Student).filter(
+            Student.id == student_id,
+            Student.user_id == current_user.id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found or not authorized.")
+
+        # ✅ VALIDATION: Verify class matches student's current class
+        if student.class_id != class_id:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Class ID does not match student's current class. Student is in class {student.class_id}."
+            )
+
+        # ✅ VALIDATION: Get payment record
+        payment = db.query(StudentPayment).filter(
+            StudentPayment.student_id == student_id,
+            StudentPayment.class_id == class_id
+        ).first()
+
+        if not payment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Payment record not found for student {student_id} in class {class_id}."
+            )
+
+        # ✅ VALIDATION: Find the specific transaction
+        existing_transaction = db.query(StudentPaymentTransaction).filter(
+            StudentPaymentTransaction.id == transaction_id,
+            StudentPaymentTransaction.student_payment_id == payment.id
+        ).first()
+        
+        if not existing_transaction:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Transaction {transaction_id} not found for this student and class."
+            )
+        
+        # ✅ VALIDATION: Transaction must be in "school_request" status
+        if existing_transaction.status != PaymentTransactionStatus.SCHOOL_REQUEST.value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Transaction is not in 'school_request' status. Current status: {existing_transaction.status}. Only transactions with 'school_request' status can be updated by students."
+            )
+
+        # ✅ VALIDATION: At least one payment amount must be provided
+        if not any([data.course_fee_amount, data.transport_fee_amount, data.tek_school_fee_amount]):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one payment amount must be provided (course_fee_amount, transport_fee_amount, or tek_school_fee_amount)"
+            )
+
+        # ✅ VALIDATION: All provided amounts must be positive
+        if data.course_fee_amount is not None and data.course_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="Course fee amount must be greater than 0.")
+        if data.transport_fee_amount is not None and data.transport_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="Transport fee amount must be greater than 0.")
+        if data.tek_school_fee_amount is not None and data.tek_school_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="Tek School fee amount must be greater than 0.")
+
+        # ✅ VALIDATION: File count limit
+        if data.files and len(data.files) > 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 files allowed per payment submission.")
+
+        # Handle file uploads
+        uploaded_file_urls = []
+        if data.files:
+            for file_base64 in data.files:
+                try:
+                    # ✅ VALIDATION: Check if file is base64 encoded
+                    if not file_base64 or len(file_base64) < 100:
+                        raise HTTPException(status_code=400, detail="Invalid file format. Files must be base64 encoded.")
+                    
+                    file_ext = "pdf"
+                    if "," in file_base64:
+                        if "image/png" in file_base64:
+                            file_ext = "png"
+                        elif "image/jpeg" in file_base64 or "image/jpg" in file_base64:
+                            file_ext = "jpg"
+                        elif "application/pdf" in file_base64:
+                            file_ext = "pdf"
+                    
+                    file_url = upload_base64_to_s3(
+                        base64_string=file_base64,
+                        filename_prefix=f"student_payments/{student_id}/class_{class_id}/transactions",
+                        ext=file_ext
+                    )
+                    uploaded_file_urls.append(file_url)
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    print(f"Warning: Failed to upload file: {str(e)}")
+                    raise HTTPException(status_code=400, detail=f"Failed to upload file: {str(e)}")
+
+        # ✅ VALIDATION: Validate payment amounts don't exceed remaining balances
+        payment_breakdown = {}
+        total_amount = 0.0
+        transaction_errors = []
+
+        if data.course_fee_amount is not None and data.course_fee_amount > 0:
+            remaining = round(payment.course_fee - payment.course_fee_paid, 2)
+            if remaining <= 0:
+                transaction_errors.append("Course fee is already fully paid.")
+            elif data.course_fee_amount > remaining:
+                transaction_errors.append(f"Course fee payment ({data.course_fee_amount}) exceeds remaining balance ({remaining:.2f}).")
+            else:
+                payment_breakdown["course_fee"] = round(data.course_fee_amount, 2)
+                total_amount += data.course_fee_amount
+
+        if data.transport_fee_amount is not None and data.transport_fee_amount > 0:
+            remaining = round(payment.transport_fee - payment.transport_fee_paid, 2)
+            if remaining <= 0:
+                transaction_errors.append("Transport fee is already fully paid.")
+            elif data.transport_fee_amount > remaining:
+                transaction_errors.append(f"Transport fee payment ({data.transport_fee_amount}) exceeds remaining balance ({remaining:.2f}).")
+            else:
+                payment_breakdown["transport_fee"] = round(data.transport_fee_amount, 2)
+                total_amount += data.transport_fee_amount
+
+        if data.tek_school_fee_amount is not None and data.tek_school_fee_amount > 0:
+            remaining = round(payment.tek_school_fee - payment.tek_school_fee_paid, 2)
+            if remaining <= 0:
+                transaction_errors.append("Tek School fee is already fully paid.")
+            elif data.tek_school_fee_amount > remaining:
+                transaction_errors.append(f"Tek School fee payment ({data.tek_school_fee_amount}) exceeds remaining balance ({remaining:.2f}).")
+            else:
+                payment_breakdown["tek_school_fee"] = round(data.tek_school_fee_amount, 2)
+                total_amount += data.tek_school_fee_amount
+
+        if transaction_errors:
+            raise HTTPException(
+                status_code=400,
+                detail="; ".join(transaction_errors)
+            )
+
+        # ✅ VALIDATION: Total amount must be positive
+        if total_amount <= 0:
+            raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0.")
+
+        # Determine primary payment type
+        primary_payment_type = "course_fee"
+        if data.transport_fee_amount and data.transport_fee_amount > 0:
+            primary_payment_type = "transport_fee"
+        if data.tek_school_fee_amount and data.tek_school_fee_amount > 0:
+            primary_payment_type = "tek_school_fee"
+
+        # Update existing transaction with student's payment details
+        existing_transaction.amount = round(total_amount, 2)
+        existing_transaction.payment_type = primary_payment_type
+        existing_transaction.payment_breakdown = payment_breakdown if payment_breakdown else None
+        existing_transaction.transaction_date = datetime.utcnow()
+        existing_transaction.description = data.description if data.description else existing_transaction.description
+        existing_transaction.files = uploaded_file_urls if uploaded_file_urls else existing_transaction.files
+        existing_transaction.payment_method = data.payment_method if data.payment_method else existing_transaction.payment_method
+        existing_transaction.transaction_reference = data.transaction_reference if data.transaction_reference else existing_transaction.transaction_reference
+        existing_transaction.status = PaymentTransactionStatus.PAYMENT_UPDATE_BY_STUDENT.value  # Status changed to payment_update_by_student
+
+        db.commit()
+        db.refresh(existing_transaction)
+
+        return {
+            "detail": "Payment transaction updated successfully. Status changed to 'payment_update_by_student'. Waiting for school verification.",
+            "transaction_id": existing_transaction.id,
+            "amount": float(existing_transaction.amount),
+            "status": existing_transaction.status,
+            "payment_breakdown": existing_transaction.payment_breakdown,
+            "message": "Your payment has been updated. School will now verify and approve or reject the payment."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to submit payment: {str(e)}")
+
+
+@router.put("/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/verify/")
+def verify_payment_transaction(
+    student_id: int,
+    class_id: int,
+    transaction_id: int,
+    data: PaymentVerificationRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
+):
+    """
+    School verifies or rejects a payment transaction submitted by student.
+    If verified, amounts are calculated and updated automatically using database transaction.
+    """
+    try:
+        # ✅ VALIDATION: All IDs must be positive
+        if student_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid student_id. Must be a positive integer.")
+        if class_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid class_id. Must be a positive integer.")
+        if transaction_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid transaction_id. Must be a positive integer.")
+
+        # ✅ VALIDATION: Status must be "done" or "cancel"
+        if data.status not in ["done", "cancel"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Status must be either 'done' (to verify and calculate amounts) or 'cancel' (to cancel the request)."
+            )
+
+        # ✅ VALIDATION: Rejection reason required if cancelled
+        if data.status == "cancel" and not data.rejection_reason:
+            raise HTTPException(
+                status_code=400,
+                detail="Rejection reason is required when cancelling a payment request."
+            )
+
+        # ✅ VALIDATION: Rejection reason length
+        if data.status == "cancel" and data.rejection_reason and len(data.rejection_reason) > 500:
+            raise HTTPException(
+                status_code=400,
+                detail="Rejection reason cannot exceed 500 characters."
+            )
+
+        # ✅ Determine school_id based on user role
+        if current_user.role == UserRole.SCHOOL:
+            school_id = current_user.school_profile.id
+        elif current_user.role == UserRole.STAFF:
+            staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+            if not staff:
+                raise HTTPException(status_code=404, detail="Staff profile not found.")
+            school_id = staff.school_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only schools and staff can verify payments."
+            )
+
+        # ✅ VALIDATION: Verify student belongs to the school
+        student = db.query(Student).filter(
+            Student.id == student_id,
+            Student.school_id == school_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found or not part of your school.")
+
+        # ✅ VALIDATION: Verify class exists and belongs to school
+        class_obj = db.query(Class).filter(
+            Class.id == class_id,
+            Class.school_id == school_id
+        ).first()
+        
+        if not class_obj:
+            raise HTTPException(status_code=404, detail="Class not found or does not belong to your school.")
+
+        # ✅ VALIDATION: Get payment record
+        payment = db.query(StudentPayment).filter(
+            StudentPayment.student_id == student_id,
+            StudentPayment.class_id == class_id
+        ).first()
+
+        if not payment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Payment record not found for student {student_id} in class {class_id}."
+            )
+
+        # ✅ VALIDATION: Get transaction with lock to prevent concurrent updates
+        transaction = db.query(StudentPaymentTransaction).filter(
+            StudentPaymentTransaction.id == transaction_id,
+            StudentPaymentTransaction.student_payment_id == payment.id
+        ).first()
+
+        if not transaction:
+            raise HTTPException(
+                status_code=404,
+                detail="Transaction not found or does not belong to this payment."
+            )
+
+        # ✅ VALIDATION: Check if already done or cancelled
+        if transaction.status == PaymentTransactionStatus.DONE.value:
+            raise HTTPException(
+                status_code=400,
+                detail="This payment request has already been completed."
+            )
+        
+        if transaction.status == PaymentTransactionStatus.CANCEL.value:
+            raise HTTPException(
+                status_code=400,
+                detail="This payment request has already been cancelled."
+            )
+
+        # ✅ VALIDATION: Transaction must be in "payment_update_by_student" status
+        if transaction.status != PaymentTransactionStatus.PAYMENT_UPDATE_BY_STUDENT.value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Transaction is not ready for verification. Current status: {transaction.status}. Expected: payment_update_by_student"
+            )
+
+        # ✅ Start database transaction for atomic update
+        try:
+            # Update transaction status
+            if data.status == "done":
+                transaction.status = PaymentTransactionStatus.DONE.value
+                transaction.verified_at = datetime.utcnow()
+                transaction.verified_by = current_user.id
+                transaction.rejection_reason = None
+
+                # ✅ Calculate and update payment amounts (ATOMIC OPERATION)
+                old_course_fee_paid = payment.course_fee_paid
+                old_transport_fee_paid = payment.transport_fee_paid
+                old_tek_school_fee_paid = payment.tek_school_fee_paid
+
+                if transaction.payment_breakdown:
+                    # Update based on payment breakdown
+                    course_fee_amount = float(transaction.payment_breakdown.get("course_fee", 0))
+                    transport_fee_amount = float(transaction.payment_breakdown.get("transport_fee", 0))
+                    tek_school_fee_amount = float(transaction.payment_breakdown.get("tek_school_fee", 0))
+
+                    # ✅ VALIDATION: Verify amounts don't exceed remaining balances
+                    if course_fee_amount > 0:
+                        remaining = round(payment.course_fee - payment.course_fee_paid, 2)
+                        if course_fee_amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Course fee amount ({course_fee_amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.course_fee_paid = round(payment.course_fee_paid + course_fee_amount, 2)
+                    
+                    if transport_fee_amount > 0:
+                        remaining = round(payment.transport_fee - payment.transport_fee_paid, 2)
+                        if transport_fee_amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Transport fee amount ({transport_fee_amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.transport_fee_paid = round(payment.transport_fee_paid + transport_fee_amount, 2)
+                    
+                    if tek_school_fee_amount > 0:
+                        remaining = round(payment.tek_school_fee - payment.tek_school_fee_paid, 2)
+                        if tek_school_fee_amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Tek School fee amount ({tek_school_fee_amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.tek_school_fee_paid = round(payment.tek_school_fee_paid + tek_school_fee_amount, 2)
+                else:
+                    # Fallback: update based on primary payment type
+                    if transaction.payment_type == "course_fee":
+                        remaining = round(payment.course_fee - payment.course_fee_paid, 2)
+                        if transaction.amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Course fee amount ({transaction.amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.course_fee_paid = round(payment.course_fee_paid + transaction.amount, 2)
+                    elif transaction.payment_type == "transport_fee":
+                        remaining = round(payment.transport_fee - payment.transport_fee_paid, 2)
+                        if transaction.amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Transport fee amount ({transaction.amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.transport_fee_paid = round(payment.transport_fee_paid + transaction.amount, 2)
+                    elif transaction.payment_type == "tek_school_fee":
+                        remaining = round(payment.tek_school_fee - payment.tek_school_fee_paid, 2)
+                        if transaction.amount > remaining:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot verify: Tek School fee amount ({transaction.amount}) exceeds remaining balance ({remaining:.2f})."
+                            )
+                        payment.tek_school_fee_paid = round(payment.tek_school_fee_paid + transaction.amount, 2)
+
+                # ✅ VALIDATION: Ensure paid amounts don't exceed fee amounts (safety check)
+                payment.course_fee_paid = min(round(payment.course_fee_paid, 2), round(payment.course_fee, 2))
+                payment.transport_fee_paid = min(round(payment.transport_fee_paid, 2), round(payment.transport_fee, 2))
+                payment.tek_school_fee_paid = min(round(payment.tek_school_fee_paid, 2), round(payment.tek_school_fee, 2))
+
+                # ✅ VALIDATION: Ensure paid amounts are not negative
+                if payment.course_fee_paid < 0:
+                    payment.course_fee_paid = 0
+                if payment.transport_fee_paid < 0:
+                    payment.transport_fee_paid = 0
+                if payment.tek_school_fee_paid < 0:
+                    payment.tek_school_fee_paid = 0
+
+            else:  # cancel
+                transaction.status = PaymentTransactionStatus.CANCEL.value
+                transaction.rejection_reason = data.rejection_reason
+                transaction.verified_at = datetime.utcnow()
+                transaction.verified_by = current_user.id
+
+            # ✅ Commit transaction atomically
+            db.commit()
+            db.refresh(transaction)
+            db.refresh(payment)
+
+            return {
+                "detail": f"Payment request {data.status} successfully." + (" Amounts have been calculated and updated." if data.status == "done" else ""),
+                "transaction_id": transaction.id,
+                "status": transaction.status,
+                "verified_at": transaction.verified_at.isoformat() if transaction.verified_at else None,
+                "verified_by": current_user.id,
+                "payment_summary": {
+                    "course_fee_paid": float(payment.course_fee_paid),
+                    "transport_fee_paid": float(payment.transport_fee_paid),
+                    "tek_school_fee_paid": float(payment.tek_school_fee_paid),
+                    "total_paid": round(
+                        payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2
+                    )
+                } if data.status == "done" else None
+            }
+
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to verify payment transaction: {str(e)}"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to verify payment: {str(e)}")
         
