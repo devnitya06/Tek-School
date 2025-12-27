@@ -28,7 +28,7 @@ def get_selfsigned_student_filters():
 def update_self_signed_student_profile(
     update_data: SelfSignedStudentUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.SELF_SIGNED_STUDENT))
 ):
     try:
         # Fetch student profile using user email
@@ -71,11 +71,11 @@ def update_self_signed_student_profile(
 @router.get("/profile/")
 def get_self_signed_student_profile(
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.STUDENT))
+    current_user=Depends(require_roles(UserRole.SELF_SIGNED_STUDENT))
 ):
     try:
         # Ensure user is a student (additional check for safety)
-        if current_user.role != "student":
+        if current_user.role != "self_signed_student":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only students can view this profile."

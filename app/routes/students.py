@@ -380,6 +380,7 @@ def get_students(
     roll_no: int | None = Query(None, description="Filter by roll number"),
     name: str | None = Query(None, description="Filter by student name"),
     class_name: str | None = Query(None, description="Filter by class name"),
+    section_name: str | None = Query(None, description="Filter by section name")
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -495,6 +496,8 @@ def get_students(
         )
     if class_name:
         base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
+    if section_name:
+        base_query = base_query.filter(Section.name.ilike(f"%{section_name}%"))
 
     # --- Count & Pagination ---
     total_count = base_query.count()

@@ -14,6 +14,8 @@ class UserRole(str,Enum):
     TEACHER = "teacher"
     STUDENT  = "student" 
     STAFF = "staff"
+    SELF_SIGNED_STUDENT = "self_signed_student"
+
     
 # Base schema for user-related actions
 class UserBase(BaseModel):

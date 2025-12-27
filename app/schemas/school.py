@@ -247,6 +247,7 @@ class ExamUpdateRequest(BaseModel):
 
 class ExamListResponse(BaseModel):
     id: str
+    is_published: bool
     exam_type: ExamTypeEnum
     class_id: int
     standard: str

@@ -2748,6 +2748,7 @@ def get_exam_detail(
     # ✅ Build response
     return ExamDetailResponse(
         id=exam.id,
+        is_published=exam.is_published,
         exam_type=exam.exam_type,
         school_id=exam.school_id,
         class_id=exam.class_id,
