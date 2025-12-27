@@ -711,7 +711,7 @@ def get_subjects_for_class(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    if current_user.role == UserRole.STUDENT:
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
         student = db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == current_user.id).first()
 
         if not student:
@@ -789,7 +789,7 @@ def get_chapters_by_subject(
     """
 
     # Role check
-    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT]:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT,UserRole.SELF_SIGNED_STUDENT]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Check subject exists
@@ -965,7 +965,7 @@ def get_chapter_details(
     current_user = Depends(get_current_user)  # allow all roles
 ):
     # ✅ Role check: only allow Admin, School, Teacher, Student
-    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT]:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT,UserRole.SELF_SIGNED_STUDENT]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view this chapter."
@@ -1155,14 +1155,14 @@ def create_exam(
 @router.get("/exams/")
 def get_exams(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
 ):
 
     # Base query
     exams_query = db.query(AdminExam)
 
     # If user is a student → filter exams by student's selected class
-    if current_user.role == UserRole.STUDENT:
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
         student = db.query(SelfSignedStudent).filter(
             SelfSignedStudent.user_id == current_user.id
         ).first()
@@ -1227,7 +1227,7 @@ def update_exam(
     exam_id: str,
     payload: AdminExamUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT))
 ):
 
     # 1️⃣ Fetch the exam
@@ -1341,7 +1341,7 @@ async def add_questions(
 def get_exam_questions(
     exam_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
 ):
     # Check if exam exists
     exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
@@ -1389,7 +1389,7 @@ def get_exam_questions(
 def get_exam_details(
     exam_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
 ):
     # 1️⃣ Check if exam exists
     exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
@@ -1434,7 +1434,7 @@ def submit_admin_exam(
     current_user: User = Depends(get_current_user)
 ):
     # 1️⃣ Role check
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
         raise HTTPException(
             status_code=403,
             detail="Only students can submit admin exams"
@@ -1574,7 +1574,7 @@ def create_question_set(
 @router.get("/set/")
 def list_question_sets(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
 ):
 
     query = (
@@ -1591,7 +1591,7 @@ def list_question_sets(
     )
 
     # ------------------------ ROLE BASED FILTER ------------------------
-    if current_user.role == UserRole.STUDENT:
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
         student = db.query(SelfSignedStudent).filter(
             SelfSignedStudent.user_id == current_user.id
         ).first()
@@ -1631,7 +1631,7 @@ def list_question_sets(
 def get_question_set_details(
     set_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT))
 ):
     # Fetch the set
     question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
@@ -1648,13 +1648,44 @@ def get_question_set_details(
         "created_at": question_set.created_at,
         "updated_at": question_set.updated_at
     }
+@router.delete("/set/{set_id}/")
+def delete_question_set(
+    set_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    # 1️⃣ Fetch question set
+    question_set = db.query(QuestionSet).filter(
+        QuestionSet.id == set_id
+    ).first()
+
+    if not question_set:
+        raise HTTPException(
+            status_code=404,
+            detail="Question set not found"
+        )
+
+    # 2️⃣ Delete related questions first (important)
+    db.query(QuestionSetBank).filter(
+        QuestionSetBank.question_set_id == set_id
+    ).delete(synchronize_session=False)
+
+    # 3️⃣ Delete question set
+    db.delete(question_set)
+    db.commit()
+
+    return {
+        "message": "Question set deleted successfully",
+        "set_id": set_id
+    }
+
 
 @router.post("/set/{set_id}/questions")
 def add_questions_to_set(
     set_id: int,
     payload: BulkQuestionCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN,UserRole.STUDENT))
+    current_user=Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT))
 ):
 
     # Check if Set exists
@@ -1686,31 +1717,55 @@ def add_questions_to_set(
 @router.get("/set/{set_id}/questions")
 def get_questions_by_set(
     set_id: int,
+    subject_name: Optional[str] = None,
+    year: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN,UserRole.STUDENT))
+    current_user=Depends(
+        require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT)
+    )
 ):
-    # Check if the set exists
-    question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
+    # 1️⃣ Check if question set exists
+    question_set = db.query(QuestionSet).filter(
+        QuestionSet.id == set_id
+    ).first()
+
     if not question_set:
         raise HTTPException(status_code=404, detail="Question set not found")
 
-    # Fetch questions
-    questions = db.query(QuestionSetBank).filter(QuestionSetBank.question_set_id == set_id).all()
+    # 2️⃣ Base query
+    query = (
+        db.query(QuestionSetBank)
+        .join(SchoolClassSubject)
+        .options(joinedload(QuestionSetBank.school_class_subject))
+        .filter(QuestionSetBank.question_set_id == set_id)
+    )
 
-    # Format response as list of dicts
-    response = []
-    for q in questions:
-        response.append({
+    # 3️⃣ Apply filters
+    if subject_name:
+        query = query.filter(
+            SchoolClassSubject.subject.ilike(f"%{subject_name}%")
+        )
+
+    if year:
+        query = query.filter(QuestionSetBank.year == year)
+
+    questions = query.all()
+
+    # 4️⃣ Response formatting
+    response = [
+        {
             "id": q.id,
-            "school_class_subject_id": q.subject,  # FK column
-            "subject": q.school_class_subject.subject if q.school_class_subject else "",
-            "class_name": q.school_class_subject.class_name if q.school_class_subject else None,
+            "school_class_subject_id": q.subject,
+            "subject": q.school_class_subject.subject,
+            "class_name": q.school_class_subject.class_name,
             "year": q.year,
             "probability_ratio": q.probability_ratio,
             "no_of_teacher_verified": q.no_of_teacher_verified,
             "question": q.question,
             "created_at": q.created_at
-        })
+        }
+        for q in questions
+    ]
 
     return response
 @router.put("/set/question/{question_id}/")
@@ -1850,7 +1905,7 @@ def student_purchase_plan(
     current_user: User = Depends(get_current_user)
 ):
     # 🔐 Student only
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
         raise HTTPException(
             status_code=403,
             detail="Only students can purchase plans"
@@ -1923,4 +1978,132 @@ def student_purchase_plan(
         "status": "pending"
     }
 
+@router.get("/admin/students/")
+def admin_get_all_students(
+    class_name: Optional[str] = None,
+    school_name: Optional[str] = None,
+    district: Optional[str] = None,
+    status: Optional[StudentStatus] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔐 Admin only
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can view student list"
+        )
 
+    query = db.query(SelfSignedStudent)
+
+    # 🔎 Apply filters dynamically
+    if class_name:
+        query = query.filter(SelfSignedStudent.select_class == class_name)
+
+    if school_name:
+        query = query.filter(
+            SelfSignedStudent.school_name.ilike(f"%{school_name}%")
+        )
+
+    if district:
+        query = query.filter(
+            SelfSignedStudent.district.ilike(f"%{district}%")
+        )
+
+    if status:
+        query = query.filter(SelfSignedStudent.status == status)
+
+    students = query.order_by(SelfSignedStudent.created_at.desc()).all()
+
+    return [
+        {
+            "id": student.id,
+            "full_name": f"{student.first_name} {student.last_name}",
+            "select_class": student.select_class,
+            "school_name": student.school_name,
+            "school_location": student.school_location,
+            "status": student.status,
+            "created_at": student.created_at
+        }
+        for student in students
+    ]
+@router.get("/admin/payments/analytics/")
+def admin_payment_analytics(
+    school_name: Optional[str] = None,
+    district: Optional[str] = None,
+    state: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    group_by: Optional[str] = "school",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔐 Admin only
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(403, "Only admin can view analytics")
+
+    # Base query
+    query = (
+        db.query(
+            func.sum(Payment.amount).label("total_amount")
+        )
+        .join(SelfSignedStudent, Payment.student_id == SelfSignedStudent.id)
+        .filter(Payment.payment_status == PaymentStatus.SUCCESS)
+    )
+
+    # 📅 Date filter
+    if start_date:
+        query = query.filter(Payment.created_at >= start_date)
+
+    if end_date:
+        query = query.filter(Payment.created_at <= end_date)
+
+    # 🏫 School filter
+    if school_name:
+        query = query.filter(
+            SelfSignedStudent.school_name.ilike(f"%{school_name}%")
+        )
+
+    # 🌍 District filter
+    if district:
+        query = query.filter(
+            SelfSignedStudent.district.ilike(f"%{district}%")
+        )
+
+    # 🗺 State filter
+    if state:
+        query = query.filter(
+            SelfSignedStudent.state.ilike(f"%{state}%")
+        )
+
+    # 📊 Grouping logic
+    if group_by == "school":
+        query = query.add_columns(
+            SelfSignedStudent.school_name.label("group_value")
+        ).group_by(SelfSignedStudent.school_name)
+
+    elif group_by == "district":
+        query = query.add_columns(
+            SelfSignedStudent.district.label("group_value")
+        ).group_by(SelfSignedStudent.district)
+
+    elif group_by == "state":
+        query = query.add_columns(
+            SelfSignedStudent.state.label("group_value")
+        ).group_by(SelfSignedStudent.state)
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="group_by must be one of: school, district, state"
+        )
+
+    results = query.all()
+
+    return [
+        {
+            "group_value": row.group_value,
+            "total_amount": row.total_amount or 0
+        }
+        for row in results
+    ]

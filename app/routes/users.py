@@ -27,7 +27,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
         if is_school_signup:
             role = UserRole.SCHOOL
         elif is_student_signup:
-            role = UserRole.STUDENT
+            role = UserRole.SELF_SIGNED_STUDENT
         else:
             role = UserRole.ADMIN  # First user case or fallback
 
@@ -54,7 +54,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
             db.add(school_profile)
 
         # Create Student Profile (if student)
-        if role == UserRole.STUDENT:
+        if role == UserRole.SELF_SIGNED_STUDENT :
             student_profile = SelfSignedStudent(
                 user_id=user.id,
                 first_name=user_data.first_name,
