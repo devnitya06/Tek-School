@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date,DateTime,Enum
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date,DateTime,Enum,Float,UniqueConstraint,JSON
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
@@ -8,6 +8,12 @@ class StudentStatus(PyEnum):
     TRIAL = "TRIAL"
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
+
+class InstallmentType(PyEnum):
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    HALF_YEARLY = "half_yearly"
+    YEARLY = "yearly"
 class Student(Base):
     __tablename__ = "students"
 
@@ -48,8 +54,10 @@ class Student(Base):
     chapter_progress = relationship("StudentChapterProgress", back_populates="student")
     leave_requests = relationship("LeaveRequest", back_populates="student", cascade="all, delete")
     student_assignments = relationship("AssignmentStudent",back_populates="student",cascade="all, delete-orphan")
-    # Each student’s task completion statuses
+    # Each student's task completion statuses
     student_task_statuses = relationship("StudentTaskStatus",back_populates="student",cascade="all, delete-orphan")
+    # Student payment relationship (one student can have multiple payment records for different classes)
+    payments = relationship("StudentPayment", back_populates="student", cascade="all, delete-orphan")
 
 
 
@@ -137,4 +145,66 @@ class SelfSignedStudent(Base):
 
     user = relationship("User", back_populates="self_signed_student_profile")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
-    subscriptions = relationship("StudentSubscription",back_populates="student",cascade="all, delete-orphan")
+    subscriptions = relationship("StudentSubscription", back_populates="student")
+
+
+class StudentPayment(Base):
+    __tablename__ = "student_payments"
+    __table_args__ = (
+        UniqueConstraint('student_id', 'class_id', name='unique_student_class_payment'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    
+    # Course Fee
+    course_fee = Column(Float, nullable=False, default=0.0)
+    course_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
+    
+    # Transport Fee
+    transport_fee = Column(Float, nullable=False, default=0.0)
+    transport_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
+    
+    # Tek School Fee
+    tek_school_fee = Column(Float, nullable=False, default=0.0)
+    tek_school_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
+    
+    # Payment Clear Amounts (how much has been paid/cleared)
+    course_fee_paid = Column(Float, nullable=False, default=0.0)  # Amount paid for course fee
+    transport_fee_paid = Column(Float, nullable=False, default=0.0)  # Amount paid for transport fee
+    tek_school_fee_paid = Column(Float, nullable=False, default=0.0)  # Amount paid for tek school fee
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    student = relationship("Student", back_populates="payments")
+    classes = relationship("Class", back_populates="student_payments")
+    transactions = relationship("StudentPaymentTransaction", back_populates="payment", cascade="all, delete-orphan")
+
+
+class StudentPaymentTransaction(Base):
+    __tablename__ = "student_payment_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_payment_id = Column(Integer, ForeignKey("student_payments.id"), nullable=False)
+    
+    # Transaction details
+    amount = Column(Float, nullable=False)  # Total amount paid in this transaction
+    payment_type = Column(String(50), nullable=False)  # "course_fee", "transport_fee", or "tek_school_fee" (primary type)
+    payment_breakdown = Column(JSON, nullable=True)  # Dynamic breakdown: {"course_fee": 5.0, "transport_fee": 2.0, "tek_school_fee": 1.0}
+    transaction_date = Column(DateTime, nullable=False, default=func.now())
+    description = Column(String(500), nullable=True)  # Description/notes
+    files = Column(JSON, nullable=True)  # Array of file URLs (payslips, receipts, etc.)
+    
+    # Payment method (optional)
+    payment_method = Column(String(50), nullable=True)  # "cash", "bank_transfer", "cheque", etc.
+    transaction_reference = Column(String(100), nullable=True)  # Transaction ID, cheque number, etc.
+    
+    created_at = Column(DateTime, default=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who recorded this payment
+    
+    # Relationships
+    payment = relationship("StudentPayment", back_populates="transactions")
+    created_by_user = relationship("User")

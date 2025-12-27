@@ -154,13 +154,22 @@ def get_all_teachers_for_school(
     section_name: str | None = Query(None, description="Filter by section name"),
     subject_name: str | None = Query(None, description="Filter by subject name"),
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can access this resource.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only schools and staff can access this resource.")
 
-    # Fetch school
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     # --- Subqueries ---
     attendance_subq = (
@@ -310,12 +319,22 @@ def get_teacher_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can access this resource.")
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only schools and staff can access this resource.")
 
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     teacher = db.query(Teacher).filter(
         Teacher.id == teacher_id,
@@ -371,21 +390,29 @@ def update_teacher_profile(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Partially update teacher profile (school user only).
+    Partially update teacher profile (school and staff users).
     Fields not provided in request remain unchanged.
     """
 
-    # Only school can update
-    if current_user.role != UserRole.SCHOOL:
+    # ✅ Allow both school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only schools can update teacher profiles."
+            detail="Only school and staff users can update teacher profiles."
         )
 
-    # Fetch school
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     # Fetch teacher under this school
     teacher = db.query(Teacher).filter(
@@ -404,7 +431,7 @@ def update_teacher_profile(
             try:
                 teacher.profile_image = upload_base64_to_s3(
                     data.profile_image,
-                    f"schools/{current_user.id}/teachers/profile"
+                    f"schools/{school.id}/teachers/profile"
                 )
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")

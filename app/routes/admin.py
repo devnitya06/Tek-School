@@ -7,6 +7,7 @@ from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,Sc
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus,SelfSignedStudent
+from app.models.staff import Staff
 from app.schemas.admin import (
     ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate,AdminExamCreate,
     AdminExamUpdate,ExamQuestionPayloadList,QuestionSetCreate,BulkQuestionCreate,QuestionUpdate,
@@ -1000,19 +1001,20 @@ def get_chapter_details(
 @router.get("/classes-with-subjects/")
 def get_classes_with_subject_names(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL)),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
 ):
-    # Ensure only school role can access
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school accounts can access this resource."
-        )
-
-    # Get current school info
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
+    # ✅ Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     try:
         # Filter classes for this school's board and medium
@@ -1065,14 +1067,21 @@ def get_classes_with_subject_names(
 @router.get("/available-credit/")
 def get_available_credit(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
 ):
-    # Only school users allowed
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(status_code=403, detail="Only schools can access this resource.")
+    # ✅ Get school_id based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school_id = current_user.school_profile.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+    else:
+        raise HTTPException(status_code=403, detail="Not authorized to access this resource.")
 
     # Fetch school credit
-    credit = db.query(CreditMaster).filter(CreditMaster.school_id == current_user.school_profile.id).first()
+    credit = db.query(CreditMaster).filter(CreditMaster.school_id == school_id).first()
     if not credit:
         raise HTTPException(status_code=404, detail="Credit account not found for this school.")
 
@@ -1080,7 +1089,7 @@ def get_available_credit(
     credit.calculate_available_credit()
 
     return {
-        "school_id": current_user.school_profile.id,
+        "school_id": school_id,
         "available_credit": credit.available_credit,
         "self_added_credit": credit.self_added_credit or 0,
         "earned_credit": credit.earned_credit or 0,
@@ -1227,7 +1236,7 @@ def update_exam(
     exam_id: str,
     payload: AdminExamUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT,UserRole.STAFF))
 ):
 
     # 1️⃣ Fetch the exam
@@ -1631,7 +1640,7 @@ def list_question_sets(
 def get_question_set_details(
     set_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT,UserRole.STAFF))
 ):
     # Fetch the set
     question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()

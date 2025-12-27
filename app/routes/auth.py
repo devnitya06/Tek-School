@@ -60,7 +60,8 @@ async def login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "role": user.role
+        "role": user.role,
+        "id": user.id
     }
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -122,7 +123,8 @@ async def refresh_token(
             "refresh_token": new_refresh_token,
             "token_type": "bearer",
             "role": user.role,
-            "detail": "Token refreshed successfully"
+            "detail": "Token refreshed successfully",
+            "id": user.id
         }
         
     except JWTError:

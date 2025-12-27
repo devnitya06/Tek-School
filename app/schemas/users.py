@@ -79,6 +79,7 @@ class TokenResponse(BaseModel):
     token_type: str
     role: str
     detail: str
+    id: int
 
 # OTP schema for OTP-related actions
 class OtpCreate(BaseModel):

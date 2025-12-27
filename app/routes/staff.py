@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 import re
+from datetime import date
 
 from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
@@ -14,7 +16,6 @@ from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
 from app.utils.permission import get_staff_permissions, require_roles
 from app.services.pagination import PaginationParams
-from sqlalchemy import func
 from typing import Optional
 
 router = APIRouter()
@@ -224,6 +225,9 @@ def get_staff_profile(
     if staff.annual_salary:
         monthly_salary = float(staff.annual_salary) / 12
 
+    # Get staff permissions
+    permissions = get_staff_permissions(staff.id, db)
+
     return {
         "id": staff.id,
         "school_id": staff.school_id,
@@ -238,6 +242,7 @@ def get_staff_profile(
         "emergency_leave": staff.emergency_leave or 0,
         "casual_leave": staff.casual_leave or 0,
         "is_active": staff.is_active,
+        "permissions": permissions,
         "created_at": staff.created_at.isoformat() if staff.created_at else None,
         "updated_at": staff.updated_at.isoformat() if staff.updated_at else None,
     }
@@ -497,9 +502,11 @@ def get_activity_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
     pagination: PaginationParams = Depends(),
-    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID (integer) or profile ID (e.g., STF-123, TCH-456)"),
     action_type: Optional[str] = Query(None, description="Filter by action type (create, update, delete, approve, decline)"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type (student, teacher, leave_request, class, transport)"),
+    from_date: Optional[date] = Query(None, description="Filter from this start date"),
+    to_date: Optional[date] = Query(None, description="Filter until this end date"),
 ):
     """
     Get activity logs for all users.
@@ -521,13 +528,58 @@ def get_activity_logs(
     # Build query
     query = db.query(ActivityLog).filter(ActivityLog.school_id == school_id)
     
-    # Apply filters
+    # ✅ Apply user_id filter (handles both integer user_id and profile IDs like STF-123, TCH-456)
     if user_id:
-        query = query.filter(ActivityLog.user_id == user_id)
+        try:
+            # Try to parse as integer (user_id)
+            user_id_int = int(user_id)
+            query = query.filter(ActivityLog.user_id == user_id_int)
+        except ValueError:
+            # If not an integer, treat as profile ID and look up the user_id
+            if user_id.startswith("STF-"):
+                staff = db.query(Staff).filter(Staff.id == user_id).first()
+                if staff:
+                    query = query.filter(ActivityLog.user_id == staff.user_id)
+                else:
+                    # Staff not found, return empty result
+                    query = query.filter(ActivityLog.user_id == -1)
+            elif user_id.startswith("TCH-"):
+                from app.models.teachers import Teacher
+                teacher = db.query(Teacher).filter(Teacher.id == user_id).first()
+                if teacher:
+                    query = query.filter(ActivityLog.user_id == teacher.user_id)
+                else:
+                    query = query.filter(ActivityLog.user_id == -1)
+            else:
+                # Try to find student by ID (students have integer IDs)
+                try:
+                    student_id = int(user_id)
+                    from app.models.students import Student
+                    student = db.query(Student).filter(Student.id == student_id).first()
+                    if student:
+                        query = query.filter(ActivityLog.user_id == student.user_id)
+                    else:
+                        query = query.filter(ActivityLog.user_id == -1)
+                except ValueError:
+                    # Invalid format, return empty result
+                    query = query.filter(ActivityLog.user_id == -1)
     if action_type:
         query = query.filter(ActivityLog.action_type == action_type)
     if resource_type:
         query = query.filter(ActivityLog.resource_type == resource_type)
+    
+    # ✅ Date filtering
+    if from_date and to_date:
+        query = query.filter(
+            and_(
+                func.date(ActivityLog.created_at) >= from_date,
+                func.date(ActivityLog.created_at) <= to_date,
+            )
+        )
+    elif from_date:
+        query = query.filter(func.date(ActivityLog.created_at) >= from_date)
+    elif to_date:
+        query = query.filter(func.date(ActivityLog.created_at) <= to_date)
     
     # Get total count
     total_count = query.count()
@@ -568,11 +620,14 @@ def get_staff_list(
     current_user: User = Depends(require_roles(UserRole.SCHOOL)),
     pagination: PaginationParams = Depends(),
     staff_name: Optional[str] = Query(None, description="Filter by staff name"),
+    permission: Optional[str] = Query(None, description="Filter by permission type(s). Can be comma-separated for multiple (e.g., 'teacher,students,exams')"),
+    from_date: Optional[date] = Query(None, description="Filter from this start date (date of joining)"),
+    to_date: Optional[date] = Query(None, description="Filter until this end date (date of joining)"),
 ):
     """
     Get list of all staff members under the school.
     Only school users can access this endpoint.
-    Returns: staff name, permissions, roll number (staff.id), date of joining, and activity logs count.
+    Returns: staff name, permissions, email, phone, date of joining, and activity logs count.
     """
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -582,12 +637,48 @@ def get_staff_list(
     # Build base query for staff
     query = db.query(Staff).filter(Staff.school_id == school.id)
     
-    # Apply name filter
+    # ✅ Apply name filter (searches in concatenated full name)
     if staff_name:
         query = query.filter(
-            (Staff.first_name.ilike(f"%{staff_name}%")) |
-            (Staff.last_name.ilike(f"%{staff_name}%"))
+            func.concat(Staff.first_name, " ", Staff.last_name).ilike(f"%{staff_name.strip()}%")
         )
+    
+    # ✅ Apply date filters (date of joining)
+    if from_date and to_date:
+        query = query.filter(
+            and_(
+                func.date(Staff.created_at) >= from_date,
+                func.date(Staff.created_at) <= to_date,
+            )
+        )
+    elif from_date:
+        query = query.filter(func.date(Staff.created_at) >= from_date)
+    elif to_date:
+        query = query.filter(func.date(Staff.created_at) <= to_date)
+    
+    # ✅ Apply permission filter (supports multiple comma-separated permissions)
+    if permission:
+        permission_list = [p.strip() for p in permission.split(",") if p.strip()]
+        valid_permissions = []
+        
+        for perm_str in permission_list:
+            try:
+                perm_enum = StaffPermissionType(perm_str)
+                valid_permissions.append(perm_enum)
+            except ValueError:
+                continue  # Skip invalid permissions
+        
+        if valid_permissions:
+            # Join with staff_permissions table to filter by any of the specified permissions
+            query = query.join(
+                staff_permissions,
+                Staff.id == staff_permissions.c.staff_id
+            ).filter(
+                staff_permissions.c.permission.in_(valid_permissions)
+            ).distinct()
+        else:
+            # No valid permissions, return empty result
+            query = query.filter(Staff.id == None)
     
     # Get total count before pagination
     total_count = query.count()
@@ -615,7 +706,8 @@ def get_staff_list(
         result.append({
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
-            "roll_number": staff.id,  # Using staff.id as roll number
+            "email": staff.email,
+            "phone": staff.phone,
             "permissions": permissions,
             "date_of_joining": staff.created_at.isoformat() if staff.created_at else None,
             "activity_logs_count": activity_logs_count
