@@ -4197,12 +4197,13 @@ def get_bank_accounts(
 ):
     """
     Get all bank accounts for the school.
+    Allows SCHOOL, STAFF, and STUDENT users to view bank accounts.
     """
-    # ✅ Allow only SCHOOL and STAFF users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+    # ✅ Allow SCHOOL, STAFF, and STUDENT users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF, UserRole.STUDENT]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school and staff users can view bank accounts"
+            detail="Only school, staff, and student users can view bank accounts"
         )
 
     # ✅ Get school based on user role
@@ -4210,6 +4211,7 @@ def get_bank_accounts(
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found")
+        school_id = school.id
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
@@ -4217,10 +4219,17 @@ def get_bank_accounts(
         school = db.query(School).filter(School.id == staff.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this staff member")
+        school_id = school.id
+    else:  # STUDENT
+        from app.models.students import Student
+        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        school_id = student.school_id
 
     # ✅ Get all bank accounts for this school
     bank_accounts = db.query(BankAccount).filter(
-        BankAccount.school_id == school.id
+        BankAccount.school_id == school_id
     ).order_by(BankAccount.is_primary.desc(), BankAccount.created_at.desc()).all()
 
     return bank_accounts
@@ -4234,12 +4243,13 @@ def get_bank_account(
 ):
     """
     Get a specific bank account by ID.
+    Allows SCHOOL, STAFF, and STUDENT users to view bank accounts.
     """
-    # ✅ Allow only SCHOOL and STAFF users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+    # ✅ Allow SCHOOL, STAFF, and STUDENT users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF, UserRole.STUDENT]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school and staff users can view bank accounts"
+            detail="Only school, staff, and student users can view bank accounts"
         )
 
     # ✅ Get school based on user role
@@ -4247,6 +4257,7 @@ def get_bank_account(
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found")
+        school_id = school.id
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
@@ -4254,11 +4265,18 @@ def get_bank_account(
         school = db.query(School).filter(School.id == staff.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this staff member")
+        school_id = school.id
+    else:  # STUDENT
+        from app.models.students import Student
+        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        school_id = student.school_id
 
     # ✅ Get the bank account
     bank_account = db.query(BankAccount).filter(
         BankAccount.id == account_id,
-        BankAccount.school_id == school.id
+        BankAccount.school_id == school_id
     ).first()
 
     if not bank_account:

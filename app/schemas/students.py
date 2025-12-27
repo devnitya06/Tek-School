@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import date, time
 from enum import Enum
@@ -31,6 +31,8 @@ class StudentPaymentUpdate(BaseModel):
     # Payment documents and description (optional)
     files: Optional[List[str]] = None  # List of base64 encoded files (payslips, receipts, etc.)
     description: Optional[str] = None  # Description/notes about the payment
+    # Bank account selection
+    bank_account_id: Optional[int] = Field(None, description="Bank account ID to use for this payment (optional)")
 
 class PaymentTransactionCreate(BaseModel):
     """Schema for creating payment transaction(s).
@@ -42,11 +44,43 @@ class PaymentTransactionCreate(BaseModel):
     transport_fee_amount: Optional[float] = None  # Amount to pay for transport fee
     tek_school_fee_amount: Optional[float] = None  # Amount to pay for tek school fee
     
-    # Common fields for all transactions
+
     description: Optional[str] = None  # Description/notes about the payment
     files: Optional[List[str]] = None  # List of base64 encoded files (payslips, receipts, etc.)
     payment_method: Optional[str] = None  # "cash", "bank_transfer", "cheque", etc.
     transaction_reference: Optional[str] = None  # Transaction ID, cheque number, etc.
+
+class PaymentReminderRequest(BaseModel):
+    """Schema for school to send payment reminder to student"""
+    message: Optional[str] = Field(None, max_length=1000, description="Optional custom message")
+    amount_due: Optional[float] = Field(None, ge=0, description="Optional amount due information")
+    # Fee fields for the payment request
+    course_fee: Optional[float] = Field(None, ge=0, description="Course fee amount for this payment request")
+    course_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Course fee installment type")
+    transport_fee: Optional[float] = Field(None, ge=0, description="Transport fee amount for this payment request")
+    transport_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Transport fee installment type")
+    tek_school_fee: Optional[float] = Field(None, ge=0, description="Tek School fee amount for this payment request")
+    tek_school_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Tek School fee installment type")
+    # Bank account selection
+    bank_account_id: Optional[int] = Field(None, description="Bank account ID to use for this payment (optional)")
+
+class StudentPaymentSubmit(BaseModel):
+    """Schema for student to update payment transaction (pending verification)"""
+    # Optional amounts for each fee type - at least one must be provided
+    course_fee_amount: Optional[float] = Field(None, gt=0, description="Amount to pay for course fee (must be > 0)")
+    transport_fee_amount: Optional[float] = Field(None, gt=0, description="Amount to pay for transport fee (must be > 0)")
+    tek_school_fee_amount: Optional[float] = Field(None, gt=0, description="Amount to pay for tek school fee (must be > 0)")
+    
+    # Common fields
+    description: Optional[str] = Field(None, max_length=500, description="Payment description/notes")
+    files: Optional[List[str]] = Field(None, max_items=10, description="List of base64 encoded files (receipts, payslips, etc.) - max 10 files")
+    payment_method: Optional[str] = Field(None, max_length=50, description="Payment method: cash, bank_transfer, cheque, etc.")
+    transaction_reference: Optional[str] = Field(None, max_length=100, description="Transaction ID, cheque number, etc.")
+
+class PaymentVerificationRequest(BaseModel):
+    """Schema for school to verify (done) or cancel payment request"""
+    status: str = Field(..., pattern="^(done|cancel)$", description="Status must be 'done' (verify and calculate amounts) or 'cancel' (cancel the request)")
+    rejection_reason: Optional[str] = Field(None, max_length=500, description="Required if status is 'cancel'")
 
 class StudentCreateRequest(BaseModel):
     profile_image:Optional[str]=None
@@ -81,6 +115,7 @@ class StudentUpdateRequest(BaseModel):
     pickup_time: Optional[str] = None
     drop_point: Optional[str] = None
     drop_time: Optional[str] = None
+    payment: Optional[StudentPaymentCreate] = None  # Optional payment update
 
 class AddressBase(BaseModel):
     enter_pin: str
