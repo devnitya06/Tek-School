@@ -2667,6 +2667,7 @@ def list_exams(
     exam_list = [
         ExamListResponse(
             id=exam.id,
+            is_published=exam.is_published,
             exam_type=exam.exam_type,
             class_id=exam.class_id,
             standard=exam.class_obj.name if exam.class_obj else "",
