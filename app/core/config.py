@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = None
     
     # CORS
-    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000","http://localhost:3001","http://localhost:3002","*","https://tekschool-school.vercel.app/signin"]
+    BACKEND_CORS_ORIGINS: list = ["*"]
 
     class Config:
         env_file = ".env"
