@@ -16,9 +16,25 @@ router = APIRouter()
 @router.post("/", response_model=SignupResponse)
 def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     try:
-        # Prevent duplicate email
-        if db.query(User).filter(User.email == user_data.email).first():
-            raise HTTPException(status_code=400, detail="Email already registered.")
+        existing_user = db.query(User).filter(User.email == user_data.email).first()
+        if existing_user:
+            verified_otp = (
+                db.query(Otp)
+                .filter(
+                    Otp.user_id == existing_user.id,
+                    Otp.is_verified == True
+                )
+                .first()
+            )
+            if verified_otp:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Email already exists"
+                )
+
+            db.query(Otp).filter(Otp.user_id == existing_user.id).delete()
+            db.delete(existing_user)
+            db.commit()
 
         # Detect signup type
         is_school_signup = all([user_data.name, user_data.location, user_data.phone, user_data.website])
@@ -90,37 +106,55 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     
 @router.post("/verify-otp")
 def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
+
     user = db.query(User).filter(User.email == data.email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User with this email not found")
-    otp_entry = db.query(Otp).filter(Otp.user_id == user.id, Otp.otp == data.otp).first()
+        raise HTTPException(404, "User not found")
+
+    otp_entry = (
+        db.query(Otp)
+        .filter(
+            Otp.user_id == user.id,
+            Otp.otp == data.otp
+        )
+        .first()
+    )
+
     if not otp_entry:
-        raise HTTPException(status_code=400, detail="Invalid OTP for this email")
+        raise HTTPException(400, "Invalid OTP")
+
     if otp_entry.is_verified:
-        raise HTTPException(status_code=400, detail="OTP already verified")
-    current_time = datetime.now(timezone.utc)
-    if otp_entry.expires_at.replace(tzinfo=None) < current_time.replace(tzinfo=None):
+        raise HTTPException(400, "OTP already verified")
+
+    if otp_entry.expires_at.replace(tzinfo=None) < datetime.utcnow():
         db.delete(otp_entry)
         db.commit()
-        raise HTTPException(status_code=400, detail="OTP has expired")
+        raise HTTPException(400, "OTP expired")
+
+    # 🔹 Generate password
     raw_password = generate_password()
     user.hashed_password = get_password_hash(raw_password)
+    user.is_verified = True
     otp_entry.is_verified = True
-    db.add(user)
+
     db.commit()
+
+    # 🔹 Send credentials
     send_dynamic_email(
-            context_key="credential.html",
-            subject="Your Credentials",
-            recipient_email=user.email,
-            context_data={
-                "email": user.email,
-                "password": raw_password,
-            },
-            db=db
-        )
+        context_key="credential.html",
+        subject="Your Credentials",
+        recipient_email=user.email,
+        context_data={
+            "email": user.email,
+            "password": raw_password,
+        },
+        db=db
+    )
+
     return {
-        "detail": "OTP verified successfully. Get your credentials from your email."
+        "detail": "OTP verified successfully. Credentials sent to your email."
     }
+
 
 @router.get("/verify-account")
 def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
