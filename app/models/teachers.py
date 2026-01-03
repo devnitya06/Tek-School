@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -50,6 +50,7 @@ class Teacher(Base):
     created_exams = relationship("Exam", back_populates="teacher")
     leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
     home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
+    payment = relationship("TeacherPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -76,4 +77,33 @@ class TeacherClassSectionSubject(Base):
     section = relationship("Section")
     subject = relationship("Subject")
     class_ = relationship("Class")
+
+
+class TeacherPayment(Base):
+    __tablename__ = "teacher_payments"
+    __table_args__ = (
+        UniqueConstraint('teacher_id', name='unique_teacher_payment'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=False, unique=True)
+    
+    # Basic Salary
+    basic_salary = Column(Float, nullable=False, default=0.0)
+    
+    # Allowances
+    allowance = Column(Float, nullable=False, default=0.0)
+    bonus = Column(Float, nullable=False, default=0.0)
+    other_allowances = Column(Float, nullable=False, default=0.0)
+    
+    # Additional Benefits
+    incentive_plan = Column(Float, nullable=False, default=0.0)
+    health_care_insurance = Column(Float, nullable=False, default=0.0)
+    skill_development = Column(Float, nullable=False, default=0.0)
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    teacher = relationship("Teacher", back_populates="payment")
             

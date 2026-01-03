@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
-from app.models.teachers import Teacher,TeacherClassSectionSubject
+from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherPayment
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
 from app.models.staff import Staff
 from app.schemas.users import UserRole
@@ -104,6 +104,33 @@ def create_teacher(
             for item in data.assignments
         ]
         db.bulk_save_objects(assignments)
+
+        # Create Teacher Payment if payment data is provided
+        if data.payment:
+            teacher_payment = TeacherPayment(
+                teacher_id=teacher.id,
+                basic_salary=data.payment.basic_salary if data.payment.basic_salary is not None else 0.0,
+                allowance=data.payment.allowance if data.payment.allowance is not None else 0.0,
+                bonus=data.payment.bonus if data.payment.bonus is not None else 0.0,
+                other_allowances=data.payment.other_allowances if data.payment.other_allowances is not None else 0.0,
+                incentive_plan=data.payment.incentive_plan if data.payment.incentive_plan is not None else 0.0,
+                health_care_insurance=data.payment.health_care_insurance if data.payment.health_care_insurance is not None else 0.0,
+                skill_development=data.payment.skill_development if data.payment.skill_development is not None else 0.0
+            )
+            db.add(teacher_payment)
+        else:
+            # Create default payment structure with all zeros if not provided
+            teacher_payment = TeacherPayment(
+                teacher_id=teacher.id,
+                basic_salary=0.0,
+                allowance=0.0,
+                bonus=0.0,
+                other_allowances=0.0,
+                incentive_plan=0.0,
+                health_care_insurance=0.0,
+                skill_development=0.0
+            )
+            db.add(teacher_payment)
 
         db.commit()
         db.refresh(user)
