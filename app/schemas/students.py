@@ -58,6 +58,12 @@ class PaymentReminderRequest(BaseModel):
     # Bank account selection
     bank_account_id: Optional[int] = Field(None, description="Bank account ID to use for this payment (optional)")
 
+class BulkPaymentReminderRequest(BaseModel):
+    """Schema for school to send payment reminders to multiple students"""
+    student_ids: List[int] = Field(..., min_items=1, description="List of student IDs to send reminders to")
+    message: Optional[str] = Field(None, max_length=1000, description="Optional custom message for all reminders")
+    bank_account_id: Optional[int] = Field(None, description="Bank account ID to use for all reminders (optional)")
+
 class StudentPaymentSubmit(BaseModel):
     """Schema for student to update payment transaction (pending verification)"""
     # Optional amounts for each fee type - at least one must be provided
