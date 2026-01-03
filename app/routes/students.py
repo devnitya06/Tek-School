@@ -4,7 +4,7 @@ from app.models.students import Student,Parent,PresentAddress,PermanentAddress,S
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount
 from app.models.staff import Staff
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentCreate,StudentPaymentUpdate,PaymentTransactionCreate,PaymentReminderRequest,StudentPaymentSubmit,PaymentVerificationRequest
+from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentCreate,StudentPaymentUpdate,PaymentTransactionCreate,PaymentReminderRequest,BulkPaymentReminderRequest,StudentPaymentSubmit,PaymentVerificationRequest
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func, and_, or_
@@ -21,7 +21,9 @@ from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
-from app.utils.payment_calculations import calculate_installment_pending_amount
+from app.utils.payment_calculations import calculate_installment_pending_amount, calculate_single_fee_installment_pending
+import asyncio
+from starlette.concurrency import run_in_threadpool
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -829,12 +831,26 @@ def get_student(
     if student_payment:
         transactions = (
             db.query(StudentPaymentTransaction)
+            .options(joinedload(StudentPaymentTransaction.bank_account))
             .filter(StudentPaymentTransaction.student_payment_id == student_payment.id)
             .order_by(StudentPaymentTransaction.transaction_date.desc())
             .all()
         )
         
         for txn in transactions:
+            bank_account_data = None
+            if txn.bank_account:
+                bank_account_data = {
+                    "id": txn.bank_account.id,
+                    "account_holder_name": txn.bank_account.account_holder_name,
+                    "account_number": txn.bank_account.account_number,
+                    "ifsc_code": txn.bank_account.ifsc_code,
+                    "bank_name": txn.bank_account.bank_name,
+                    "branch_name": txn.bank_account.branch_name,
+                    "account_type": txn.bank_account.account_type,
+                    "is_primary": txn.bank_account.is_primary
+                }
+            
             payment_history.append({
                 "transaction_id": txn.id,
                 "amount": float(txn.amount),
@@ -846,6 +862,7 @@ def get_student(
                 "payment_method": txn.payment_method,
                 "transaction_reference": txn.transaction_reference,
                 "bank_account_id": txn.bank_account_id if txn.bank_account_id else None,
+                "bank_account": bank_account_data,
                 "status": txn.status if txn.status else 'verified',
                 "verified_at": txn.verified_at.isoformat() if txn.verified_at else None,
                 "rejection_reason": txn.rejection_reason if txn.rejection_reason else None,
@@ -2723,6 +2740,362 @@ def send_payment_reminder(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send payment reminder: {str(e)}")
+
+
+@router.post(
+    "/students/send-bulk-reminders/",
+    summary="Send payment reminders to multiple students",
+    description="Send payment reminders to multiple students at once. For each student, the system automatically calculates the pending amount based on their installment type and creates a payment request transaction."
+)
+async def send_bulk_payment_reminders(
+    data: BulkPaymentReminderRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
+):
+    """
+    School sends payment reminders to multiple students asynchronously.
+    For each student, automatically calculates pending amount based on installment type
+    and creates a payment request transaction with 'school_request' status.
+    Processes students concurrently for better performance.
+    """
+    
+    async def process_single_student(
+        student_id: int,
+        student_map: dict,
+        payment_map: dict,
+        school_id: int,
+        message: str | None,
+        bank_account_id: int | None,
+        current_user_id: int
+    ) -> dict:
+        """Process a single student's payment reminder asynchronously."""
+        student_result = {
+            "student_id": student_id,
+            "success": False,
+            "message": "",
+            "transaction_id": None,
+            "total_due": None,
+            "installment_pending_amount": None,
+            "email_sent": None
+        }
+        
+        try:
+            # Get student
+            student = student_map.get(student_id)
+            if not student:
+                student_result["message"] = "Student not found or not part of your school."
+                return student_result
+
+            # Get student's current class
+            if not student.class_id:
+                student_result["message"] = "Student is not enrolled in any class."
+                return student_result
+
+            class_obj = student.classes
+            if not class_obj:
+                student_result["message"] = "Class not found for student."
+                return student_result
+
+            # Get payment record for student's current class
+            payment = payment_map.get((student.id, student.class_id))
+            if not payment:
+                student_result["message"] = f"Payment record not found for student in class {student.class_id}."
+                return student_result
+
+            # Calculate installment_pending_amount (total)
+            installment_type_value = payment.installment_type if payment.installment_type else InstallmentType.YEARLY.value
+            installment_pending_amount = calculate_installment_pending_amount(
+                course_fee=payment.course_fee,
+                course_fee_paid=payment.course_fee_paid,
+                transport_fee=payment.transport_fee,
+                transport_fee_paid=payment.transport_fee_paid,
+                tek_school_fee=payment.tek_school_fee,
+                tek_school_fee_paid=payment.tek_school_fee_paid,
+                installment_type=installment_type_value,
+                class_start_date=class_obj.class_start_date if class_obj else None,
+                class_end_date=class_obj.class_end_date if class_obj else None
+            )
+
+            # Check if there's any amount due
+            if installment_pending_amount <= 0:
+                student_result["message"] = "No payment due. All fees have been paid."
+                return student_result
+
+            # Calculate installment-based pending amounts for each fee type
+            course_fee_pending = calculate_single_fee_installment_pending(
+                fee_amount=payment.course_fee,
+                fee_paid=payment.course_fee_paid,
+                installment_type=installment_type_value,
+                class_start_date=class_obj.class_start_date if class_obj else None,
+                class_end_date=class_obj.class_end_date if class_obj else None
+            )
+            
+            transport_fee_pending = calculate_single_fee_installment_pending(
+                fee_amount=payment.transport_fee,
+                fee_paid=payment.transport_fee_paid,
+                installment_type=installment_type_value,
+                class_start_date=class_obj.class_start_date if class_obj else None,
+                class_end_date=class_obj.class_end_date if class_obj else None
+            )
+            
+            tek_school_fee_pending = calculate_single_fee_installment_pending(
+                fee_amount=payment.tek_school_fee,
+                fee_paid=payment.tek_school_fee_paid,
+                installment_type=installment_type_value,
+                class_start_date=class_obj.class_start_date if class_obj else None,
+                class_end_date=class_obj.class_end_date if class_obj else None
+            )
+            
+            # Total due is the installment_pending_amount
+            total_due = installment_pending_amount
+
+            # Create payment breakdown based on installment-based pending amounts
+            payment_breakdown = {}
+            if course_fee_pending > 0:
+                payment_breakdown["course_fee"] = round(course_fee_pending, 2)
+            if transport_fee_pending > 0:
+                payment_breakdown["transport_fee"] = round(transport_fee_pending, 2)
+            if tek_school_fee_pending > 0:
+                payment_breakdown["tek_school_fee"] = round(tek_school_fee_pending, 2)
+
+            # Determine primary payment type
+            primary_payment_type = "course_fee"
+            if transport_fee_pending > 0:
+                primary_payment_type = "transport_fee"
+            if tek_school_fee_pending > 0:
+                primary_payment_type = "tek_school_fee"
+
+            # Database operations in thread pool
+            def create_or_update_transaction():
+                # Create a new session for this transaction
+                from app.db.session import SessionLocal
+                local_db = SessionLocal()
+                try:
+                    # Check if there's already a pending school_request for this payment
+                    existing_request = local_db.query(StudentPaymentTransaction).filter(
+                        StudentPaymentTransaction.student_payment_id == payment.id,
+                        StudentPaymentTransaction.status == PaymentTransactionStatus.SCHOOL_REQUEST.value
+                    ).first()
+
+                    if existing_request:
+                        # Update existing request
+                        existing_request.transaction_date = datetime.utcnow()
+                        existing_request.description = message if message else existing_request.description
+                        existing_request.amount = round(total_due, 2)
+                        existing_request.payment_type = primary_payment_type
+                        existing_request.payment_breakdown = payment_breakdown
+                        existing_request.bank_account_id = bank_account_id if bank_account_id else existing_request.bank_account_id
+                        transaction = existing_request
+                        local_db.commit()
+                        local_db.refresh(transaction)
+                    else:
+                        # Create new payment request
+                        transaction = StudentPaymentTransaction(
+                            student_payment_id=payment.id,
+                            amount=round(total_due, 2),
+                            payment_type=primary_payment_type,
+                            payment_breakdown=payment_breakdown,
+                            transaction_date=datetime.utcnow(),
+                            description=message if message else f"Payment request for {student.first_name} {student.last_name}",
+                            files=None,
+                            payment_method=None,
+                            transaction_reference=None,
+                            bank_account_id=bank_account_id if bank_account_id else None,
+                            status=PaymentTransactionStatus.SCHOOL_REQUEST.value,
+                            created_by=current_user_id
+                        )
+                        local_db.add(transaction)
+                        local_db.commit()
+                        local_db.refresh(transaction)
+                    
+                    return transaction.id
+                finally:
+                    local_db.close()
+            
+            # Run database operation in thread pool
+            transaction_id = await run_in_threadpool(create_or_update_transaction)
+
+            # Send email asynchronously (fire and forget)
+            email_sent = None
+            if student.parent and student.parent.email:
+                async def send_email():
+                    try:
+                        class_name = student.classes.name if student.classes else 'Class'
+                        email_subject = f"Payment Request - {class_name}"
+                        
+                        # Build requested amounts section
+                        requested_section = "<p><strong>Requested Payment Amounts:</strong></p><ul>"
+                        installment_type_display = installment_type_value
+                        if "course_fee" in payment_breakdown:
+                            requested_section += f"<li>Course Fee: ₹{payment_breakdown['course_fee']:.2f} ({installment_type_display})</li>"
+                        if "transport_fee" in payment_breakdown:
+                            requested_section += f"<li>Transport Fee: ₹{payment_breakdown['transport_fee']:.2f} ({installment_type_display})</li>"
+                        if "tek_school_fee" in payment_breakdown:
+                            requested_section += f"<li>Tek School Fee: ₹{payment_breakdown['tek_school_fee']:.2f} ({installment_type_display})</li>"
+                        requested_section += "</ul>"
+                        
+                        email_body = f"""
+                        <h2>Payment Request</h2>
+                        <p>Dear {student.parent.parent_name},</p>
+                        <p>This is a payment request for {student.first_name} {student.last_name} (Roll No: {student.roll_no}).</p>
+                        <p><strong>Total Amount Due (Based on Installment Type): ₹{total_due:.2f}</strong></p>
+                        <p>Remaining Balances (Calculated by Installment Type):</p>
+                        <ul>
+                            <li>Course Fee Remaining ({installment_type_value}): ₹{course_fee_pending:.2f}</li>
+                            <li>Transport Fee Remaining ({installment_type_value}): ₹{transport_fee_pending:.2f}</li>
+                            <li>Tek School Fee Remaining ({installment_type_value}): ₹{tek_school_fee_pending:.2f}</li>
+                        </ul>
+                        <p><small>Note: Amounts are calculated based on remaining time period from today ({date.today().isoformat()}) to class end date ({class_obj.class_end_date.isoformat() if class_obj.class_end_date else 'N/A'}) and installment type.</small></p>
+                        {requested_section}
+                        {f'<p>{message}</p>' if message else ''}
+                        <p>Please fill the payment form in the student portal.</p>
+                        <p>Thank you.</p>
+                        """
+                        # Create a simple email sending function
+                        def send_email_sync():
+                            import smtplib
+                            from email.mime.multipart import MIMEMultipart
+                            from email.mime.text import MIMEText
+                            from app.core.config import settings
+                            
+                            msg = MIMEMultipart("alternative")
+                            msg["Subject"] = email_subject
+                            msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
+                            msg["To"] = student.parent.email
+                            msg.attach(MIMEText(email_body, "html"))
+                            
+                            with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT) as server:
+                                server.starttls()
+                                server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+                                server.sendmail(settings.MAIL_FROM, student.parent.email, msg.as_string())
+                        
+                        await run_in_threadpool(send_email_sync)
+                        return student.parent.email
+                    except Exception as e:
+                        print(f"Warning: Failed to send email reminder to {student.parent.email}: {str(e)}")
+                        return None
+                
+                # Fire and forget email sending
+                email_sent = await send_email()
+
+            # Success
+            student_result["success"] = True
+            student_result["message"] = "Payment reminder sent successfully."
+            student_result["transaction_id"] = transaction_id
+            student_result["total_due"] = round(total_due, 2)
+            student_result["installment_pending_amount"] = installment_pending_amount
+            student_result["email_sent"] = email_sent
+            return student_result
+
+        except Exception as e:
+            student_result["message"] = f"Error processing student: {str(e)}"
+            return student_result
+
+    try:
+        # ✅ Determine school_id based on user role
+        if current_user.role == UserRole.SCHOOL:
+            school_id = current_user.school_profile.id
+        elif current_user.role == UserRole.STAFF:
+            staff = await run_in_threadpool(
+                lambda: db.query(Staff).filter(Staff.user_id == current_user.id).first()
+            )
+            if not staff:
+                raise HTTPException(status_code=404, detail="Staff profile not found.")
+            school_id = staff.school_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only schools and staff can send payment reminders."
+            )
+
+        # ✅ VALIDATION: Validate bank_account_id if provided
+        bank_account = None
+        if data.bank_account_id is not None:
+            bank_account = await run_in_threadpool(
+                lambda: db.query(BankAccount).filter(
+                    BankAccount.id == data.bank_account_id,
+                    BankAccount.school_id == school_id
+                ).first()
+            )
+            
+            if not bank_account:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bank account with ID {data.bank_account_id} not found or does not belong to your school."
+                )
+
+        # ✅ VALIDATION: Remove duplicates from student_ids
+        unique_student_ids = list(set(data.student_ids))
+        if len(unique_student_ids) == 0:
+            raise HTTPException(status_code=400, detail="At least one student ID is required.")
+
+        # Get all students in one query (run in thread pool)
+        def fetch_students():
+            return (
+                db.query(Student)
+                .options(joinedload(Student.classes))
+                .filter(
+                    Student.id.in_(unique_student_ids),
+                    Student.school_id == school_id
+                )
+                .all()
+            )
+        
+        students = await run_in_threadpool(fetch_students)
+
+        # Create mapping of student_id -> student
+        student_map = {student.id: student for student in students}
+
+        # Get all payment records for these students (run in thread pool)
+        def fetch_payments():
+            return (
+                db.query(StudentPayment)
+                .filter(
+                    StudentPayment.student_id.in_(unique_student_ids)
+                )
+                .all()
+            )
+        
+        payments = await run_in_threadpool(fetch_payments)
+
+        # Create mapping of (student_id, class_id) -> payment
+        payment_map = {}
+        for payment in payments:
+            key = (payment.student_id, payment.class_id)
+            payment_map[key] = payment
+
+        # Process all students concurrently
+        tasks = [
+            process_single_student(
+                student_id=student_id,
+                student_map=student_map,
+                payment_map=payment_map,
+                school_id=school_id,
+                message=data.message,
+                bank_account_id=data.bank_account_id,
+                current_user_id=current_user.id
+            )
+            for student_id in unique_student_ids
+        ]
+        
+        results = await asyncio.gather(*tasks)
+
+        # Count successes and failures
+        successful_count = sum(1 for r in results if r.get("success", False))
+        failed_count = len(results) - successful_count
+
+        return {
+            "detail": f"Bulk payment reminders processed. Success: {successful_count}, Failed: {failed_count}",
+            "total_students": len(unique_student_ids),
+            "successful_count": successful_count,
+            "failed_count": failed_count,
+            "results": results
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send bulk payment reminders: {str(e)}")
 
 
 @router.put(
