@@ -21,6 +21,7 @@ from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
+from app.utils.payment_calculations import calculate_installment_pending_amount
 router = APIRouter()
 @router.post("/students/create")
 def create_student(
@@ -136,11 +137,9 @@ def create_student(
             student_id=student.id,
             class_id=data.class_id,
             course_fee=data.payment.course_fee,
-            course_fee_installment_type=installment_type_map[data.payment.course_fee_installment_type.value],
             transport_fee=data.payment.transport_fee,
-            transport_fee_installment_type=installment_type_map[data.payment.transport_fee_installment_type.value],
             tek_school_fee=data.payment.tek_school_fee,
-            tek_school_fee_installment_type=installment_type_map[data.payment.tek_school_fee_installment_type.value]
+            installment_type=installment_type_map[data.payment.installment_type].value
         )
         db.add(student_payment)
         db.commit()
@@ -192,11 +191,9 @@ def create_student(
                 "payment_id": student_payment.id,
                 "class_id": student_payment.class_id,
                 "course_fee": student_payment.course_fee,
-                "course_fee_installment_type": student_payment.course_fee_installment_type.value,
                 "transport_fee": student_payment.transport_fee,
-                "transport_fee_installment_type": student_payment.transport_fee_installment_type.value,
                 "tek_school_fee": student_payment.tek_school_fee,
-                "tek_school_fee_installment_type": student_payment.tek_school_fee_installment_type.value
+                "installment_type": student_payment.installment_type
             }
         }
         
@@ -372,7 +369,11 @@ def update_parent_and_address(
 
     return {"detail": "Parent and address data updated successfully."}
 
-@router.get("/students/")
+@router.get(
+    "/students/",
+    summary="Get list of students",
+    description="Retrieve a paginated list of students with optional filters. Supports filtering by roll number, name, class, section, installment type, installment pending status, and latest transaction date/status."
+)
 def get_students(
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
@@ -380,7 +381,12 @@ def get_students(
     roll_no: int | None = Query(None, description="Filter by roll number"),
     name: str | None = Query(None, description="Filter by student name"),
     class_name: str | None = Query(None, description="Filter by class name"),
-    section_name: str | None = Query(None, description="Filter by section name")
+    section_name: str | None = Query(None, description="Filter by section name"),
+    installment_type: str | None = Query(None, description="Filter by installment type (monthly, quarterly, half_yearly, yearly)"),
+    is_installment_pending: bool | None = Query(None, description="Filter by installment pending status (true for pending, false for no pending)"),
+    last_transaction_start_date: date | None = Query(None, description="Filter by latest transaction start date (inclusive)"),
+    last_transaction_end_date: date | None = Query(None, description="Filter by latest transaction end date (inclusive)"),
+    status: List[str] | None = Query(None, description="Filter by latest transaction status(es). Can provide multiple statuses (comma-separated or multiple query params)")
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -430,13 +436,11 @@ def get_students(
             StudentPayment.class_id,
             StudentPayment.course_fee,
             StudentPayment.course_fee_paid,
-            StudentPayment.course_fee_installment_type,
             StudentPayment.transport_fee,
             StudentPayment.transport_fee_paid,
-            StudentPayment.transport_fee_installment_type,
             StudentPayment.tek_school_fee,
             StudentPayment.tek_school_fee_paid,
-            StudentPayment.tek_school_fee_installment_type,
+            StudentPayment.installment_type,
             (StudentPayment.course_fee_paid + 
              StudentPayment.transport_fee_paid + 
              StudentPayment.tek_school_fee_paid).label("total_paid"),
@@ -456,13 +460,11 @@ def get_students(
             rank_subquery.c.latest_rank,
             payment_subquery.c.course_fee,
             payment_subquery.c.course_fee_paid,
-            payment_subquery.c.course_fee_installment_type,
             payment_subquery.c.transport_fee,
             payment_subquery.c.transport_fee_paid,
-            payment_subquery.c.transport_fee_installment_type,
             payment_subquery.c.tek_school_fee,
             payment_subquery.c.tek_school_fee_paid,
-            payment_subquery.c.tek_school_fee_installment_type,
+            payment_subquery.c.installment_type,
             payment_subquery.c.total_paid,
             payment_subquery.c.total_remaining,
             Class.class_start_date,
@@ -498,17 +500,152 @@ def get_students(
         base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
     if section_name:
         base_query = base_query.filter(Section.name.ilike(f"%{section_name}%"))
+    if installment_type:
+        # Filter by installment type in payment subquery
+        base_query = base_query.filter(payment_subquery.c.installment_type == installment_type)
 
+    # --- Get all students (before pagination) for is_installment_pending filter ---
+    # Note: We need to calculate installment_pending_amount to filter by is_installment_pending
+    # So we fetch all matching students first, calculate, filter, then paginate
+    all_students = base_query.all()
+    
+    # Filter by is_installment_pending if provided
+    if is_installment_pending is not None:
+        filtered_students = []
+        for student_tuple in all_students:
+            (student, attendance_count, exam_count, rank, course_fee, course_fee_paid,
+             transport_fee, transport_fee_paid, tek_school_fee, tek_school_fee_paid,
+             installment_type_val, total_paid, total_remaining,
+             class_start_date, class_end_date) = student_tuple
+            
+            # Calculate installment_pending_amount
+            pending_amount = calculate_installment_pending_amount(
+                course_fee=float(course_fee) if course_fee is not None else 0.0,
+                course_fee_paid=float(course_fee_paid) if course_fee_paid is not None else 0.0,
+                transport_fee=float(transport_fee) if transport_fee is not None else 0.0,
+                transport_fee_paid=float(transport_fee_paid) if transport_fee_paid is not None else 0.0,
+                tek_school_fee=float(tek_school_fee) if tek_school_fee is not None else 0.0,
+                tek_school_fee_paid=float(tek_school_fee_paid) if tek_school_fee_paid is not None else 0.0,
+                installment_type=installment_type_val,
+                class_start_date=class_start_date,
+                class_end_date=class_end_date
+            )
+            
+            # Filter based on is_installment_pending
+            has_pending = pending_amount > 0
+            if is_installment_pending == has_pending:
+                filtered_students.append(student_tuple)
+        
+        all_students = filtered_students
+    
+    # --- Filter by latest transaction date and status ---
+    if last_transaction_start_date or last_transaction_end_date or status:
+        # Get payment IDs for all students first
+        student_class_pairs_for_filter = [(student.id, student.class_id) for student, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in all_students]
+        
+        if student_class_pairs_for_filter:
+            # Build filter conditions for matching (student_id, class_id) pairs
+            conditions = []
+            for student_id, class_id in student_class_pairs_for_filter:
+                conditions.append(
+                    and_(
+                        StudentPayment.student_id == student_id,
+                        StudentPayment.class_id == class_id
+                    )
+                )
+            
+            if conditions:
+                payments_for_filter = db.query(StudentPayment.id, StudentPayment.student_id, StudentPayment.class_id).filter(
+                    or_(*conditions)
+                ).all()
+                
+                payment_id_map = {}
+                for payment in payments_for_filter:
+                    key = (payment.student_id, payment.class_id)
+                    payment_id_map[key] = payment.id
+                
+                # Get latest transaction for each payment
+                payment_ids_list = list(payment_id_map.values())
+                if payment_ids_list:
+                    # Get all transactions and then pick the latest for each payment
+                    all_transactions = (
+                        db.query(StudentPaymentTransaction)
+                        .filter(StudentPaymentTransaction.student_payment_id.in_(payment_ids_list))
+                        .order_by(
+                            StudentPaymentTransaction.student_payment_id,
+                            StudentPaymentTransaction.transaction_date.desc(),
+                            StudentPaymentTransaction.id.desc()
+                        )
+                        .all()
+                    )
+                    
+                    # Group by payment_id and get the first (latest) transaction for each
+                    latest_transactions_dict = {}
+                    for txn in all_transactions:
+                        if txn.student_payment_id not in latest_transactions_dict:
+                            latest_transactions_dict[txn.student_payment_id] = txn
+                    
+                    # Create mapping: (student_id, class_id) -> latest_transaction
+                    latest_transaction_map = {}
+                    for payment_id, txn in latest_transactions_dict.items():
+                        payment_obj = db.query(StudentPayment).filter(StudentPayment.id == payment_id).first()
+                        if payment_obj:
+                            key = (payment_obj.student_id, payment_obj.class_id)
+                            latest_transaction_map[key] = txn
+                    
+                    # Filter students based on latest transaction
+                    filtered_students = []
+                    for student_tuple in all_students:
+                        (student, attendance_count, exam_count, rank, course_fee, course_fee_paid,
+                         transport_fee, transport_fee_paid, tek_school_fee, tek_school_fee_paid,
+                         installment_type_val, total_paid, total_remaining,
+                         class_start_date, class_end_date) = student_tuple
+                        
+                        key = (student.id, student.class_id)
+                        latest_txn = latest_transaction_map.get(key)
+                        
+                        # If no transaction exists and filters are provided, exclude this student
+                        if not latest_txn:
+                            if last_transaction_start_date or last_transaction_end_date or status:
+                                continue
+                            else:
+                                filtered_students.append(student_tuple)
+                                continue
+                        
+                        # Filter by date range
+                        if last_transaction_start_date or last_transaction_end_date:
+                            txn_date = latest_txn.transaction_date.date() if latest_txn.transaction_date else None
+                            if not txn_date:
+                                continue
+                            
+                            if last_transaction_start_date and txn_date < last_transaction_start_date:
+                                continue
+                            if last_transaction_end_date and txn_date > last_transaction_end_date:
+                                continue
+                        
+                        # Filter by status
+                        if status:
+                            # status is a list, check if latest transaction status is in the list
+                            if latest_txn.status not in status:
+                                continue
+                        
+                        filtered_students.append(student_tuple)
+                    
+                    all_students = filtered_students
+    
     # --- Count & Pagination ---
-    total_count = base_query.count()
-    students = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
+    total_count = len(all_students)
+    students = all_students[pagination.offset():pagination.offset() + pagination.limit()]
 
     # --- Get Payment History for each student ---
     # Create mapping of (student_id, class_id) -> payment_id
     student_payment_ids = {}
     if students:
         # Get payment IDs for students' current classes
-        student_class_pairs = [(student.id, student.class_id) for student, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in students]
+        # Query returns: Student, attendance_count, exam_count, rank, course_fee, course_fee_paid,
+        # transport_fee, transport_fee_paid, tek_school_fee, tek_school_fee_paid, installment_type,
+        # total_paid, total_remaining, class_start_date, class_end_date (15 items total)
+        student_class_pairs = [(student.id, student.class_id) for student, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in students]
         if student_class_pairs:
             # Build filter conditions for matching (student_id, class_id) pairs
             conditions = []
@@ -566,14 +703,26 @@ def get_students(
     # --- Format Response ---
     data = []
     for index, (student, attendance_count, exam_count, rank, course_fee, course_fee_paid, 
-               course_fee_installment_type, transport_fee, transport_fee_paid, 
-               transport_fee_installment_type, tek_school_fee, tek_school_fee_paid, 
-               tek_school_fee_installment_type, total_paid, total_remaining, 
+               transport_fee, transport_fee_paid, tek_school_fee, tek_school_fee_paid, 
+               installment_type, total_paid, total_remaining, 
                class_start_date, class_end_date) in enumerate(students):
         
         # Get payment history for this student's current class
         payment_id = student_payment_ids.get((student.id, student.class_id))
         payment_history_list = payment_history.get(payment_id, []) if payment_id else []
+        
+        # Calculate installment_pending_amount using utility function
+        installment_pending_amount = calculate_installment_pending_amount(
+            course_fee=float(course_fee) if course_fee is not None else 0.0,
+            course_fee_paid=float(course_fee_paid) if course_fee_paid is not None else 0.0,
+            transport_fee=float(transport_fee) if transport_fee is not None else 0.0,
+            transport_fee_paid=float(transport_fee_paid) if transport_fee_paid is not None else 0.0,
+            tek_school_fee=float(tek_school_fee) if tek_school_fee is not None else 0.0,
+            tek_school_fee_paid=float(tek_school_fee_paid) if tek_school_fee_paid is not None else 0.0,
+            installment_type=installment_type,
+            class_start_date=class_start_date,
+            class_end_date=class_end_date
+        )
         
         data.append({
             "sl_no": index + 1 + pagination.offset(),
@@ -595,17 +744,16 @@ def get_students(
                 "course_fee": float(course_fee) if course_fee is not None else 0.0,
                 "course_fee_paid": float(course_fee_paid) if course_fee_paid is not None else 0.0,
                 "course_fee_remaining": round(float(course_fee) - float(course_fee_paid), 2) if course_fee is not None and course_fee_paid is not None else 0.0,
-                "course_fee_installment_type": course_fee_installment_type.value if course_fee_installment_type else None,
                 "transport_fee": float(transport_fee) if transport_fee is not None else 0.0,
                 "transport_fee_paid": float(transport_fee_paid) if transport_fee_paid is not None else 0.0,
                 "transport_fee_remaining": round(float(transport_fee) - float(transport_fee_paid), 2) if transport_fee is not None and transport_fee_paid is not None else 0.0,
-                "transport_fee_installment_type": transport_fee_installment_type.value if transport_fee_installment_type else None,
                 "tek_school_fee": float(tek_school_fee) if tek_school_fee is not None else 0.0,
                 "tek_school_fee_paid": float(tek_school_fee_paid) if tek_school_fee_paid is not None else 0.0,
                 "tek_school_fee_remaining": round(float(tek_school_fee) - float(tek_school_fee_paid), 2) if tek_school_fee is not None and tek_school_fee_paid is not None else 0.0,
-                "tek_school_fee_installment_type": tek_school_fee_installment_type.value if tek_school_fee_installment_type else None,
+                "installment_type": installment_type if installment_type else None,
                 "total_paid": float(total_paid) if total_paid is not None else 0.0,
                 "total_remaining": float(total_remaining) if total_remaining is not None else 0.0,
+                "installment_pending_amount": installment_pending_amount,
             },
             "payment_history": payment_history_list
         })
@@ -613,22 +761,40 @@ def get_students(
     return pagination.format_response(data, total_count)
 
 
-@router.get("/students/{student_id}")
+@router.get(
+    "/students/{student_id}",
+    summary="Get student details",
+    description="Retrieve detailed information about a specific student including profile, payment details, and payment history. Students can only access their own profile."
+)
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF, UserRole.STUDENT))
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
-    else:  # STAFF
+    elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
         school_id = staff.school_id
+    else:  # STUDENT
+        # Students can only access their own profile
+        student_profile = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not student_profile:
+            raise HTTPException(status_code=404, detail="Student profile not found for this user.")
+        
+        # Verify that the requested student_id matches the logged-in student's ID
+        if student_profile.id != student_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only access your own student profile."
+            )
+        
+        school_id = student_profile.school_id
 
     student = (
         db.query(Student)
@@ -693,6 +859,24 @@ def get_student(
     .first()
        )
 
+    # Calculate installment_pending_amount
+    class_start_date = student.classes.class_start_date if student.classes else None
+    class_end_date = student.classes.class_end_date if student.classes else None
+    
+    installment_pending_amount = 0.0
+    if student_payment:
+        installment_pending_amount = calculate_installment_pending_amount(
+            course_fee=student_payment.course_fee,
+            course_fee_paid=student_payment.course_fee_paid,
+            transport_fee=student_payment.transport_fee,
+            transport_fee_paid=student_payment.transport_fee_paid,
+            tek_school_fee=student_payment.tek_school_fee,
+            tek_school_fee_paid=student_payment.tek_school_fee_paid,
+            installment_type=student_payment.installment_type,
+            class_start_date=class_start_date,
+            class_end_date=class_end_date
+        )
+
     return {
         "student_id": student.id,
         "profile_image": student.profile_image,
@@ -750,15 +934,13 @@ def get_student(
             "course_fee": float(student_payment.course_fee) if student_payment else 0.0,
             "course_fee_paid": float(student_payment.course_fee_paid) if student_payment else 0.0,
             "course_fee_remaining": round(float(student_payment.course_fee) - float(student_payment.course_fee_paid), 2) if student_payment and student_payment.course_fee is not None and student_payment.course_fee_paid is not None else 0.0,
-            "course_fee_installment_type": student_payment.course_fee_installment_type.value if student_payment and student_payment.course_fee_installment_type else None,
             "transport_fee": float(student_payment.transport_fee) if student_payment else 0.0,
             "transport_fee_paid": float(student_payment.transport_fee_paid) if student_payment else 0.0,
             "transport_fee_remaining": round(float(student_payment.transport_fee) - float(student_payment.transport_fee_paid), 2) if student_payment and student_payment.transport_fee is not None and student_payment.transport_fee_paid is not None else 0.0,
-            "transport_fee_installment_type": student_payment.transport_fee_installment_type.value if student_payment and student_payment.transport_fee_installment_type else None,
             "tek_school_fee": float(student_payment.tek_school_fee) if student_payment else 0.0,
             "tek_school_fee_paid": float(student_payment.tek_school_fee_paid) if student_payment else 0.0,
             "tek_school_fee_remaining": round(float(student_payment.tek_school_fee) - float(student_payment.tek_school_fee_paid), 2) if student_payment and student_payment.tek_school_fee is not None and student_payment.tek_school_fee_paid is not None else 0.0,
-            "tek_school_fee_installment_type": student_payment.tek_school_fee_installment_type.value if student_payment and student_payment.tek_school_fee_installment_type else None,
+            "installment_type": student_payment.installment_type if student_payment and student_payment.installment_type else None,
             "total_paid": round(
                 (float(student_payment.course_fee_paid) if student_payment else 0.0) + 
                 (float(student_payment.transport_fee_paid) if student_payment else 0.0) + 
@@ -769,6 +951,7 @@ def get_student(
                 ((float(student_payment.transport_fee) if student_payment else 0.0) - (float(student_payment.transport_fee_paid) if student_payment else 0.0)) + 
                 ((float(student_payment.tek_school_fee) if student_payment else 0.0) - (float(student_payment.tek_school_fee_paid) if student_payment else 0.0)), 2
             ) if student_payment else 0.0,
+            "installment_pending_amount": installment_pending_amount,
         },
         "payment_history": payment_history
     }
@@ -896,22 +1079,18 @@ def update_student(
         if existing_payment:
             # Update existing payment record
             existing_payment.course_fee = data.payment.course_fee
-            existing_payment.course_fee_installment_type = installment_type_map[data.payment.course_fee_installment_type.value]
             existing_payment.transport_fee = data.payment.transport_fee
-            existing_payment.transport_fee_installment_type = installment_type_map[data.payment.transport_fee_installment_type.value]
             existing_payment.tek_school_fee = data.payment.tek_school_fee
-            existing_payment.tek_school_fee_installment_type = installment_type_map[data.payment.tek_school_fee_installment_type.value]
+            existing_payment.installment_type = installment_type_map[data.payment.installment_type].value
             payment_updated = True
             updated_payment_obj = existing_payment
             payment_response = {
                 "payment_id": existing_payment.id,
                 "class_id": existing_payment.class_id,
                 "course_fee": existing_payment.course_fee,
-                "course_fee_installment_type": existing_payment.course_fee_installment_type.value,
                 "transport_fee": existing_payment.transport_fee,
-                "transport_fee_installment_type": existing_payment.transport_fee_installment_type.value,
                 "tek_school_fee": existing_payment.tek_school_fee,
-                "tek_school_fee_installment_type": existing_payment.tek_school_fee_installment_type.value,
+                "installment_type": existing_payment.installment_type,
                 "action": "updated"
             }
         else:
@@ -920,11 +1099,9 @@ def update_student(
                 student_id=student.id,
                 class_id=target_class_id,
                 course_fee=data.payment.course_fee,
-                course_fee_installment_type=installment_type_map[data.payment.course_fee_installment_type.value],
                 transport_fee=data.payment.transport_fee,
-                transport_fee_installment_type=installment_type_map[data.payment.transport_fee_installment_type.value],
                 tek_school_fee=data.payment.tek_school_fee,
-                tek_school_fee_installment_type=installment_type_map[data.payment.tek_school_fee_installment_type.value]
+                installment_type=installment_type_map[data.payment.installment_type].value
             )
             db.add(new_payment)
             payment_updated = True
@@ -933,11 +1110,9 @@ def update_student(
                 "payment_id": new_payment.id,
                 "class_id": new_payment.class_id,
                 "course_fee": new_payment.course_fee,
-                "course_fee_installment_type": new_payment.course_fee_installment_type.value,
                 "transport_fee": new_payment.transport_fee,
-                "transport_fee_installment_type": new_payment.transport_fee_installment_type.value,
                 "tek_school_fee": new_payment.tek_school_fee,
-                "tek_school_fee_installment_type": new_payment.tek_school_fee_installment_type.value,
+                "installment_type": new_payment.installment_type,
                 "action": "created"
             }
 
@@ -1259,7 +1434,11 @@ def get_chapter_details(
 
 # ==================== STUDENT PAYMENT APIs ====================
 
-@router.get("/students/{student_id}/payments/")
+@router.get(
+    "/students/{student_id}/payments/",
+    summary="Get all student payments",
+    description="Retrieve all payment records for a student across all classes, including fee details and installment information."
+)
 def get_student_payments(
     student_id: int,
     class_id: Optional[int] = Query(None, description="Filter by class_id"),
@@ -1316,17 +1495,15 @@ def get_student_payments(
             "class_id": payment.class_id,
             "class_name": payment.classes.name if payment.classes else None,
             "course_fee": payment.course_fee,
-            "course_fee_installment_type": payment.course_fee_installment_type.value,
             "course_fee_paid": payment.course_fee_paid,
             "course_fee_remaining": round(payment.course_fee - payment.course_fee_paid, 2),
             "transport_fee": payment.transport_fee,
-            "transport_fee_installment_type": payment.transport_fee_installment_type.value,
             "transport_fee_paid": payment.transport_fee_paid,
             "transport_fee_remaining": round(payment.transport_fee - payment.transport_fee_paid, 2),
             "tek_school_fee": payment.tek_school_fee,
-            "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value,
             "tek_school_fee_paid": payment.tek_school_fee_paid,
             "tek_school_fee_remaining": round(payment.tek_school_fee - payment.tek_school_fee_paid, 2),
+            "installment_type": payment.installment_type,
             "total_paid": round(payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2),
             "total_remaining": round(
                 (payment.course_fee - payment.course_fee_paid) + 
@@ -1343,7 +1520,11 @@ def get_student_payments(
         "payments": payment_list
     }
 
-@router.put("/students/{student_id}/payment-structure/{class_id}/")
+@router.put(
+    "/students/{student_id}/payment-structure/{class_id}/",
+    summary="Update student payment structure",
+    description="Update a student's payment structure including course fee, transport fee, tek school fee, and installment type for a specific class."
+)
 def update_student_payment_structure(
     student_id: int,
     class_id: int,
@@ -1425,11 +1606,9 @@ def update_student_payment_structure(
         
         # Update existing payment structure
         existing_payment.course_fee = data.course_fee
-        existing_payment.course_fee_installment_type = installment_type_map[data.course_fee_installment_type.value]
         existing_payment.transport_fee = data.transport_fee
-        existing_payment.transport_fee_installment_type = installment_type_map[data.transport_fee_installment_type.value]
         existing_payment.tek_school_fee = data.tek_school_fee
-        existing_payment.tek_school_fee_installment_type = installment_type_map[data.tek_school_fee_installment_type.value]
+        existing_payment.installment_type = installment_type_map[data.installment_type.value].value
         
         payment_obj = existing_payment
         action = "updated"
@@ -1439,11 +1618,9 @@ def update_student_payment_structure(
             student_id=student_id,
             class_id=class_id,
             course_fee=data.course_fee,
-            course_fee_installment_type=installment_type_map[data.course_fee_installment_type.value],
             transport_fee=data.transport_fee,
-            transport_fee_installment_type=installment_type_map[data.transport_fee_installment_type.value],
             tek_school_fee=data.tek_school_fee,
-            tek_school_fee_installment_type=installment_type_map[data.tek_school_fee_installment_type.value]
+            installment_type=installment_type_map[data.installment_type.value].value
         )
         db.add(new_payment)
         payment_obj = new_payment
@@ -1477,11 +1654,9 @@ def update_student_payment_structure(
             "class_id": class_id,
             "class_name": class_obj.name,
             "course_fee": payment_obj.course_fee,
-            "course_fee_installment_type": payment_obj.course_fee_installment_type.value,
             "transport_fee": payment_obj.transport_fee,
-            "transport_fee_installment_type": payment_obj.transport_fee_installment_type.value,
             "tek_school_fee": payment_obj.tek_school_fee,
-            "tek_school_fee_installment_type": payment_obj.tek_school_fee_installment_type.value,
+            "installment_type": payment_obj.installment_type,
             "course_fee_paid": payment_obj.course_fee_paid,
             "transport_fee_paid": payment_obj.transport_fee_paid,
             "tek_school_fee_paid": payment_obj.tek_school_fee_paid,
@@ -1491,16 +1666,17 @@ def update_student_payment_structure(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update payment structure: {str(e)}")
 
-@router.get("/students/{student_id}/payments/{class_id}/")
+@router.get(
+    "/students/{student_id}/payments/{class_id}/",
+    summary="Get student payment by class",
+    description="Retrieve payment details for a specific student and class combination, including fee breakdown, payment history, and installment pending amount."
+)
 def get_student_payment_by_class(
     student_id: int,
     class_id: int,
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
-    """
-    Get payment record for a specific student and class combination.
-    """
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
@@ -1567,6 +1743,19 @@ def get_student_payment_by_class(
     class_start_date = payment.classes.class_start_date if payment.classes else None
     class_end_date = payment.classes.class_end_date if payment.classes else None
     
+    # Calculate installment_pending_amount using utility function
+    installment_pending_amount = calculate_installment_pending_amount(
+        course_fee=payment.course_fee,
+        course_fee_paid=payment.course_fee_paid,
+        transport_fee=payment.transport_fee,
+        transport_fee_paid=payment.transport_fee_paid,
+        tek_school_fee=payment.tek_school_fee,
+        tek_school_fee_paid=payment.tek_school_fee_paid,
+        installment_type=payment.installment_type,
+        class_start_date=class_start_date,
+        class_end_date=class_end_date
+    )
+    
     return {
         "payment_id": payment.id,
         "student_id": payment.student_id,
@@ -1576,30 +1765,33 @@ def get_student_payment_by_class(
         "class_start_date": class_start_date.isoformat() if class_start_date else None,  # Add class_start_date
         "class_end_date": class_end_date.isoformat() if class_end_date else None,  # Add class_end_date
         "course_fee": float(payment.course_fee),
-        "course_fee_installment_type": payment.course_fee_installment_type.value if payment.course_fee_installment_type else None,
         "course_fee_paid": float(payment.course_fee_paid),
         "course_fee_remaining": round(payment.course_fee - payment.course_fee_paid, 2),
         "transport_fee": float(payment.transport_fee),
-        "transport_fee_installment_type": payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else None,
         "transport_fee_paid": float(payment.transport_fee_paid),
         "transport_fee_remaining": round(payment.transport_fee - payment.transport_fee_paid, 2),
         "tek_school_fee": float(payment.tek_school_fee),
-        "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else None,
         "tek_school_fee_paid": float(payment.tek_school_fee_paid),
         "tek_school_fee_remaining": round(payment.tek_school_fee - payment.tek_school_fee_paid, 2),
+        "installment_type": payment.installment_type if payment.installment_type else None,
         "total_paid": round(payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2),
         "total_remaining": round(
             (payment.course_fee - payment.course_fee_paid) + 
             (payment.transport_fee - payment.transport_fee_paid) + 
             (payment.tek_school_fee - payment.tek_school_fee_paid), 2
         ),
+        "installment_pending_amount": installment_pending_amount,
         "transactions": transaction_list,  # Now includes status, verified_at, verified_by, rejection_reason
         "total_transactions": len(transaction_list),
         "created_at": payment.created_at.isoformat() if payment.created_at else None,
         "updated_at": payment.updated_at.isoformat() if payment.updated_at else None
     }
 
-@router.post("/students/{student_id}/payments/{class_id}/")
+@router.post(
+    "/students/{student_id}/payments/{class_id}/",
+    summary="Create payment transaction",
+    description="Create a new payment transaction for a student in a specific class. This is typically used when recording a payment manually."
+)
 def create_payment_transaction(
     student_id: int,
     class_id: int,
@@ -1836,17 +2028,15 @@ def create_payment_transaction(
             "total_amount_paid": round(total_amount, 2),
             # Payment structure (from existing payment)
             "course_fee": payment.course_fee,
-            "course_fee_installment_type": payment.course_fee_installment_type.value,
             "course_fee_paid": payment.course_fee_paid,
             "course_fee_remaining": course_fee_remaining,
             "transport_fee": payment.transport_fee,
-            "transport_fee_installment_type": payment.transport_fee_installment_type.value,
             "transport_fee_paid": payment.transport_fee_paid,
             "transport_fee_remaining": transport_fee_remaining,
             "tek_school_fee": payment.tek_school_fee,
-            "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value,
             "tek_school_fee_paid": payment.tek_school_fee_paid,
             "tek_school_fee_remaining": tek_school_fee_remaining,
+            "installment_type": payment.installment_type,
             "total_paid": round(payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2),
             "total_remaining": total_remaining,
             "created_at": transaction.created_at
@@ -1855,7 +2045,11 @@ def create_payment_transaction(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create payment transaction: {str(e)}")
 
-@router.patch("/students/{student_id}/payments/{class_id}/")
+@router.patch(
+    "/students/{student_id}/payments/{class_id}/",
+    summary="Update student payment",
+    description="Update an existing payment record for a student in a specific class, including fee amounts and paid amounts."
+)
 def update_student_payment(
     student_id: int,
     class_id: int,
@@ -1942,14 +2136,8 @@ def update_student_payment(
             )
         payment.tek_school_fee = new_tek_school_fee
     
-    if "course_fee_installment_type" in update_data and update_data["course_fee_installment_type"] is not None:
-        payment.course_fee_installment_type = installment_type_map[update_data["course_fee_installment_type"].value]
-    
-    if "transport_fee_installment_type" in update_data and update_data["transport_fee_installment_type"] is not None:
-        payment.transport_fee_installment_type = installment_type_map[update_data["transport_fee_installment_type"].value]
-    
-    if "tek_school_fee_installment_type" in update_data and update_data["tek_school_fee_installment_type"] is not None:
-        payment.tek_school_fee_installment_type = installment_type_map[update_data["tek_school_fee_installment_type"].value]
+    if "installment_type" in update_data and update_data["installment_type"] is not None:
+        payment.installment_type = installment_type_map[update_data["installment_type"].value].value
     
     # Store old values to calculate transaction amounts
     old_course_fee_paid = payment.course_fee_paid
@@ -1991,7 +2179,7 @@ def update_student_payment(
                 status_code=404,
                 detail=f"Bank account with ID {update_data['bank_account_id']} not found or does not belong to your school."
             )
-
+    
     # Handle file uploads (if provided) - upload to S3 and get URLs
     uploaded_file_urls = []
     if "files" in update_data and update_data["files"] is not None:
@@ -2108,17 +2296,15 @@ def update_student_payment(
             "student_id": payment.student_id,
             "class_id": payment.class_id,
             "course_fee": payment.course_fee,
-            "course_fee_installment_type": payment.course_fee_installment_type.value,
             "course_fee_paid": payment.course_fee_paid,
             "course_fee_remaining": round(payment.course_fee - payment.course_fee_paid, 2),
             "transport_fee": payment.transport_fee,
-            "transport_fee_installment_type": payment.transport_fee_installment_type.value,
             "transport_fee_paid": payment.transport_fee_paid,
             "transport_fee_remaining": round(payment.transport_fee - payment.transport_fee_paid, 2),
             "tek_school_fee": payment.tek_school_fee,
-            "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value,
             "tek_school_fee_paid": payment.tek_school_fee_paid,
             "tek_school_fee_remaining": round(payment.tek_school_fee - payment.tek_school_fee_paid, 2),
+            "installment_type": payment.installment_type,
             "total_paid": round(payment.course_fee_paid + payment.transport_fee_paid + payment.tek_school_fee_paid, 2),
             "total_remaining": round(
                 (payment.course_fee - payment.course_fee_paid) + 
@@ -2133,7 +2319,11 @@ def update_student_payment(
 
 # ==================== Payment Reminder and Verification Flow ====================
 
-@router.post("/students/{student_id}/payments/{class_id}/send-reminder/")
+@router.post(
+    "/students/{student_id}/payments/{class_id}/send-reminder/",
+    summary="Send payment reminder",
+    description="School sends a payment reminder/request to a student. This creates a transaction with 'school_request' status that the student can then update with payment details."
+)
 def send_payment_reminder(
     student_id: int,
     class_id: int,
@@ -2141,10 +2331,6 @@ def send_payment_reminder(
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF))
 ):
-    """
-    School sends payment reminder/request to student.
-    This creates a notification/request that student can respond to by submitting payment.
-    """
     try:
         # ✅ VALIDATION: student_id and class_id must be positive
         if student_id <= 0:
@@ -2299,11 +2485,13 @@ def send_payment_reminder(
             remaining_amount = min(remaining_amount, remaining_total)
             return round(remaining_amount, 2)
         
-        # Calculate remaining amounts based on installment types
+        # Calculate remaining amounts based on installment type (same for all fees)
+        installment_type_value = payment.installment_type if payment.installment_type else InstallmentType.YEARLY.value
+        
         course_fee_remaining = calculate_remaining_by_installment(
             payment.course_fee,
             payment.course_fee_paid,
-            payment.course_fee_installment_type.value if payment.course_fee_installment_type else InstallmentType.YEARLY.value,
+            installment_type_value,
             class_obj.class_start_date,
             class_obj.class_end_date
         )
@@ -2311,7 +2499,7 @@ def send_payment_reminder(
         transport_fee_remaining = calculate_remaining_by_installment(
             payment.transport_fee,
             payment.transport_fee_paid,
-            payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else InstallmentType.YEARLY.value,
+            installment_type_value,
             class_obj.class_start_date,
             class_obj.class_end_date
         )
@@ -2319,7 +2507,7 @@ def send_payment_reminder(
         tek_school_fee_remaining = calculate_remaining_by_installment(
             payment.tek_school_fee,
             payment.tek_school_fee_paid,
-            payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else InstallmentType.YEARLY.value,
+            installment_type_value,
             class_obj.class_start_date,
             class_obj.class_end_date
         )
@@ -2339,19 +2527,19 @@ def send_payment_reminder(
         if data.course_fee is not None and data.course_fee > 0:
             if data.course_fee > course_fee_remaining:
                 validation_errors.append(
-                    f"Course fee amount ({data.course_fee}) exceeds calculated remaining amount ({course_fee_remaining:.2f}) for {payment.course_fee_installment_type.value if payment.course_fee_installment_type else 'yearly'} installment."
+                    f"Course fee amount ({data.course_fee}) exceeds calculated remaining amount ({course_fee_remaining:.2f}) for {installment_type_value} installment."
                 )
         
         if data.transport_fee is not None and data.transport_fee > 0:
             if data.transport_fee > transport_fee_remaining:
                 validation_errors.append(
-                    f"Transport fee amount ({data.transport_fee}) exceeds calculated remaining amount ({transport_fee_remaining:.2f}) for {payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else 'yearly'} installment."
+                    f"Transport fee amount ({data.transport_fee}) exceeds calculated remaining amount ({transport_fee_remaining:.2f}) for {installment_type_value} installment."
                 )
         
         if data.tek_school_fee is not None and data.tek_school_fee > 0:
             if data.tek_school_fee > tek_school_fee_remaining:
                 validation_errors.append(
-                    f"Tek School fee amount ({data.tek_school_fee}) exceeds calculated remaining amount ({tek_school_fee_remaining:.2f}) for {payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else 'yearly'} installment."
+                    f"Tek School fee amount ({data.tek_school_fee}) exceeds calculated remaining amount ({tek_school_fee_remaining:.2f}) for {installment_type_value} installment."
                 )
         
         if validation_errors:
@@ -2470,15 +2658,13 @@ def send_payment_reminder(
                 requested_section = ""
                 if payment_breakdown:
                     requested_section = "<p><strong>Requested Payment Amounts:</strong></p><ul>"
+                    installment_type_display = data.installment_type.value if data.installment_type else payment.installment_type if payment.installment_type else "N/A"
                     if "course_fee" in payment_breakdown:
-                        installment_type = data.course_fee_installment_type.value if data.course_fee_installment_type else "N/A"
-                        requested_section += f"<li>Course Fee: ₹{payment_breakdown['course_fee']:.2f} ({installment_type})</li>"
+                        requested_section += f"<li>Course Fee: ₹{payment_breakdown['course_fee']:.2f} ({installment_type_display})</li>"
                     if "transport_fee" in payment_breakdown:
-                        installment_type = data.transport_fee_installment_type.value if data.transport_fee_installment_type else "N/A"
-                        requested_section += f"<li>Transport Fee: ₹{payment_breakdown['transport_fee']:.2f} ({installment_type})</li>"
+                        requested_section += f"<li>Transport Fee: ₹{payment_breakdown['transport_fee']:.2f} ({installment_type_display})</li>"
                     if "tek_school_fee" in payment_breakdown:
-                        installment_type = data.tek_school_fee_installment_type.value if data.tek_school_fee_installment_type else "N/A"
-                        requested_section += f"<li>Tek School Fee: ₹{payment_breakdown['tek_school_fee']:.2f} ({installment_type})</li>"
+                        requested_section += f"<li>Tek School Fee: ₹{payment_breakdown['tek_school_fee']:.2f} ({installment_type_display})</li>"
                     requested_section += "</ul>"
                 
                 email_body = f"""
@@ -2488,9 +2674,9 @@ def send_payment_reminder(
                 <p><strong>Total Amount Due (Based on Installment Type): ₹{total_due:.2f}</strong></p>
                 <p>Remaining Balances (Calculated by Installment Type):</p>
                 <ul>
-                    <li>Course Fee Remaining ({payment.course_fee_installment_type.value if payment.course_fee_installment_type else 'yearly'}): ₹{course_fee_remaining:.2f}</li>
-                    <li>Transport Fee Remaining ({payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else 'yearly'}): ₹{transport_fee_remaining:.2f}</li>
-                    <li>Tek School Fee Remaining ({payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else 'yearly'}): ₹{tek_school_fee_remaining:.2f}</li>
+                    <li>Course Fee Remaining ({installment_type_value}): ₹{course_fee_remaining:.2f}</li>
+                    <li>Transport Fee Remaining ({installment_type_value}): ₹{transport_fee_remaining:.2f}</li>
+                    <li>Tek School Fee Remaining ({installment_type_value}): ₹{tek_school_fee_remaining:.2f}</li>
                 </ul>
                 <p><small>Note: Amounts are calculated based on remaining time period from today ({date.today().isoformat()}) to class end date ({class_obj.class_end_date.isoformat()}) and installment type.</small></p>
                 {requested_section}
@@ -2508,6 +2694,9 @@ def send_payment_reminder(
                 print(f"Warning: Failed to send email reminder: {str(e)}")
                 # Continue even if email fails
 
+        # Determine the installment_type to return (from request or payment record)
+        response_installment_type = data.installment_type.value if data.installment_type else installment_type_value
+        
         return {
             "detail": "Payment request created successfully",
             "transaction_id": transaction.id,
@@ -2515,22 +2704,17 @@ def send_payment_reminder(
             "student_name": f"{student.first_name} {student.last_name}",
             "total_due": round(total_due, 2),
             "status": transaction.status,
+            "installment_type": response_installment_type,
             "payment_breakdown": transaction.payment_breakdown if transaction.payment_breakdown else None,
             "calculated_remaining_amounts": {
                 "course_fee_remaining": course_fee_remaining,
-                "course_fee_installment_type": payment.course_fee_installment_type.value if payment.course_fee_installment_type else None,
                 "transport_fee_remaining": transport_fee_remaining,
-                "transport_fee_installment_type": payment.transport_fee_installment_type.value if payment.transport_fee_installment_type else None,
                 "tek_school_fee_remaining": tek_school_fee_remaining,
-                "tek_school_fee_installment_type": payment.tek_school_fee_installment_type.value if payment.tek_school_fee_installment_type else None,
             },
             "requested_amounts": {
                 "course_fee": data.course_fee if data.course_fee else None,
-                "course_fee_installment_type": data.course_fee_installment_type.value if data.course_fee_installment_type else None,
                 "transport_fee": data.transport_fee if data.transport_fee else None,
-                "transport_fee_installment_type": data.transport_fee_installment_type.value if data.transport_fee_installment_type else None,
                 "tek_school_fee": data.tek_school_fee if data.tek_school_fee else None,
-                "tek_school_fee_installment_type": data.tek_school_fee_installment_type.value if data.tek_school_fee_installment_type else None,
             },
             "email_sent": email_sent,
             "message": "Student can now fill the payment form with amounts and documents."
@@ -2541,7 +2725,11 @@ def send_payment_reminder(
         raise HTTPException(status_code=500, detail=f"Failed to send payment reminder: {str(e)}")
 
 
-@router.put("/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/")
+@router.put(
+    "/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/",
+    summary="Student update payment transaction",
+    description="Student updates a payment transaction that was created by the school (status: 'school_request'). Updates the transaction with payment amounts, documents, and changes status to 'payment_update_by_student'."
+)
 def student_update_payment_transaction(
     student_id: int,
     class_id: int,
@@ -2748,7 +2936,11 @@ def student_update_payment_transaction(
         raise HTTPException(status_code=500, detail=f"Failed to submit payment: {str(e)}")
 
 
-@router.put("/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/verify/")
+@router.put(
+    "/students/{student_id}/payments/{class_id}/transactions/{transaction_id}/verify/",
+    summary="Verify payment transaction",
+    description="School verifies a payment transaction. If status is 'done', calculates and deducts payment amounts. If status is 'cancel', cancels the request with a rejection reason."
+)
 def verify_payment_transaction(
     student_id: int,
     class_id: int,
