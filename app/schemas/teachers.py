@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Literal,Optional
 from datetime import time
 from app.models.teachers import DayOfWeek
@@ -7,6 +7,16 @@ class Assignment(BaseModel):
     class_id: int
     section_id: int
     subject_id: int
+
+class TeacherPaymentCreate(BaseModel):
+    """Payment structure for teacher creation"""
+    basic_salary: float = Field(default=0.0, ge=0, description="Basic salary amount")
+    allowance: float = Field(default=0.0, ge=0, description="Allowance amount")
+    bonus: float = Field(default=0.0, ge=0, description="Bonus amount")
+    other_allowances: float = Field(default=0.0, ge=0, description="Other allowances amount")
+    incentive_plan: float = Field(default=0.0, ge=0, description="Incentive plan amount")
+    health_care_insurance: float = Field(default=0.0, ge=0, description="Health care insurance amount")
+    skill_development: float = Field(default=0.0, ge=0, description="Skill development amount")
 
 class TeacherCreateRequest(BaseModel):
     profile_image: Optional[str]=None
@@ -21,6 +31,7 @@ class TeacherCreateRequest(BaseModel):
     teacher_type: Literal["full_time", "part_time"]
     present_in: List[DayOfWeek]
     assignments: List[Assignment]
+    payment: Optional[TeacherPaymentCreate] = None  # Optional payment structure
 
 class TeacherUpdateRequest(BaseModel):
     profile_image: Optional[str] = None
