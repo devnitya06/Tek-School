@@ -11,19 +11,15 @@ class InstallmentTypeEnum(str, Enum):
 
 class StudentPaymentCreate(BaseModel):
     course_fee: float
-    course_fee_installment_type: InstallmentTypeEnum
     transport_fee: float
-    transport_fee_installment_type: InstallmentTypeEnum
     tek_school_fee: float
-    tek_school_fee_installment_type: InstallmentTypeEnum
+    installment_type: InstallmentTypeEnum
 
 class StudentPaymentUpdate(BaseModel):
     course_fee: Optional[float] = None
-    course_fee_installment_type: Optional[InstallmentTypeEnum] = None
     transport_fee: Optional[float] = None
-    transport_fee_installment_type: Optional[InstallmentTypeEnum] = None
     tek_school_fee: Optional[float] = None
-    tek_school_fee_installment_type: Optional[InstallmentTypeEnum] = None
+    installment_type: Optional[InstallmentTypeEnum] = None
     # Payment clear amounts (how much has been paid)
     course_fee_paid: Optional[float] = None
     transport_fee_paid: Optional[float] = None
@@ -56,11 +52,9 @@ class PaymentReminderRequest(BaseModel):
     amount_due: Optional[float] = Field(None, ge=0, description="Optional amount due information")
     # Fee fields for the payment request
     course_fee: Optional[float] = Field(None, ge=0, description="Course fee amount for this payment request")
-    course_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Course fee installment type")
     transport_fee: Optional[float] = Field(None, ge=0, description="Transport fee amount for this payment request")
-    transport_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Transport fee installment type")
     tek_school_fee: Optional[float] = Field(None, ge=0, description="Tek School fee amount for this payment request")
-    tek_school_fee_installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Tek School fee installment type")
+    installment_type: Optional[InstallmentTypeEnum] = Field(None, description="Installment type (applies to all fees)")
     # Bank account selection
     bank_account_id: Optional[int] = Field(None, description="Bank account ID to use for this payment (optional)")
 

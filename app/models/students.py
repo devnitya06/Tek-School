@@ -10,7 +10,7 @@ class StudentStatus(PyEnum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
 
-class InstallmentType(PyEnum):
+class InstallmentType(str, PyEnum):
     MONTHLY = "monthly"
     QUARTERLY = "quarterly"
     HALF_YEARLY = "half_yearly"
@@ -161,15 +161,15 @@ class StudentPayment(Base):
     
     # Course Fee
     course_fee = Column(Float, nullable=False, default=0.0)
-    course_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
     
     # Transport Fee
     transport_fee = Column(Float, nullable=False, default=0.0)
-    transport_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
     
     # Tek School Fee
     tek_school_fee = Column(Float, nullable=False, default=0.0)
-    tek_school_fee_installment_type = Column(Enum(InstallmentType), nullable=False, default=InstallmentType.YEARLY)
+    
+    # Installment Type (applies to all fees) - Using String to match database values
+    installment_type = Column(String(50), nullable=False, default=InstallmentType.YEARLY.value)
     
     # Payment Clear Amounts (how much has been paid/cleared)
     course_fee_paid = Column(Float, nullable=False, default=0.0)  # Amount paid for course fee
