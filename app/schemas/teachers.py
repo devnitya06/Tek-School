@@ -8,9 +8,9 @@ class Assignment(BaseModel):
     section_id: int
     subject_id: int
 
-class TeacherPaymentCreate(BaseModel):
-    """Payment structure for teacher creation"""
-    basic_salary: float = Field(default=0.0, ge=0, description="Basic salary amount")
+class EmployeePaymentCreate(BaseModel):
+    """Payment structure for teacher and staff creation"""
+    monthly_in_hand_salary: float = Field(default=0.0, ge=0, description="Monthly in-hand salary amount")
     allowance: float = Field(default=0.0, ge=0, description="Allowance amount")
     bonus: float = Field(default=0.0, ge=0, description="Bonus amount")
     other_allowances: float = Field(default=0.0, ge=0, description="Other allowances amount")
@@ -31,7 +31,7 @@ class TeacherCreateRequest(BaseModel):
     teacher_type: Literal["full_time", "part_time"]
     present_in: List[DayOfWeek]
     assignments: List[Assignment]
-    payment: Optional[TeacherPaymentCreate] = None  # Optional payment structure
+    payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure
 
 class TeacherUpdateRequest(BaseModel):
     profile_image: Optional[str] = None
@@ -44,7 +44,8 @@ class TeacherUpdateRequest(BaseModel):
     end_duty: Optional[time] = None 
     teacher_type: Optional[Literal["full_time", "part_time"]] = None
     present_in: Optional[List[DayOfWeek]] = None
-    assignments: Optional[List[Assignment]] = None 
+    assignments: Optional[List[Assignment]] = None
+    payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure update 
 class TeacherResponse(BaseModel):
     id: str
     profile_image:str

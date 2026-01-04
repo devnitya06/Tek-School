@@ -50,7 +50,7 @@ class Teacher(Base):
     created_exams = relationship("Exam", back_populates="teacher")
     leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
     home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
-    payment = relationship("TeacherPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
+    payment = relationship("TeacherStaffPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -79,17 +79,19 @@ class TeacherClassSectionSubject(Base):
     class_ = relationship("Class")
 
 
-class TeacherPayment(Base):
-    __tablename__ = "teacher_payments"
+class TeacherStaffPayment(Base):
+    __tablename__ = "teacher_staff_payments"
     __table_args__ = (
         UniqueConstraint('teacher_id', name='unique_teacher_payment'),
+        UniqueConstraint('staff_id', name='unique_staff_payment'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=False, unique=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True, unique=True)
+    staff_id = Column(String, ForeignKey("staff.id"), nullable=True, unique=True)
     
-    # Basic Salary
-    basic_salary = Column(Float, nullable=False, default=0.0)
+    # Monthly In-Hand Salary
+    monthly_in_hand_salary = Column(Float, nullable=False, default=0.0)
     
     # Allowances
     allowance = Column(Float, nullable=False, default=0.0)
@@ -106,4 +108,5 @@ class TeacherPayment(Base):
     
     # Relationships
     teacher = relationship("Teacher", back_populates="payment")
+    staff = relationship("Staff", back_populates="payment")
             

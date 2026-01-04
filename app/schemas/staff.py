@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, Field
 from typing import Optional, Literal, List, Dict, Any
 from decimal import Decimal
 from datetime import datetime
@@ -23,6 +23,16 @@ class StaffBase(BaseModel):
         return value
 
 
+class EmployeePaymentCreate(BaseModel):
+    """Payment structure for teacher and staff creation"""
+    monthly_in_hand_salary: float = Field(default=0.0, ge=0, description="Monthly in-hand salary amount")
+    allowance: float = Field(default=0.0, ge=0, description="Allowance amount")
+    bonus: float = Field(default=0.0, ge=0, description="Bonus amount")
+    other_allowances: float = Field(default=0.0, ge=0, description="Other allowances amount")
+    incentive_plan: float = Field(default=0.0, ge=0, description="Incentive plan amount")
+    health_care_insurance: float = Field(default=0.0, ge=0, description="Health care insurance amount")
+    skill_development: float = Field(default=0.0, ge=0, description="Skill development amount")
+
 class StaffCreateRequest(StaffBase):
     password: str
     employee_type: Optional[Literal["full_time", "part_time"]] = None
@@ -30,6 +40,7 @@ class StaffCreateRequest(StaffBase):
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
     permissions: Optional[List[StaffPermissionType]] = None
+    payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure
 
     @field_validator("password")
     def validate_password(cls, value: str) -> str:
@@ -50,6 +61,7 @@ class StaffUpdateRequest(BaseModel):
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+    payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure update
 
     @field_validator("phone")
     def validate_phone(cls, value: Optional[str]) -> Optional[str]:
