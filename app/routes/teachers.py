@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
-from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherPayment
+from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPayment
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
 from app.models.staff import Staff
 from app.schemas.users import UserRole
 from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from datetime import datetime, timedelta
@@ -107,9 +107,10 @@ def create_teacher(
 
         # Create Teacher Payment if payment data is provided
         if data.payment:
-            teacher_payment = TeacherPayment(
+            teacher_payment = TeacherStaffPayment(
                 teacher_id=teacher.id,
-                basic_salary=data.payment.basic_salary if data.payment.basic_salary is not None else 0.0,
+                staff_id=None,
+                monthly_in_hand_salary=data.payment.monthly_in_hand_salary if data.payment.monthly_in_hand_salary is not None else 0.0,
                 allowance=data.payment.allowance if data.payment.allowance is not None else 0.0,
                 bonus=data.payment.bonus if data.payment.bonus is not None else 0.0,
                 other_allowances=data.payment.other_allowances if data.payment.other_allowances is not None else 0.0,
@@ -120,9 +121,10 @@ def create_teacher(
             db.add(teacher_payment)
         else:
             # Create default payment structure with all zeros if not provided
-            teacher_payment = TeacherPayment(
+            teacher_payment = TeacherStaffPayment(
                 teacher_id=teacher.id,
-                basic_salary=0.0,
+                staff_id=None,
+                monthly_in_hand_salary=0.0,
                 allowance=0.0,
                 bonus=0.0,
                 other_allowances=0.0,
@@ -239,6 +241,7 @@ def get_all_teachers_for_school(
         .outerjoin(attendance_subq, Teacher.id == attendance_subq.c.teachers_id)
         .outerjoin(exam_subq, Teacher.id == exam_subq.c.teacher_id)
         .outerjoin(assignment_subq, Teacher.id == assignment_subq.c.teacher_id)
+        .options(joinedload(Teacher.payment))
         .filter(Teacher.school_id == school.id)
     )
 
@@ -276,8 +279,44 @@ def get_all_teachers_for_school(
     teachers = base_query.offset(pagination.offset()).limit(pagination.limit()).all()
 
     # --- Format Response ---
-    data = [
-        {
+    data = []
+    for index, (teacher, attendance_count, exam_count, class_count, subject_count) in enumerate(teachers):
+        # Get payment/salary information from TeacherStaffPayment (already eager loaded)
+        payment = teacher.payment
+        # Return default salary values (all zeros) if payment record doesn't exist
+        if payment:
+            salary = {
+                "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+                "allowance": payment.allowance,
+                "bonus": payment.bonus,
+                "other_allowances": payment.other_allowances,
+                "incentive_plan": payment.incentive_plan,
+                "health_care_insurance": payment.health_care_insurance,
+                "skill_development": payment.skill_development,
+                "total_salary": (
+                    payment.monthly_in_hand_salary +
+                    payment.allowance +
+                    payment.bonus +
+                    payment.other_allowances +
+                    payment.incentive_plan +
+                    payment.health_care_insurance +
+                    payment.skill_development
+                )
+            }
+        else:
+            # Default salary values when payment record doesn't exist
+            salary = {
+                "monthly_in_hand_salary": 0.0,
+                "allowance": 0.0,
+                "bonus": 0.0,
+                "other_allowances": 0.0,
+                "incentive_plan": 0.0,
+                "health_care_insurance": 0.0,
+                "skill_development": 0.0,
+                "total_salary": 0.0
+            }
+        
+        data.append({
             "sl_no": index + 1 + pagination.offset(),
             "teacher_id": teacher.id,
             "teacher_name": f"{teacher.first_name} {teacher.last_name}",
@@ -287,9 +326,8 @@ def get_all_teachers_for_school(
             "exam_count": exam_count or 0,
             "class_count": class_count or 0,
             "subject_count": subject_count or 0,
-        }
-        for index, (teacher, attendance_count, exam_count, class_count, subject_count) in enumerate(teachers)
-    ]
+            "salary": salary
+        })
 
     # --- Return Paginated Response ---
     return pagination.format_response(data, total_count)
@@ -325,6 +363,41 @@ def get_teacher_profile(
             "subject_name": a.subject.name if a.subject else None,
         })
 
+    # Get payment/salary information from TeacherStaffPayment
+    payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.teacher_id == teacher.id).first()
+    # Return default salary values (all zeros) if payment record doesn't exist
+    if payment:
+        salary = {
+            "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+            "allowance": payment.allowance,
+            "bonus": payment.bonus,
+            "other_allowances": payment.other_allowances,
+            "incentive_plan": payment.incentive_plan,
+            "health_care_insurance": payment.health_care_insurance,
+            "skill_development": payment.skill_development,
+            "total_salary": (
+                payment.monthly_in_hand_salary +
+                payment.allowance +
+                payment.bonus +
+                payment.other_allowances +
+                payment.incentive_plan +
+                payment.health_care_insurance +
+                payment.skill_development
+            )
+        }
+    else:
+        # Default salary values when payment record doesn't exist
+        salary = {
+            "monthly_in_hand_salary": 0.0,
+            "allowance": 0.0,
+            "bonus": 0.0,
+            "other_allowances": 0.0,
+            "incentive_plan": 0.0,
+            "health_care_insurance": 0.0,
+            "skill_development": 0.0,
+            "total_salary": 0.0
+        }
+
     return {
         "id": teacher.id,
         "school_id": teacher.school_id,
@@ -337,7 +410,8 @@ def get_teacher_profile(
         "teacher_type": teacher.teacher_type,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
-        "status": "active" if teacher.is_active else "inactive"
+        "status": "active" if teacher.is_active else "inactive",
+        "salary": salary
     }    
 
 @router.get("/teacher/{teacher_id}")
@@ -389,6 +463,41 @@ def get_teacher_by_id(
             "subject_name": a.subject.name if a.subject else None,
         })
 
+    # Get payment/salary information from TeacherStaffPayment
+    payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.teacher_id == teacher.id).first()
+    # Return default salary values (all zeros) if payment record doesn't exist
+    if payment:
+        salary = {
+            "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+            "allowance": payment.allowance,
+            "bonus": payment.bonus,
+            "other_allowances": payment.other_allowances,
+            "incentive_plan": payment.incentive_plan,
+            "health_care_insurance": payment.health_care_insurance,
+            "skill_development": payment.skill_development,
+            "total_salary": (
+                payment.monthly_in_hand_salary +
+                payment.allowance +
+                payment.bonus +
+                payment.other_allowances +
+                payment.incentive_plan +
+                payment.health_care_insurance +
+                payment.skill_development
+            )
+        }
+    else:
+        # Default salary values when payment record doesn't exist
+        salary = {
+            "monthly_in_hand_salary": 0.0,
+            "allowance": 0.0,
+            "bonus": 0.0,
+            "other_allowances": 0.0,
+            "incentive_plan": 0.0,
+            "health_care_insurance": 0.0,
+            "skill_development": 0.0,
+            "total_salary": 0.0
+        }
+
     return {
         "id": teacher.id,
         "profile_image": teacher.profile_image,
@@ -406,7 +515,8 @@ def get_teacher_by_id(
         "highest_qualification": teacher.highest_qualification,
         "university": teacher.university,
         "created_at": teacher.created_at,
-        "assignments": detailed_assignments
+        "assignments": detailed_assignments,
+        "salary": salary
     }
 
 @router.patch("/teacher/{teacher_id}")
@@ -463,10 +573,38 @@ def update_teacher_profile(
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"S3 Upload failed: {str(e)}")
 
-        # Update only provided fields (excluding profile_image and assignments)
-        update_fields = data.model_dump(exclude_unset=True, exclude={"profile_image", "assignments"})
+        # Update only provided fields (excluding profile_image, assignments, and payment)
+        update_fields = data.model_dump(exclude_unset=True, exclude={"profile_image", "assignments", "payment"})
         for field, value in update_fields.items():
             setattr(teacher, field, value)
+
+        # Handle payment/salary update if provided
+        if data.payment is not None:
+            # Get or create payment record
+            payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.teacher_id == teacher.id).first()
+            if payment:
+                # Update existing payment record
+                payment.monthly_in_hand_salary = data.payment.monthly_in_hand_salary
+                payment.allowance = data.payment.allowance
+                payment.bonus = data.payment.bonus
+                payment.other_allowances = data.payment.other_allowances
+                payment.incentive_plan = data.payment.incentive_plan
+                payment.health_care_insurance = data.payment.health_care_insurance
+                payment.skill_development = data.payment.skill_development
+            else:
+                # Create new payment record
+                payment = TeacherStaffPayment(
+                    teacher_id=teacher.id,
+                    staff_id=None,
+                    monthly_in_hand_salary=data.payment.monthly_in_hand_salary,
+                    allowance=data.payment.allowance,
+                    bonus=data.payment.bonus,
+                    other_allowances=data.payment.other_allowances,
+                    incentive_plan=data.payment.incentive_plan,
+                    health_care_insurance=data.payment.health_care_insurance,
+                    skill_development=data.payment.skill_development
+                )
+                db.add(payment)
 
         # Handle assignments if provided
         if data.assignments is not None:

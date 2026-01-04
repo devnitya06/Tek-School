@@ -10,6 +10,7 @@ from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.school import School
 from app.models.staff import Staff, ActivityLog, staff_permissions, StaffPermissionType
+from app.models.teachers import TeacherStaffPayment
 from app.models.users import User
 from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse, ActivityLogResponse
 from app.schemas.users import UserRole
@@ -96,6 +97,35 @@ def create_staff(
                         granted_by=current_user.id
                     )
                 )
+        
+        # Create Staff Payment if payment data is provided
+        if data.payment:
+            staff_payment = TeacherStaffPayment(
+                teacher_id=None,
+                staff_id=staff.id,
+                monthly_in_hand_salary=data.payment.monthly_in_hand_salary if data.payment.monthly_in_hand_salary is not None else 0.0,
+                allowance=data.payment.allowance if data.payment.allowance is not None else 0.0,
+                bonus=data.payment.bonus if data.payment.bonus is not None else 0.0,
+                other_allowances=data.payment.other_allowances if data.payment.other_allowances is not None else 0.0,
+                incentive_plan=data.payment.incentive_plan if data.payment.incentive_plan is not None else 0.0,
+                health_care_insurance=data.payment.health_care_insurance if data.payment.health_care_insurance is not None else 0.0,
+                skill_development=data.payment.skill_development if data.payment.skill_development is not None else 0.0
+            )
+            db.add(staff_payment)
+        else:
+            # Create default payment structure with all zeros if not provided
+            staff_payment = TeacherStaffPayment(
+                teacher_id=None,
+                staff_id=staff.id,
+                monthly_in_hand_salary=0.0,
+                allowance=0.0,
+                bonus=0.0,
+                other_allowances=0.0,
+                incentive_plan=0.0,
+                health_care_insurance=0.0,
+                skill_development=0.0
+            )
+            db.add(staff_payment)
         
         db.commit()
         db.refresh(staff)
@@ -228,6 +258,41 @@ def get_staff_profile(
     # Get staff permissions
     permissions = get_staff_permissions(staff.id, db)
 
+    # Get payment/salary information from TeacherStaffPayment
+    payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+    # Return default salary values (all zeros) if payment record doesn't exist
+    if payment:
+        salary = {
+            "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+            "allowance": payment.allowance,
+            "bonus": payment.bonus,
+            "other_allowances": payment.other_allowances,
+            "incentive_plan": payment.incentive_plan,
+            "health_care_insurance": payment.health_care_insurance,
+            "skill_development": payment.skill_development,
+            "total_salary": (
+                payment.monthly_in_hand_salary +
+                payment.allowance +
+                payment.bonus +
+                payment.other_allowances +
+                payment.incentive_plan +
+                payment.health_care_insurance +
+                payment.skill_development
+            )
+        }
+    else:
+        # Default salary values when payment record doesn't exist
+        salary = {
+            "monthly_in_hand_salary": 0.0,
+            "allowance": 0.0,
+            "bonus": 0.0,
+            "other_allowances": 0.0,
+            "incentive_plan": 0.0,
+            "health_care_insurance": 0.0,
+            "skill_development": 0.0,
+            "total_salary": 0.0
+        }
+
     return {
         "id": staff.id,
         "school_id": staff.school_id,
@@ -243,6 +308,7 @@ def get_staff_profile(
         "casual_leave": staff.casual_leave or 0,
         "is_active": staff.is_active,
         "permissions": permissions,
+        "salary": salary,
         "created_at": staff.created_at.isoformat() if staff.created_at else None,
         "updated_at": staff.updated_at.isoformat() if staff.updated_at else None,
     }
@@ -324,7 +390,7 @@ def update_staff_profile(
             user.phone = data.phone
 
         # Update staff fields
-        update_fields = data.model_dump(exclude_unset=True, exclude={"email", "phone"})
+        update_fields = data.model_dump(exclude_unset=True, exclude={"email", "phone", "payment"})
         for field, value in update_fields.items():
             if value is not None:
                 setattr(staff, field, value)
@@ -333,6 +399,34 @@ def update_staff_profile(
             staff.email = data.email
         if data.phone is not None:
             staff.phone = data.phone
+
+        # Handle payment/salary update if provided
+        if data.payment is not None:
+            # Get or create payment record
+            payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+            if payment:
+                # Update existing payment record
+                payment.monthly_in_hand_salary = data.payment.monthly_in_hand_salary
+                payment.allowance = data.payment.allowance
+                payment.bonus = data.payment.bonus
+                payment.other_allowances = data.payment.other_allowances
+                payment.incentive_plan = data.payment.incentive_plan
+                payment.health_care_insurance = data.payment.health_care_insurance
+                payment.skill_development = data.payment.skill_development
+            else:
+                # Create new payment record
+                payment = TeacherStaffPayment(
+                    teacher_id=None,
+                    staff_id=staff.id,
+                    monthly_in_hand_salary=data.payment.monthly_in_hand_salary,
+                    allowance=data.payment.allowance,
+                    bonus=data.payment.bonus,
+                    other_allowances=data.payment.other_allowances,
+                    incentive_plan=data.payment.incentive_plan,
+                    health_care_insurance=data.payment.health_care_insurance,
+                    skill_development=data.payment.skill_development
+                )
+                db.add(payment)
 
         db.commit()
         db.refresh(staff)
@@ -703,6 +797,41 @@ def get_staff_list(
             ActivityLog.school_id == school.id
         ).count()
         
+        # Get payment/salary information from TeacherStaffPayment
+        payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+        # Return default salary values (all zeros) if payment record doesn't exist
+        if payment:
+            salary = {
+                "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+                "allowance": payment.allowance,
+                "bonus": payment.bonus,
+                "other_allowances": payment.other_allowances,
+                "incentive_plan": payment.incentive_plan,
+                "health_care_insurance": payment.health_care_insurance,
+                "skill_development": payment.skill_development,
+                "total_salary": (
+                    payment.monthly_in_hand_salary +
+                    payment.allowance +
+                    payment.bonus +
+                    payment.other_allowances +
+                    payment.incentive_plan +
+                    payment.health_care_insurance +
+                    payment.skill_development
+                )
+            }
+        else:
+            # Default salary values when payment record doesn't exist
+            salary = {
+                "monthly_in_hand_salary": 0.0,
+                "allowance": 0.0,
+                "bonus": 0.0,
+                "other_allowances": 0.0,
+                "incentive_plan": 0.0,
+                "health_care_insurance": 0.0,
+                "skill_development": 0.0,
+                "total_salary": 0.0
+            }
+        
         result.append({
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
@@ -710,7 +839,8 @@ def get_staff_list(
             "phone": staff.phone,
             "permissions": permissions,
             "date_of_joining": staff.created_at.isoformat() if staff.created_at else None,
-            "activity_logs_count": activity_logs_count
+            "activity_logs_count": activity_logs_count,
+            "salary": salary
         })
     
     return pagination.format_response(result, total_count)
