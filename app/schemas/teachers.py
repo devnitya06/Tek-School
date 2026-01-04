@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Literal,Optional
-from datetime import time
-from app.models.teachers import DayOfWeek
+from datetime import time, datetime, date
+from app.models.teachers import DayOfWeek, PaymentMode
 
 class Assignment(BaseModel):
     class_id: int
@@ -59,6 +59,92 @@ class TeacherResponse(BaseModel):
     end_duty: time
     teacher_type: Literal["full_time", "part_time"]
     present_in: DayOfWeek
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class TeacherStaffPaymentRequest(BaseModel):
+    """Request schema for making a payment to teacher or staff"""
+    payment_month: str = Field(..., description="Payment month in YYYY-MM format (e.g., '2025-01')")
+    release_date: datetime = Field(..., description="Date when the payment is released")
+    total_amount: float = Field(..., ge=0, description="Total payment amount for this month")
+    payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+
+
+class TeacherStaffPaymentTransactionResponse(BaseModel):
+    """Response schema for payment transaction"""
+    id: int
+    payment_month: str
+    total_amount: float
+    payment_mode: str
+    release_date: datetime
+    created_at: datetime
+    
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class TeacherPaymentItem(BaseModel):
+    """Individual teacher payment item for bulk payment"""
+    teacher_id: str = Field(..., description="Teacher ID")
+    payment_month: str = Field(..., description="Payment month in YYYY-MM format (e.g., '2025-01')")
+    release_date: datetime = Field(..., description="Date when the payment is released")
+    total_amount: float = Field(..., ge=0, description="Total payment amount for this teacher")
+    payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+
+
+class StaffPaymentItem(BaseModel):
+    """Individual staff payment item for bulk payment"""
+    staff_id: str = Field(..., description="Staff ID")
+    payment_month: str = Field(..., description="Payment month in YYYY-MM format (e.g., '2025-01')")
+    release_date: datetime = Field(..., description="Date when the payment is released")
+    total_amount: float = Field(..., ge=0, description="Total payment amount for this staff member")
+    payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+
+
+class BulkTeacherPaymentRequest(BaseModel):
+    """Request schema for making bulk payments to multiple teachers"""
+    payments: List[TeacherPaymentItem] = Field(..., description="List of payments with teacher_id, payment_month, release_date, total_amount, and payment_mode")
+
+
+class BulkStaffPaymentRequest(BaseModel):
+    """Request schema for making bulk payments to multiple staff members"""
+    payments: List[StaffPaymentItem] = Field(..., description="List of payments with staff_id, payment_month, release_date, total_amount, and payment_mode")
+
+
+class FailedPaymentItem(BaseModel):
+    """Failed payment item with error message"""
+    teacher_id: Optional[str] = None
+    staff_id: Optional[str] = None
+    error: str = Field(..., description="Error message explaining why payment failed")
+
+
+class BulkPaymentResponse(BaseModel):
+    """Response schema for bulk payment operation"""
+    success_count: int
+    failed_count: int
+    successful_payments: List[TeacherStaffPaymentTransactionResponse]
+    failed_payments: List[FailedPaymentItem]
+
+
+class PendingMonthResponse(BaseModel):
+    """Response schema for pending payment months"""
+    month: str = Field(..., description="Month in YYYY-MM format")
+    month_name: str = Field(..., description="Human-readable month name (e.g., 'January 2025')")
+    is_paid: bool = Field(..., description="Whether payment has been made for this month")
+    payment_date: Optional[datetime] = Field(None, description="Date when payment was made (if paid)")
+
+
+class EmployeePaymentListResponse(BaseModel):
+    """Response schema for employee (teacher/staff) list with payments"""
+    id: str = Field(..., description="Employee ID (teacher_id or staff_id)")
+    name: str = Field(..., description="Employee full name")
+    role: str = Field(..., description="Employee role: 'teacher' or 'staff'")
+    payment_count: int = Field(..., description="Total number of payments made")
+    last_3_payments: List[TeacherStaffPaymentTransactionResponse] = Field(..., description="Last 3 payment transactions")
+    
     model_config = {
         "from_attributes": True
     }

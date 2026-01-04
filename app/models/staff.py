@@ -72,6 +72,7 @@ class ActionType(str, PyEnum):
 class ResourceType(str, PyEnum):
     STUDENT = "student"
     TEACHER = "teacher"
+    STAFF = "staff"
     LEAVE_REQUEST = "leave_request"
     CLASS = "class"
     TRANSPORT = "transport"

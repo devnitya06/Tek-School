@@ -1,18 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
-from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPayment
+from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPayment,TeacherStaffPaymentTransaction
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
 from app.models.staff import Staff
 from app.schemas.users import UserRole
-from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest
+from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest,TeacherStaffPaymentRequest,TeacherStaffPaymentTransactionResponse,PendingMonthResponse,BulkTeacherPaymentRequest,BulkPaymentResponse,FailedPaymentItem,BulkTeacherPaymentRequest,BulkPaymentResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from calendar import month_name
 from typing import List
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from app.utils.s3 import upload_base64_to_s3
@@ -776,3 +777,361 @@ def get_teacher_subjects(
         }
         for r in results
     ]
+
+
+def get_months_between_dates(start_date: date, end_date: date) -> List[str]:
+    """Generate list of months (YYYY-MM format) between two dates"""
+    months = []
+    current = start_date.replace(day=1)  # Start from first day of month
+    end = end_date.replace(day=1)
+    
+    while current <= end:
+        months.append(current.strftime("%Y-%m"))
+        # Move to next month
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+    
+    return months
+
+
+@router.post(
+    "/{teacher_id}/payments/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TeacherStaffPaymentTransactionResponse,
+    summary="Make payment to teacher",
+    description="Record a monthly payment for a teacher. Prevents duplicate payments for the same month."
+)
+def make_teacher_payment(
+    teacher_id: str,
+    data: TeacherStaffPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make a payment to a teacher for a specific month"""
+    # Only school users can make payments
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    
+    # Get teacher
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id,
+        Teacher.school_id == school.id
+    ).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
+    
+    # Get or create payment structure
+    payment_structure = db.query(TeacherStaffPayment).filter(
+        TeacherStaffPayment.teacher_id == teacher.id
+    ).first()
+    
+    if not payment_structure:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment structure not found. Please set up payment structure for this teacher first."
+        )
+    
+    # Validate payment month format (YYYY-MM)
+    try:
+        payment_month_date = datetime.strptime(data.payment_month, "%Y-%m").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payment_month format. Use YYYY-MM format (e.g., '2025-01').")
+    
+    # Check if payment already exists for this month
+    existing_payment = db.query(TeacherStaffPaymentTransaction).filter(
+        and_(
+            TeacherStaffPaymentTransaction.teacher_id == teacher_id,
+            TeacherStaffPaymentTransaction.payment_month == data.payment_month
+        )
+    ).first()
+    
+    if existing_payment:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Payment for month {data.payment_month} already exists. Each month can only be paid once."
+        )
+    
+    # Validate that payment month is not in the future
+    current_month = date.today().replace(day=1)
+    if payment_month_date > current_month:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot make payment for future months."
+        )
+    
+    try:
+        # Create payment transaction
+        transaction = TeacherStaffPaymentTransaction(
+            payment_structure_id=payment_structure.id,
+            teacher_id=teacher_id,
+            staff_id=None,
+            payment_month=data.payment_month,
+            total_amount=data.total_amount,
+            payment_mode=data.payment_mode,
+            release_date=data.release_date,
+            created_by=current_user.id
+        )
+        db.add(transaction)
+        db.commit()
+        db.refresh(transaction)
+        
+        return transaction
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post(
+    "/bulk-payments/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkPaymentResponse,
+    summary="Make bulk payments to multiple teachers",
+    description="Record monthly payments for multiple teachers at once. Prevents duplicate payments for the same month."
+)
+def make_bulk_teacher_payments(
+    data: BulkTeacherPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make payments to multiple teachers for a specific month"""
+    # Only school users can make payments
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    
+    successful_payments = []
+    failed_payments = []
+    
+    try:
+        for payment_item in data.payments:
+            teacher_id = payment_item.teacher_id
+            total_amount = payment_item.total_amount
+            payment_month = payment_item.payment_month
+            release_date = payment_item.release_date
+            payment_mode = payment_item.payment_mode
+            
+            # Validate payment month format (YYYY-MM)
+            try:
+                payment_month_date = datetime.strptime(payment_month, "%Y-%m").date()
+            except ValueError:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=teacher_id,
+                    staff_id=None,
+                    error="Invalid payment_month format. Use YYYY-MM format (e.g., '2025-01')."
+                ))
+                continue
+            
+            # Validate that payment month is not in the future
+            current_month = date.today().replace(day=1)
+            if payment_month_date > current_month:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=teacher_id,
+                    staff_id=None,
+                    error="Cannot make payment for future months."
+                ))
+                continue
+            
+            # Get teacher
+            teacher = db.query(Teacher).filter(
+                Teacher.id == teacher_id,
+                Teacher.school_id == school.id
+            ).first()
+            
+            if not teacher:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=teacher_id,
+                    staff_id=None,
+                    error="Teacher not found or doesn't belong to your school"
+                ))
+                continue
+            
+            # Get payment structure
+            payment_structure = db.query(TeacherStaffPayment).filter(
+                TeacherStaffPayment.teacher_id == teacher.id
+            ).first()
+            
+            if not payment_structure:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=teacher_id,
+                    staff_id=None,
+                    error="Payment structure not found. Please set up payment structure for this teacher first."
+                ))
+                continue
+            
+            # Check if payment already exists for this month
+            existing_payment = db.query(TeacherStaffPaymentTransaction).filter(
+                and_(
+                    TeacherStaffPaymentTransaction.teacher_id == teacher_id,
+                    TeacherStaffPaymentTransaction.payment_month == payment_month
+                )
+            ).first()
+            
+            if existing_payment:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=teacher_id,
+                    staff_id=None,
+                    error=f"Payment for month {payment_month} already exists. Each month can only be paid once."
+                ))
+                continue
+            
+            # Create payment transaction
+            transaction = TeacherStaffPaymentTransaction(
+                payment_structure_id=payment_structure.id,
+                teacher_id=teacher_id,
+                staff_id=None,
+                payment_month=payment_month,
+                total_amount=total_amount,
+                payment_mode=payment_mode,
+                release_date=release_date,
+                created_by=current_user.id
+            )
+            db.add(transaction)
+            successful_payments.append(transaction)
+        
+        # Commit all successful payments at once
+        db.commit()
+        
+        # Refresh all successful transactions
+        for transaction in successful_payments:
+            db.refresh(transaction)
+        
+        return BulkPaymentResponse(
+            success_count=len(successful_payments),
+            failed_count=len(failed_payments),
+            successful_payments=successful_payments,
+            failed_payments=failed_payments
+        )
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get(
+    "/{teacher_id}/payments/",
+    response_model=List[TeacherStaffPaymentTransactionResponse],
+    summary="Get teacher payment history",
+    description="Get all payment transactions for a teacher"
+)
+def get_teacher_payment_history(
+    teacher_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get payment history for a teacher"""
+    # Allow school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view payment history.")
+    
+    # Get school
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    
+    # Get teacher
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id,
+        Teacher.school_id == school.id
+    ).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
+    
+    # Get payment transactions
+    transactions = db.query(TeacherStaffPaymentTransaction).filter(
+        TeacherStaffPaymentTransaction.teacher_id == teacher_id
+    ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).all()
+    
+    return transactions
+
+
+@router.get(
+    "/{teacher_id}/payments/pending-months/",
+    response_model=List[PendingMonthResponse],
+    summary="Get pending payment months for teacher",
+    description="Get list of months that need payment, calculated from teacher's created_at date"
+)
+def get_teacher_pending_months(
+    teacher_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get pending payment months for a teacher"""
+    # Allow school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view pending months.")
+    
+    # Get school
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    else:  # STAFF
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    
+    # Get teacher
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id,
+        Teacher.school_id == school.id
+    ).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
+    
+    # Calculate months from created_at to current month
+    created_date = teacher.created_at.date() if isinstance(teacher.created_at, datetime) else teacher.created_at
+    current_date = date.today()
+    
+    # Get all months from created_at to current month
+    all_months = get_months_between_dates(created_date, current_date)
+    
+    # Get paid months
+    paid_transactions = db.query(TeacherStaffPaymentTransaction).filter(
+        TeacherStaffPaymentTransaction.teacher_id == teacher_id
+    ).all()
+    paid_months = {t.payment_month for t in paid_transactions}
+    
+    # Build response
+    result = []
+    for month_str in all_months:
+        month_date = datetime.strptime(month_str, "%Y-%m").date()
+        from calendar import month_name
+        month_name_str = f"{month_name[month_date.month]} {month_date.year}"
+        
+        # Find payment transaction for this month if paid
+        payment_transaction = next(
+            (t for t in paid_transactions if t.payment_month == month_str),
+            None
+        )
+        
+        result.append(PendingMonthResponse(
+            month=month_str,
+            month_name=month_name_str,
+            is_paid=month_str in paid_months,
+            payment_date=payment_transaction.release_date if payment_transaction else None
+        ))
+    
+    return result

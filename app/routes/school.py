@@ -1,7 +1,7 @@
 from datetime import datetime,date
 from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form
 from app.models.users import User
-from app.models.teachers import Teacher,TeacherClassSectionSubject
+from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
 from app.models.students import Student
 from app.models.staff import Staff
 from app.models.school import (
@@ -21,6 +21,7 @@ from app.schemas.school import (
     TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
     StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum,ExamFilterParams,BankAccountCreate,
     BankAccountUpdate,BankAccountResponse)
+from app.schemas.teachers import EmployeePaymentListResponse, TeacherStaffPaymentTransactionResponse
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case,cast,String
@@ -4443,3 +4444,178 @@ def delete_bank_account(
     db.commit()
 
     return None
+
+
+@router.get(
+    "/employees-payments/",
+    summary="Get all teachers and staff with their payment information",
+    description="Get a paginated combined list of all teachers and staff members with their last 3 payments and total payment count. Supports pagination and filtering by id, name, role, and last payment release date."
+)
+def get_employees_with_payments(
+    pagination: PaginationParams = Depends(),
+    employee_id: Optional[str] = Query(None, description="Filter by employee ID (teacher_id or staff_id)"),
+    name: Optional[str] = Query(None, description="Filter by employee name (searches in first_name and last_name)"),
+    role: Optional[str] = Query(None, description="Filter by role: 'teacher' or 'staff'"),
+    release_start_date: Optional[date] = Query(None, description="Filter by last payment release date (start date, inclusive)"),
+    release_end_date: Optional[date] = Query(None, description="Filter by last payment release date (end date, inclusive)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a combined list of all teachers and staff members with:
+    - Employee ID
+    - Name
+    - Role (teacher or staff)
+    - Total payment count
+    - Last 3 payment transactions
+    
+    Filters:
+    - employee_id: Search by teacher_id or staff_id
+    - name: Search by employee name
+    - role: Filter by 'teacher' or 'staff'
+    - release_start_date: Filter by last payment release date (start)
+    - release_end_date: Filter by last payment release date (end)
+    """
+    # Only school and staff users can access
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can access this resource"
+        )
+    
+    # Get school based on user role
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found")
+    elif current_user.role == UserRole.STAFF:
+        staff_member = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff_member:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school = db.query(School).filter(School.id == staff_member.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found for this staff member")
+    
+    result = []
+    
+    # Build teacher query with filters
+    teacher_query = db.query(Teacher).filter(Teacher.school_id == school.id)
+    
+    # Apply ID filter for teachers
+    if employee_id:
+        teacher_query = teacher_query.filter(Teacher.id.ilike(f"%{employee_id}%"))
+    
+    # Apply name filter for teachers
+    if name:
+        teacher_query = teacher_query.filter(
+            or_(
+                Teacher.first_name.ilike(f"%{name}%"),
+                Teacher.last_name.ilike(f"%{name}%")
+            )
+        )
+    
+    teachers = teacher_query.all()
+    
+    # Build staff query with filters
+    staff_query = db.query(Staff).filter(Staff.school_id == school.id)
+    
+    # Apply ID filter for staff
+    if employee_id:
+        staff_query = staff_query.filter(Staff.id.ilike(f"%{employee_id}%"))
+    
+    # Apply name filter for staff
+    if name:
+        staff_query = staff_query.filter(
+            or_(
+                Staff.first_name.ilike(f"%{name}%"),
+                Staff.last_name.ilike(f"%{name}%")
+            )
+        )
+    
+    staff_members = staff_query.all()
+    
+    # Process teachers
+    for teacher in teachers:
+        # Skip if role filter is set and doesn't match
+        if role and role.lower() != "teacher":
+            continue
+        
+        # Get last payment (for release date filtering)
+        last_payment = db.query(TeacherStaffPaymentTransaction).filter(
+            TeacherStaffPaymentTransaction.teacher_id == teacher.id
+        ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).first()
+        
+        # Filter by release date if provided
+        if release_start_date or release_end_date:
+            if not last_payment:
+                continue  # Skip if no payment and date filter is applied
+            last_release_date = last_payment.release_date.date() if isinstance(last_payment.release_date, datetime) else last_payment.release_date
+            if release_start_date and last_release_date < release_start_date:
+                continue
+            if release_end_date and last_release_date > release_end_date:
+                continue
+        
+        # Get payment count
+        payment_count = db.query(func.count(TeacherStaffPaymentTransaction.id)).filter(
+            TeacherStaffPaymentTransaction.teacher_id == teacher.id
+        ).scalar() or 0
+        
+        # Get last 3 payments
+        last_payments = db.query(TeacherStaffPaymentTransaction).filter(
+            TeacherStaffPaymentTransaction.teacher_id == teacher.id
+        ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).limit(3).all()
+        
+        result.append(EmployeePaymentListResponse(
+            id=teacher.id,
+            name=f"{teacher.first_name} {teacher.last_name}",
+            role="teacher",
+            payment_count=payment_count,
+            last_3_payments=last_payments
+        ))
+    
+    # Process staff
+    for staff in staff_members:
+        # Skip if role filter is set and doesn't match
+        if role and role.lower() != "staff":
+            continue
+        
+        # Get last payment (for release date filtering)
+        last_payment = db.query(TeacherStaffPaymentTransaction).filter(
+            TeacherStaffPaymentTransaction.staff_id == staff.id
+        ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).first()
+        
+        # Filter by release date if provided
+        if release_start_date or release_end_date:
+            if not last_payment:
+                continue  # Skip if no payment and date filter is applied
+            last_release_date = last_payment.release_date.date() if isinstance(last_payment.release_date, datetime) else last_payment.release_date
+            if release_start_date and last_release_date < release_start_date:
+                continue
+            if release_end_date and last_release_date > release_end_date:
+                continue
+        
+        # Get payment count
+        payment_count = db.query(func.count(TeacherStaffPaymentTransaction.id)).filter(
+            TeacherStaffPaymentTransaction.staff_id == staff.id
+        ).scalar() or 0
+        
+        # Get last 3 payments
+        last_payments = db.query(TeacherStaffPaymentTransaction).filter(
+            TeacherStaffPaymentTransaction.staff_id == staff.id
+        ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).limit(3).all()
+        
+        result.append(EmployeePaymentListResponse(
+            id=staff.id,
+            name=f"{staff.first_name} {staff.last_name}",
+            role="staff",
+            payment_count=payment_count,
+            last_3_payments=last_payments
+        ))
+    
+    # Apply pagination
+    total_count = len(result)
+    start = (pagination.page - 1) * pagination.per_page
+    end = start + pagination.per_page
+    paginated_result = result[start:end]
+    
+    return pagination.format_response(paginated_result, total_count)
