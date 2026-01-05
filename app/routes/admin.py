@@ -657,16 +657,16 @@ def get_all_classes(
     school_medium: Optional[SchoolMedium] = None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SCHOOL,UserRole.TEACHER,UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SCHOOL,UserRole.TEACHER,UserRole.STUDENT,UserRole.SELF_SIGNED_STUDENT))
 ):
     """Fetch all unique classes filtered by board & medium."""
 
     # 🔐 Access Control
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to view classes."
-        )
+    # if current_user.role != UserRole.ADMIN:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="Only admin account is allowed to view classes."
+    #     )
 
     try:
         query = db.query(SchoolClassSubject.class_name).distinct()
