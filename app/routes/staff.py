@@ -3,20 +3,24 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 import re
-from datetime import date
+from datetime import date, datetime
+from calendar import month_name
 
 from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.school import School
-from app.models.staff import Staff, ActivityLog, staff_permissions, StaffPermissionType
+from app.models.staff import Staff, ActivityLog, staff_permissions, StaffPermissionType, ActionType, ResourceType
+from app.models.teachers import TeacherStaffPayment, TeacherStaffPaymentTransaction
 from app.models.users import User
 from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse, ActivityLogResponse
+from app.schemas.teachers import TeacherStaffPaymentRequest, TeacherStaffPaymentTransactionResponse, PendingMonthResponse, BulkStaffPaymentRequest, BulkPaymentResponse, FailedPaymentItem, BulkStaffPaymentRequest, BulkPaymentResponse
 from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
 from app.utils.permission import get_staff_permissions, require_roles
+from app.utils.staff_logging import log_action
 from app.services.pagination import PaginationParams
-from typing import Optional
+from typing import Optional, List
 
 router = APIRouter()
 
@@ -96,6 +100,35 @@ def create_staff(
                         granted_by=current_user.id
                     )
                 )
+        
+        # Create Staff Payment if payment data is provided
+        if data.payment:
+            staff_payment = TeacherStaffPayment(
+                teacher_id=None,
+                staff_id=staff.id,
+                monthly_in_hand_salary=data.payment.monthly_in_hand_salary if data.payment.monthly_in_hand_salary is not None else 0.0,
+                allowance=data.payment.allowance if data.payment.allowance is not None else 0.0,
+                bonus=data.payment.bonus if data.payment.bonus is not None else 0.0,
+                other_allowances=data.payment.other_allowances if data.payment.other_allowances is not None else 0.0,
+                incentive_plan=data.payment.incentive_plan if data.payment.incentive_plan is not None else 0.0,
+                health_care_insurance=data.payment.health_care_insurance if data.payment.health_care_insurance is not None else 0.0,
+                skill_development=data.payment.skill_development if data.payment.skill_development is not None else 0.0
+            )
+            db.add(staff_payment)
+        else:
+            # Create default payment structure with all zeros if not provided
+            staff_payment = TeacherStaffPayment(
+                teacher_id=None,
+                staff_id=staff.id,
+                monthly_in_hand_salary=0.0,
+                allowance=0.0,
+                bonus=0.0,
+                other_allowances=0.0,
+                incentive_plan=0.0,
+                health_care_insurance=0.0,
+                skill_development=0.0
+            )
+            db.add(staff_payment)
         
         db.commit()
         db.refresh(staff)
@@ -228,6 +261,41 @@ def get_staff_profile(
     # Get staff permissions
     permissions = get_staff_permissions(staff.id, db)
 
+    # Get payment/salary information from TeacherStaffPayment
+    payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+    # Return default salary values (all zeros) if payment record doesn't exist
+    if payment:
+        salary = {
+            "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+            "allowance": payment.allowance,
+            "bonus": payment.bonus,
+            "other_allowances": payment.other_allowances,
+            "incentive_plan": payment.incentive_plan,
+            "health_care_insurance": payment.health_care_insurance,
+            "skill_development": payment.skill_development,
+            "total_salary": (
+                payment.monthly_in_hand_salary +
+                payment.allowance +
+                payment.bonus +
+                payment.other_allowances +
+                payment.incentive_plan +
+                payment.health_care_insurance +
+                payment.skill_development
+            )
+        }
+    else:
+        # Default salary values when payment record doesn't exist
+        salary = {
+            "monthly_in_hand_salary": 0.0,
+            "allowance": 0.0,
+            "bonus": 0.0,
+            "other_allowances": 0.0,
+            "incentive_plan": 0.0,
+            "health_care_insurance": 0.0,
+            "skill_development": 0.0,
+            "total_salary": 0.0
+        }
+
     return {
         "id": staff.id,
         "school_id": staff.school_id,
@@ -243,6 +311,7 @@ def get_staff_profile(
         "casual_leave": staff.casual_leave or 0,
         "is_active": staff.is_active,
         "permissions": permissions,
+        "salary": salary,
         "created_at": staff.created_at.isoformat() if staff.created_at else None,
         "updated_at": staff.updated_at.isoformat() if staff.updated_at else None,
     }
@@ -324,7 +393,7 @@ def update_staff_profile(
             user.phone = data.phone
 
         # Update staff fields
-        update_fields = data.model_dump(exclude_unset=True, exclude={"email", "phone"})
+        update_fields = data.model_dump(exclude_unset=True, exclude={"email", "phone", "payment"})
         for field, value in update_fields.items():
             if value is not None:
                 setattr(staff, field, value)
@@ -333,6 +402,34 @@ def update_staff_profile(
             staff.email = data.email
         if data.phone is not None:
             staff.phone = data.phone
+
+        # Handle payment/salary update if provided
+        if data.payment is not None:
+            # Get or create payment record
+            payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+            if payment:
+                # Update existing payment record
+                payment.monthly_in_hand_salary = data.payment.monthly_in_hand_salary
+                payment.allowance = data.payment.allowance
+                payment.bonus = data.payment.bonus
+                payment.other_allowances = data.payment.other_allowances
+                payment.incentive_plan = data.payment.incentive_plan
+                payment.health_care_insurance = data.payment.health_care_insurance
+                payment.skill_development = data.payment.skill_development
+            else:
+                # Create new payment record
+                payment = TeacherStaffPayment(
+                    teacher_id=None,
+                    staff_id=staff.id,
+                    monthly_in_hand_salary=data.payment.monthly_in_hand_salary,
+                    allowance=data.payment.allowance,
+                    bonus=data.payment.bonus,
+                    other_allowances=data.payment.other_allowances,
+                    incentive_plan=data.payment.incentive_plan,
+                    health_care_insurance=data.payment.health_care_insurance,
+                    skill_development=data.payment.skill_development
+                )
+                db.add(payment)
 
         db.commit()
         db.refresh(staff)
@@ -703,6 +800,41 @@ def get_staff_list(
             ActivityLog.school_id == school.id
         ).count()
         
+        # Get payment/salary information from TeacherStaffPayment
+        payment = db.query(TeacherStaffPayment).filter(TeacherStaffPayment.staff_id == staff.id).first()
+        # Return default salary values (all zeros) if payment record doesn't exist
+        if payment:
+            salary = {
+                "monthly_in_hand_salary": payment.monthly_in_hand_salary,
+                "allowance": payment.allowance,
+                "bonus": payment.bonus,
+                "other_allowances": payment.other_allowances,
+                "incentive_plan": payment.incentive_plan,
+                "health_care_insurance": payment.health_care_insurance,
+                "skill_development": payment.skill_development,
+                "total_salary": (
+                    payment.monthly_in_hand_salary +
+                    payment.allowance +
+                    payment.bonus +
+                    payment.other_allowances +
+                    payment.incentive_plan +
+                    payment.health_care_insurance +
+                    payment.skill_development
+                )
+            }
+        else:
+            # Default salary values when payment record doesn't exist
+            salary = {
+                "monthly_in_hand_salary": 0.0,
+                "allowance": 0.0,
+                "bonus": 0.0,
+                "other_allowances": 0.0,
+                "incentive_plan": 0.0,
+                "health_care_insurance": 0.0,
+                "skill_development": 0.0,
+                "total_salary": 0.0
+            }
+        
         result.append({
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
@@ -710,8 +842,370 @@ def get_staff_list(
             "phone": staff.phone,
             "permissions": permissions,
             "date_of_joining": staff.created_at.isoformat() if staff.created_at else None,
-            "activity_logs_count": activity_logs_count
+            "activity_logs_count": activity_logs_count,
+            "salary": salary
         })
     
     return pagination.format_response(result, total_count)
+
+
+def get_months_between_dates(start_date: date, end_date: date) -> List[str]:
+    """Generate list of months (YYYY-MM format) between two dates"""
+    months = []
+    current = start_date.replace(day=1)  # Start from first day of month
+    end = end_date.replace(day=1)
+    
+    while current <= end:
+        months.append(current.strftime("%Y-%m"))
+        # Move to next month
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+    
+    return months
+
+
+@router.post(
+    "/{staff_id}/payments/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TeacherStaffPaymentTransactionResponse,
+    summary="Make payment to staff",
+    description="Record a monthly payment for a staff member. Prevents duplicate payments for the same month."
+)
+def make_staff_payment(
+    staff_id: str,
+    data: TeacherStaffPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make a payment to a staff member for a specific month"""
+    # Only school users can make payments
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    
+    # Get staff
+    staff = db.query(Staff).filter(
+        Staff.id == staff_id,
+        Staff.school_id == school.id
+    ).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found or doesn't belong to your school.")
+    
+    # Get or create payment structure
+    payment_structure = db.query(TeacherStaffPayment).filter(
+        TeacherStaffPayment.staff_id == staff.id
+    ).first()
+    
+    if not payment_structure:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment structure not found. Please set up payment structure for this staff member first."
+        )
+    
+    # Validate payment month format (YYYY-MM)
+    try:
+        payment_month_date = datetime.strptime(data.payment_month, "%Y-%m").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payment_month format. Use YYYY-MM format (e.g., '2025-01').")
+    
+    # Check if payment already exists for this month
+    existing_payment = db.query(TeacherStaffPaymentTransaction).filter(
+        and_(
+            TeacherStaffPaymentTransaction.staff_id == staff_id,
+            TeacherStaffPaymentTransaction.payment_month == data.payment_month
+        )
+    ).first()
+    
+    if existing_payment:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Payment for month {data.payment_month} already exists. Each month can only be paid once."
+        )
+    
+    # Validate that payment month is not in the future
+    current_month = date.today().replace(day=1)
+    if payment_month_date > current_month:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot make payment for future months."
+        )
+    
+    try:
+        # Create payment transaction
+        transaction = TeacherStaffPaymentTransaction(
+            payment_structure_id=payment_structure.id,
+            teacher_id=None,
+            staff_id=staff_id,
+            payment_month=data.payment_month,
+            total_amount=data.total_amount,
+            payment_mode=data.payment_mode,
+            release_date=data.release_date,
+            created_by=current_user.id
+        )
+        db.add(transaction)
+        db.commit()
+        db.refresh(transaction)
+        
+        return transaction
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post(
+    "/bulk-payments/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkPaymentResponse,
+    summary="Make bulk payments to multiple staff members",
+    description="Record monthly payments for multiple staff members at once. Prevents duplicate payments for the same month."
+)
+def make_bulk_staff_payments(
+    data: BulkStaffPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make payments to multiple staff members for a specific month"""
+    # Only school users can make payments
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    
+    successful_payments = []
+    failed_payments = []
+    
+    try:
+        for payment_item in data.payments:
+            staff_id = payment_item.staff_id
+            total_amount = payment_item.total_amount
+            payment_month = payment_item.payment_month
+            release_date = payment_item.release_date
+            payment_mode = payment_item.payment_mode
+            
+            # Validate payment month format (YYYY-MM)
+            try:
+                payment_month_date = datetime.strptime(payment_month, "%Y-%m").date()
+            except ValueError:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=None,
+                    staff_id=staff_id,
+                    error="Invalid payment_month format. Use YYYY-MM format (e.g., '2025-01')."
+                ))
+                continue
+            
+            # Validate that payment month is not in the future
+            current_month = date.today().replace(day=1)
+            if payment_month_date > current_month:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=None,
+                    staff_id=staff_id,
+                    error="Cannot make payment for future months."
+                ))
+                continue
+            
+            # Get staff
+            staff = db.query(Staff).filter(
+                Staff.id == staff_id,
+                Staff.school_id == school.id
+            ).first()
+            
+            if not staff:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=None,
+                    staff_id=staff_id,
+                    error="Staff not found or doesn't belong to your school"
+                ))
+                continue
+            
+            # Get payment structure
+            payment_structure = db.query(TeacherStaffPayment).filter(
+                TeacherStaffPayment.staff_id == staff.id
+            ).first()
+            
+            if not payment_structure:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=None,
+                    staff_id=staff_id,
+                    error="Payment structure not found. Please set up payment structure for this staff member first."
+                ))
+                continue
+            
+            # Check if payment already exists for this month
+            existing_payment = db.query(TeacherStaffPaymentTransaction).filter(
+                and_(
+                    TeacherStaffPaymentTransaction.staff_id == staff_id,
+                    TeacherStaffPaymentTransaction.payment_month == payment_month
+                )
+            ).first()
+            
+            if existing_payment:
+                failed_payments.append(FailedPaymentItem(
+                    teacher_id=None,
+                    staff_id=staff_id,
+                    error=f"Payment for month {payment_month} already exists. Each month can only be paid once."
+                ))
+                continue
+            
+            # Create payment transaction
+            transaction = TeacherStaffPaymentTransaction(
+                payment_structure_id=payment_structure.id,
+                teacher_id=None,
+                staff_id=staff_id,
+                payment_month=payment_month,
+                total_amount=total_amount,
+                payment_mode=payment_mode,
+                release_date=release_date,
+                created_by=current_user.id
+            )
+            db.add(transaction)
+            successful_payments.append(transaction)
+        
+        # Commit all successful payments at once
+        db.commit()
+        
+        # Refresh all successful transactions
+        for transaction in successful_payments:
+            db.refresh(transaction)
+        
+        return BulkPaymentResponse(
+            success_count=len(successful_payments),
+            failed_count=len(failed_payments),
+            successful_payments=successful_payments,
+            failed_payments=failed_payments
+        )
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get(
+    "/{staff_id}/payments/",
+    response_model=List[TeacherStaffPaymentTransactionResponse],
+    summary="Get staff payment history",
+    description="Get all payment transactions for a staff member"
+)
+def get_staff_payment_history(
+    staff_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get payment history for a staff member"""
+    # Allow school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view payment history.")
+    
+    # Get school
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    else:  # STAFF - can only view their own payment history
+        staff_member = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff_member:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        if staff_member.id != staff_id:
+            raise HTTPException(status_code=403, detail="You can only view your own payment history.")
+        school = db.query(School).filter(School.id == staff_member.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    
+    # Get staff
+    staff = db.query(Staff).filter(
+        Staff.id == staff_id,
+        Staff.school_id == school.id
+    ).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found or doesn't belong to your school.")
+    
+    # Get payment transactions
+    transactions = db.query(TeacherStaffPaymentTransaction).filter(
+        TeacherStaffPaymentTransaction.staff_id == staff_id
+    ).order_by(TeacherStaffPaymentTransaction.payment_month.desc()).all()
+    
+    return transactions
+
+
+@router.get(
+    "/{staff_id}/payments/pending-months/",
+    response_model=List[PendingMonthResponse],
+    summary="Get pending payment months for staff",
+    description="Get list of months that need payment, calculated from staff's created_at date"
+)
+def get_staff_pending_months(
+    staff_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get pending payment months for a staff member"""
+    # Allow school and staff users
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Only school and staff users can view pending months.")
+    
+    # Get school
+    if current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+    else:  # STAFF - can only view their own pending months
+        staff_member = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff_member:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        if staff_member.id != staff_id:
+            raise HTTPException(status_code=403, detail="You can only view your own pending months.")
+        school = db.query(School).filter(School.id == staff_member.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    
+    # Get staff
+    staff = db.query(Staff).filter(
+        Staff.id == staff_id,
+        Staff.school_id == school.id
+    ).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found or doesn't belong to your school.")
+    
+    # Calculate months from created_at to current month
+    created_date = staff.created_at.date() if isinstance(staff.created_at, datetime) else staff.created_at
+    current_date = date.today()
+    
+    # Get all months from created_at to current month
+    all_months = get_months_between_dates(created_date, current_date)
+    
+    # Get paid months
+    paid_transactions = db.query(TeacherStaffPaymentTransaction).filter(
+        TeacherStaffPaymentTransaction.staff_id == staff_id
+    ).all()
+    paid_months = {t.payment_month for t in paid_transactions}
+    
+    # Build response
+    result = []
+    for month_str in all_months:
+        month_date = datetime.strptime(month_str, "%Y-%m").date()
+        month_name_str = f"{month_name[month_date.month]} {month_date.year}"
+        
+        # Find payment transaction for this month if paid
+        payment_transaction = next(
+            (t for t in paid_transactions if t.payment_month == month_str),
+            None
+        )
+        
+        result.append(PendingMonthResponse(
+            month=month_str,
+            month_name=month_name_str,
+            is_paid=month_str in paid_months,
+            payment_date=payment_transaction.release_date if payment_transaction else None
+        ))
+    
+    return result
 

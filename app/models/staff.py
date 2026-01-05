@@ -53,6 +53,7 @@ class Staff(Base):
     user = relationship("User", back_populates="staff_profile")
     attendances = relationship("Attendance", back_populates="staff")
     leave_requests = relationship("LeaveRequest", back_populates="staff", cascade="all, delete")
+    payment = relationship("TeacherStaffPayment", back_populates="staff", uselist=False, cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -71,6 +72,7 @@ class ActionType(str, PyEnum):
 class ResourceType(str, PyEnum):
     STUDENT = "student"
     TEACHER = "teacher"
+    STAFF = "staff"
     LEAVE_REQUEST = "leave_request"
     CLASS = "class"
     TRANSPORT = "transport"

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -20,6 +20,12 @@ class DayOfWeek(str, Enum):
     fri = "Fri"
     sat = "Sat"
     sun = "Sun"
+
+
+class PaymentMode(str, Enum):
+    ONLINE = "Online"
+    CASH_IN_HAND = "Cash in hand"
+    ACCOUNT_TRANSFER = "Account transfer"
 class Teacher(Base):
     __tablename__ = "teachers"
 
@@ -50,6 +56,7 @@ class Teacher(Base):
     created_exams = relationship("Exam", back_populates="teacher")
     leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
     home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
+    payment = relationship("TeacherStaffPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -76,4 +83,73 @@ class TeacherClassSectionSubject(Base):
     section = relationship("Section")
     subject = relationship("Subject")
     class_ = relationship("Class")
+
+
+class TeacherStaffPayment(Base):
+    __tablename__ = "teacher_staff_payments"
+    __table_args__ = (
+        UniqueConstraint('teacher_id', name='unique_teacher_payment'),
+        UniqueConstraint('staff_id', name='unique_staff_payment'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True, unique=True)
+    staff_id = Column(String, ForeignKey("staff.id"), nullable=True, unique=True)
+    
+    # Monthly In-Hand Salary
+    monthly_in_hand_salary = Column(Float, nullable=False, default=0.0)
+    
+    # Allowances
+    allowance = Column(Float, nullable=False, default=0.0)
+    bonus = Column(Float, nullable=False, default=0.0)
+    other_allowances = Column(Float, nullable=False, default=0.0)
+    
+    # Additional Benefits
+    incentive_plan = Column(Float, nullable=False, default=0.0)
+    health_care_insurance = Column(Float, nullable=False, default=0.0)
+    skill_development = Column(Float, nullable=False, default=0.0)
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    teacher = relationship("Teacher", back_populates="payment")
+    staff = relationship("Staff", back_populates="payment")
+    transactions = relationship("TeacherStaffPaymentTransaction", back_populates="payment_structure", cascade="all, delete-orphan")
+
+
+class TeacherStaffPaymentTransaction(Base):
+    __tablename__ = "teacher_staff_payment_transactions"
+    __table_args__ = (
+        UniqueConstraint('teacher_id', 'payment_month', name='unique_teacher_payment_month'),
+        UniqueConstraint('staff_id', 'payment_month', name='unique_staff_payment_month'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    payment_structure_id = Column(Integer, ForeignKey("teacher_staff_payments.id"), nullable=False)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    staff_id = Column(String, ForeignKey("staff.id"), nullable=True)
+    
+    # Payment month in YYYY-MM format (e.g., "2025-01")
+    payment_month = Column(String(7), nullable=False)
+    
+    # Total amount released
+    total_amount = Column(Float, nullable=False)
+    
+    # Payment mode
+    payment_mode = Column(SQLEnum(PaymentMode), nullable=False)
+    
+    # Amount release date
+    release_date = Column(DateTime, nullable=False)
+    
+    # Created by (school user who made the payment)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    created_at = Column(DateTime, default=func.now())
+    
+    # Relationships
+    payment_structure = relationship("TeacherStaffPayment", back_populates="transactions")
+    teacher = relationship("Teacher")
+    staff = relationship("Staff")
+    created_by_user = relationship("User")
             
