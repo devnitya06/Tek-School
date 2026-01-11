@@ -4,23 +4,10 @@ from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
 from app.models.students import Student
 from app.models.staff import Staff
-from app.models.school import (
-    School,Class,Section,Subject,ExtraCurricularActivity,WeekDay,class_extra_curricular,
-    class_section,class_subjects,class_optional_subjects,Transport,PickupStop,DropStop,
-    Attendance,Timetable,TimetableDay,TimetablePeriod,SchoolMarginConfiguration,
-    TransactionHistory,Exam,McqBank,ExamStatusEnum,ExamStatus,StudentExamData,
-    LeaveRequest,LeaveStatus,AssignmentStatus,HomeAssignment,AssignmentStudent,AssignmentTask,
-    StudentTaskStatus,BankAccount)
+from app.models.school import *
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
-from app.schemas.school import (
-    ClassWithSubjectCreate,ClassInput,TransportCreate,TransportResponse,StopResponse,AttendanceCreate,
-    PeriodCreate,TimetableCreate,CreateSchoolCredit,TransferSchoolCredit,CreatePaymentRequest,
-    PaymentVerificationRequest,ExamCreateRequest,ExamUpdateRequest,ExamListResponse,McqCreate,
-    McqBulkCreate,McqResponse,ExamPublishResponse,ExamStatusUpdateRequest,StudentExamSubmitRequest,
-    TimetableUpdate,LeaveCreate,LeaveResponse,LeaveStatusUpdate,ExamDetailResponse,HomeAssignmentCreate,
-    StudentHomeTaskListResponse,TransportUpdate,ExamTypeEnum,ExamFilterParams,BankAccountCreate,
-    BankAccountUpdate,BankAccountResponse)
+from app.schemas.school import *
 from app.schemas.teachers import EmployeePaymentListResponse, TeacherStaffPaymentTransactionResponse
 from app.models.admin import Chapter
 from sqlalchemy.orm import Session,joinedload
@@ -3242,21 +3229,10 @@ def get_all_leaves(
     username: Optional[str] = Query(None, description="Filter by user name (teacher/student/staff)"),
     from_date: Optional[date] = Query(None, description="Filter from this start date"),
     end_date: Optional[date] = Query(None, description="Filter until this end date"),
+    role: Optional[str] = Query(None, description="Filter by role: teacher, student, staff"),
+    leave_type: Optional[str] = Query(None, description="Filter by leave type"),
     view: Optional[str] = Query("all", description="For staff: 'all' to see all school leave requests, 'own' to see only own requests"),
 ):
-    """
-    Get leave requests:
-    - School → all leave requests (teachers + students + staff)
-    - Teacher → their own leaves
-    - Student → their own leaves
-    - Staff → can see all leave requests (view=all) or only own (view=own)
-    Filters:
-      - username (partial match)
-      - from_date, end_date
-      - view (for staff only: 'all' or 'own')
-    Includes leave_count and pagination.
-    """
-
     query = db.query(LeaveRequest)
 
     # --- Role-based filtering ---
@@ -3303,6 +3279,32 @@ def get_all_leaves(
         query = query.filter(LeaveRequest.start_date >= from_date)
     elif end_date:
         query = query.filter(LeaveRequest.end_date <= end_date)
+    # --- Role filtering ---
+    if role:
+        role = role.lower()
+        if role == "teacher":
+            query = query.filter(LeaveRequest.teacher_id.isnot(None))
+        elif role == "student":
+            query = query.filter(LeaveRequest.student_id.isnot(None))
+        elif role == "staff":
+            query = query.filter(LeaveRequest.staff_id.isnot(None))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid role filter. Allowed values: teacher, student, staff"
+            )
+    # --- Leave type filtering ---
+    if leave_type:
+        try:
+            query = query.filter(
+                LeaveRequest.leave_type == LeaveType(leave_type.lower())
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid leave_type. Allowed values: casual, emergency"
+            )
+
 
     # --- Get total count before pagination ---
     total_count = query.count()

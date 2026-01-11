@@ -649,7 +649,7 @@ def update_teacher_profile(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
-@router.put("/teacher/{teacher_id}/inactive")
+@router.put("/teacher/{teacher_id}/status")
 def inactive_teacher(
     teacher_id: str,
     db: Session = Depends(get_db),
@@ -674,14 +674,14 @@ def inactive_teacher(
         raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
 
     # Mark teacher as inactive
-    teacher.is_active = False
+    teacher.is_active = not teacher.is_active
     db.commit()
     db.refresh(teacher)
 
     return {
-        "detail": "Teacher has been marked as inactive successfully.",
+        "detail": f"Teacher has been {'activated' if teacher.is_active else 'deactivated'} successfully.",
         "teacher_id": teacher.id,
-        "status": "inactive"
+        "status": "active" if teacher.is_active else "inactive"
     }
 
 
