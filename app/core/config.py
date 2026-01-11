@@ -41,7 +41,9 @@ class Settings(BaseSettings):
     "http://localhost:3001",
     "http://localhost:3002",
     "https://tekschool-school.vercel.app",
-    "https://tek-school-student.vercel.app"
+    "https://tek-school-student.vercel.app",
+    "https://tek-school-admin.vercel.app",
+    "https://tek-school-teacher.vercel.app"
    ]
     class Config:
         env_file = ".env"
