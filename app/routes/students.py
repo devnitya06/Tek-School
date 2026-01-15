@@ -903,6 +903,7 @@ def get_student(
         "gender": student.gender,
         "dob": student.dob,
         "roll_no": student.roll_no,
+        "class_id": student.class_id,
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
         "class_start_date": student.classes.class_start_date.isoformat() if student.classes and student.classes.class_start_date else None,
