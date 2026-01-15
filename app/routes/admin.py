@@ -651,27 +651,35 @@ def create_class_subjects(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+
 @router.get("/classes/")
 def get_all_classes(
     school_board: Optional[SchoolBoard] = None,
     school_medium: Optional[SchoolMedium] = None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SCHOOL,UserRole.TEACHER,UserRole.STUDENT,UserRole.SELF_SIGNED_STUDENT))
+    current_user = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SCHOOL,
+            UserRole.TEACHER,
+            UserRole.STUDENT,
+            UserRole.SELF_SIGNED_STUDENT
+        )
+    )
 ):
-    """Fetch all unique classes filtered by board & medium."""
-
-    # 🔐 Access Control
-    # if current_user.role != UserRole.ADMIN:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="Only admin account is allowed to view classes."
-    #     )
+    """Fetch all unique classes with class_id & class_name filtered by board & medium."""
 
     try:
-        query = db.query(SchoolClassSubject.class_name).distinct()
+        query = (
+            db.query(
+                func.min(SchoolClassSubject.id).label("class_id"),
+                SchoolClassSubject.class_name
+            )
+            .group_by(SchoolClassSubject.class_name)
+        )
 
-        # 🔍 Apply filters if provided
+        # 🔍 Filters
         if school_board:
             query = query.filter(SchoolClassSubject.school_board == school_board)
 
@@ -680,8 +688,7 @@ def get_all_classes(
 
         total_count = query.count()
 
-        # 📌 Apply pagination
-        classes = (
+        results = (
             query
             .order_by(SchoolClassSubject.class_name.asc())
             .offset(pagination.offset())
@@ -689,8 +696,14 @@ def get_all_classes(
             .all()
         )
 
-        # Convert list of tuples → plain list
-        class_list = [c[0] for c in classes]
+        # ✅ Proper response format
+        class_list = [
+            {
+                "id": row.class_id,
+                "class_name": row.class_name
+            }
+            for row in results
+        ]
 
         return pagination.format_response(
             class_list,
@@ -702,6 +715,7 @@ def get_all_classes(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+
 
 @router.get("/subjects/")
 def get_subjects_for_class(
@@ -1875,16 +1889,35 @@ def create_recharge_plan(
 
     return plan
 
-@router.get(
-    "/recharge-plans/",
-    response_model=list[RechargePlanListResponse]
-)
+@router.get("/recharge-plans")
 def get_recharge_plans(
-    class_name: str = Query(..., description="Student class (eg: 10)"),
+    class_name: Optional[str] = Query(None, description="Student class (eg: 10)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    plans = db.query(RechargePlan).filter(
+    query = db.query(RechargePlan)
+
+    # ✅ Admin sees everything
+    if current_user.role == UserRole.ADMIN:
+        plans = query.order_by(
+            case(
+                (RechargePlan.duration == PlanDuration.MONTHLY, 1),
+                (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
+                (RechargePlan.duration == PlanDuration.YEARLY, 3),
+            )
+        ).all()
+
+        return plans
+
+    # ❌ Non-admin must pass class_name
+    if not class_name:
+        raise HTTPException(
+            status_code=400,
+            detail="class_name is required"
+        )
+
+    # ✅ Non-admin filtered view
+    plans = query.filter(
         RechargePlan.class_name == class_name,
         RechargePlan.is_active == True
     ).order_by(
@@ -1902,6 +1935,7 @@ def get_recharge_plans(
         )
 
     return plans
+
 
 @router.post(
     "/student/purchase-plan/",
