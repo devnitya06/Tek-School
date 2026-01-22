@@ -141,7 +141,7 @@ def create_teacher(
 
         # Send verification email
         token = create_verification_token(user.id)
-        verification_link = f"https://tek-api.mytheesoftware.com/users/verify-account?token={token}"
+        verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Teacher Account Verification",
