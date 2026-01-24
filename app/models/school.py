@@ -607,3 +607,57 @@ class BankAccount(Base):
     # Note: Only one primary account per school is enforced at application level
     # A partial unique index can be added at database level for PostgreSQL:
     # CREATE UNIQUE INDEX uq_school_primary_account ON bank_accounts (school_id) WHERE is_primary = true;
+
+
+class Worker(Base):
+    __tablename__ = "workers"
+
+    id = Column(String, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # plumber, labor, electrician, technician, etc.
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # Relationships
+    school = relationship("School", backref="workers")
+    user = relationship("User", backref="worker_profile")
+    payment_records = relationship("PaymentRecord", back_populates="worker", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            # Generate ID based on role prefix
+            role_prefix_map = {
+                "technician": "TEC",
+                "plumber": "PLU",
+                "labor": "LAB",
+                "electrician": "ELE",
+                "carpenter": "CAR",
+                "painter": "PAI",
+                "mason": "MAS",
+                "welder": "WEL",
+                "mechanic": "MEC",
+            }
+            # Get prefix from role (case-insensitive)
+            role_lower = self.role.lower() if self.role else "WRK"
+            prefix = role_prefix_map.get(role_lower, "WRK")  # Default to WRK if role not found
+            self.id = f"{prefix}-{str(uuid.uuid4().int)[:6]}"
+
+
+class PaymentRecord(Base):
+    __tablename__ = "payment_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    worker_id = Column(String, ForeignKey("workers.id"), nullable=False, index=True)
+    description = Column(String(1000), nullable=True)
+    files = Column(JSON, nullable=True)  # Array of file URLs
+    status = Column(String(50), nullable=False)  # Input field for status
+    amount = Column(Float, nullable=True)  # Payment amount
+    payment_date = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # Relationships
+    worker = relationship("Worker", back_populates="payment_records")
