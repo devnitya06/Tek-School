@@ -3,6 +3,36 @@ from typing import List,Optional,Union
 from app.models.school import SchoolBoard,SchoolMedium
 from app.models.admin import ExamType,QuestionType,SetType,PlanDuration
 from datetime import datetime,date,time
+
+
+# FAQ Schemas
+class FAQCreate(BaseModel):
+    question: str = Field(..., min_length=1, description="FAQ question")
+    answer: str = Field(..., min_length=1, description="FAQ answer")
+    is_active: Optional[bool] = Field(True, description="Whether the FAQ is active")
+
+
+class FAQUpdate(BaseModel):
+    question: Optional[str] = Field(None, min_length=1, description="FAQ question")
+    answer: Optional[str] = Field(None, min_length=1, description="FAQ answer")
+    is_active: Optional[bool] = Field(None, description="Whether the FAQ is active")
+
+
+class FAQResponse(BaseModel):
+    id: int
+    question: str
+    answer: str
+    created_by: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+    is_active: bool
+    
+    class Config:
+        from_attributes = True
+
+
+class SchoolFAQSelect(BaseModel):
+    faq_ids: List[int] = Field(..., description="List of FAQ IDs to assign to the school")
 # Reuse previously defined base schemas
 class AccountConfigurationBase(BaseModel):
     name: str

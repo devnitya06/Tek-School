@@ -5,6 +5,7 @@ from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffP
 from app.models.students import Student
 from app.models.staff import Staff
 from app.models.school import *
+from app.models.admin import FAQ, school_faqs
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
 from app.schemas.school import *
@@ -5109,3 +5110,115 @@ def promote_account(
         detail="Promotion request sent to admin. You will be notified once approved.",
         status="pending"
     )
+
+
+@router.post("/faqs/select")
+async def select_faqs(
+    faq_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    School selects FAQs to display on their page.
+    Requires school authentication.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school users can select FAQs"
+        )
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School profile not found"
+        )
+    
+    faq_ids = faq_data.get("faq_ids", [])
+    if not faq_ids or not isinstance(faq_ids, list) or len(faq_ids) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="faq_ids must be a non-empty list"
+        )
+    
+    # Validate all FAQ IDs exist and are active
+    faqs = db.query(FAQ).filter(
+        FAQ.id.in_(faq_ids),
+        FAQ.is_active == True
+    ).all()
+    
+    if len(faqs) != len(faq_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="One or more FAQ IDs are invalid or inactive"
+        )
+    
+    try:
+        # Remove existing FAQ associations
+        db.execute(
+            delete(school_faqs).where(school_faqs.c.school_id == school.id)
+        )
+        
+        # Add new FAQ associations
+        for faq_id in faq_ids:
+            db.execute(
+                insert(school_faqs).values(
+                    school_id=school.id,
+                    faq_id=faq_id
+                )
+            )
+        
+        db.commit()
+        
+        return {
+            "detail": f"Successfully selected {len(faq_ids)} FAQ(s)",
+            "selected_faq_ids": faq_ids,
+            "school_id": school.id
+        }
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to select FAQs: {str(e)}"
+        )
+
+
+@router.get("/faqs/public/{school_id}")
+async def get_school_faqs_public(
+    school_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get FAQs for a specific school. Public endpoint - no authentication required.
+    """
+    # Verify school exists
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found"
+        )
+    
+    # Get FAQs associated with this school
+    faqs = db.query(FAQ).join(
+        school_faqs, FAQ.id == school_faqs.c.faq_id
+    ).filter(
+        school_faqs.c.school_id == school_id,
+        FAQ.is_active == True
+    ).order_by(FAQ.created_at.asc()).all()
+    
+    return {
+        "school_id": school_id,
+        "school_name": school.school_name,
+        "faqs": [
+            {
+                "id": faq.id,
+                "question": faq.question,
+                "answer": faq.answer
+            }
+            for faq in faqs
+        ],
+        "total_faqs": len(faqs)
+    }

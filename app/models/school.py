@@ -111,6 +111,7 @@ class School(Base):
     exam_data = relationship("StudentExamData", back_populates="school")
     leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
     bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
+    faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
 
 
     
