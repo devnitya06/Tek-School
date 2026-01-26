@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON
+from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON,TypeDecorator
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 import uuid
@@ -26,6 +26,7 @@ class SchoolBoard(str, Enum):
     STATE = "stateboard"
     IB = "ib"
     OTHER = "other"
+
 class ExamTypeEnum(str, Enum):
     MOCK = "mock"
     RANK = "rank"
@@ -34,6 +35,12 @@ class ExamStatusEnum(str, Enum):
     PENDING = "pending"
     EXPIRED = "expired"
     DECLINED = "declined"
+
+class SchoolAccountType(str, Enum):
+    LISTING = "listing"           # Only listing account (can login immediately)
+    BUSINESS = "business"         # Business account (has both listing + business permissions, requires admin approval)
+
+
 class School(Base):
     __tablename__ = "schools"
 
@@ -68,7 +75,23 @@ class School(Base):
     principal_phone = Column(String(15))
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
+    account_type = Column(SQLEnum(SchoolAccountType, native_enum=False, length=50), default=SchoolAccountType.LISTING)
+    is_business_approved = Column(Boolean, default=False)
+    is_promotion_pending = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
+    
+    school_other_email = Column(String, nullable=True)
+    school_location = Column(String, nullable=True)
+    total_teachers = Column(Integer, nullable=True)
+    total_students = Column(Integer, nullable=True)
+    class_from = Column(String, nullable=True)
+    class_to = Column(String, nullable=True)
+    due_installment_type = Column(JSON, nullable=True)
+    transportation_facility = Column(Boolean, nullable=True, default=False)
+    playground_facility = Column(Boolean, nullable=True, default=False)
+    teaching_method = Column(JSON, nullable=True)
+    catalogue = Column(ARRAY(String), nullable=True)
+    photo_gallery = Column(ARRAY(String), nullable=True)
 
     user = relationship("User", backref="school")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")

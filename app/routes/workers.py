@@ -20,7 +20,7 @@ from app.schemas.workers import (
     WorkerWithPayments
 )
 from app.schemas.users import UserRole
-from app.utils.permission import require_roles
+from app.utils.permission import require_roles, verify_school_business_access
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 
@@ -30,6 +30,8 @@ router = APIRouter()
 def get_school_id(current_user: User, db: Session) -> str:
     """Helper function to get school_id based on user role"""
     if current_user.role == UserRole.SCHOOL:
+        # ✅ Verify business account access
+        verify_school_business_access(current_user, db)
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found for the current user.")
