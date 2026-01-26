@@ -47,9 +47,9 @@ def add_missing_columns():
             
             for column in table.columns:
                 if column.name not in existing_columns:
+                    # Add the column to the table
                     column_type = column.type.compile(engine.dialect)
                     
-                    # Add the column to the table
                     with engine.begin() as conn:
                         alter_stmt = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {column_type}'
                         
@@ -63,6 +63,9 @@ def add_missing_columns():
                                 default_value = column.default.arg()
                             else:
                                 default_value = column.default.arg
+                            # Handle enum default values
+                            if hasattr(default_value, 'value'):
+                                default_value = default_value.value
                             alter_stmt += f" DEFAULT '{default_value}'"
                         
                         conn.execute(text(alter_stmt))

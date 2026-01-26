@@ -11,7 +11,7 @@ from sqlalchemy import func, and_, or_
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
-from app.utils.permission import require_roles
+from app.utils.permission import require_roles, verify_school_business_access
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from datetime import datetime, timedelta,date
@@ -31,12 +31,16 @@ def create_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow SCHOOL, TEACHER, or STAFF
+    # ✅ Allow SCHOOL (business only), TEACHER, or STAFF
     if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only schools, teachers, or staff can create students."
         )
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get the correct school_id based on the role
     if current_user.role == UserRole.SCHOOL:
@@ -235,6 +239,9 @@ def add_parent_and_address(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can add parent and address data.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Get school profile of the current user
     school = db.query(School).filter(School.id == current_user.school_profile.id).first()
@@ -304,8 +311,9 @@ def update_parent_and_address(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Allow both school and staff
+    # Allow both school (business only) and staff
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_profile = getattr(current_user, "school_profile", None)
         if not school_profile:
             raise HTTPException(status_code=404, detail="School profile not found.")
@@ -392,6 +400,7 @@ def get_students(
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
@@ -775,6 +784,7 @@ def get_student(
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
@@ -981,12 +991,16 @@ def update_student(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Allow only school or teacher
+    # Allow only school (business only) or teacher
     if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only schools and teachers can update student profiles."
         )
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # Identify school_id for both
     if current_user.role == UserRole.SCHOOL:
@@ -1017,7 +1031,7 @@ def update_student(
     else:
         allowed_fields = ["first_name", "last_name", "gender", "dob", "class_id", "section_id"]
 
-    # Handle transport validation (school only)
+    # Handle transport validation (school only - business account required)
     if current_user.role == UserRole.SCHOOL and data.is_transport is not None:
         if data.is_transport:
             if not data.driver_id:
@@ -1470,6 +1484,7 @@ def get_student_payments(
     """
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
@@ -1557,6 +1572,7 @@ def update_student_payment_structure(
     """
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
@@ -1697,6 +1713,7 @@ def get_student_payment_by_class(
 ):
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
         school_id = current_user.teacher_profile.school_id
@@ -1828,6 +1845,7 @@ def create_payment_transaction(
     """
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
@@ -2081,6 +2099,7 @@ def update_student_payment(
     """
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
