@@ -41,6 +41,51 @@ class SchoolAccountType(str, Enum):
     BUSINESS = "business"         # Business account (has both listing + business permissions, requires admin approval)
 
 
+class SchoolAccountTypeDecorator(TypeDecorator):
+    """Custom type decorator to handle case-insensitive enum mapping"""
+    impl = String
+    cache_ok = True
+    
+    def __init__(self, enum_class, length=50):
+        self.enum_class = enum_class
+        self.length = length
+        super().__init__(length=length)
+    
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, self.enum_class):
+            return value.value
+        # Handle case-insensitive string matching
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for enum_member in self.enum_class:
+                if enum_member.value.lower() == value_lower:
+                    return enum_member.value
+        return value
+    
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, self.enum_class):
+            return value
+        # Handle case-insensitive string matching when reading from DB
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for enum_member in self.enum_class:
+                if enum_member.value.lower() == value_lower:
+                    return enum_member
+            # If no match found, try direct value match
+            try:
+                return self.enum_class(value)
+            except ValueError:
+                # Try case-insensitive member name match as fallback
+                for enum_member in self.enum_class:
+                    if enum_member.name.lower() == value_lower:
+                        return enum_member
+        return value
+
+
 class School(Base):
     __tablename__ = "schools"
 
@@ -75,7 +120,7 @@ class School(Base):
     principal_phone = Column(String(15))
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
-    account_type = Column(SQLEnum(SchoolAccountType, native_enum=False, length=50), default=SchoolAccountType.LISTING)
+    account_type = Column(SchoolAccountTypeDecorator(SchoolAccountType, length=50), default=SchoolAccountType.LISTING)
     is_business_approved = Column(Boolean, default=False)
     is_promotion_pending = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
