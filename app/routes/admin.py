@@ -13,10 +13,10 @@ from app.models.admin import *
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
-from sqlalchemy import func,cast, String,case
+from sqlalchemy import func,cast, String,case,or_,and_
 from collections import defaultdict
 from app.core.dependencies import get_current_user
-from typing import Optional
+from typing import Optional, List
 from app.services.pagination import PaginationParams
 from datetime import datetime, timedelta
 from app.utils.services import get_validity_days
@@ -279,6 +279,476 @@ def verify_school(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+
+
+@router.get("/schools/pending-approvals/")
+def get_pending_approvals(
+    pagination: PaginationParams = Depends(),
+    request_type: Optional[str] = Query(None, description="Filter by request type: 'business_signup' or 'promotion'. Leave empty for all."),
+    school_name: Optional[str] = Query(None, description="Filter by school name (case-insensitive search)"),
+    school_email: Optional[str] = Query(None, description="Filter by school email"),
+    account_type: Optional[str] = Query(None, description="Filter by account type: 'business' or 'listing'"),
+    from_date: Optional[str] = Query(None, description="Filter by created date from (YYYY-MM-DD)"),
+    to_date: Optional[str] = Query(None, description="Filter by created date to (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    Get all pending school approvals (business signups and promotions).
+    Combines both pending business signups and pending promotions in one endpoint.
+    
+    Filters:
+    - request_type: 'business_signup' (new business accounts) or 'promotion' (listing to business upgrade)
+    - school_name: Search by school name
+    - school_email: Filter by school email
+    - account_type: Filter by current account type
+    - from_date/to_date: Filter by creation date range
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view pending approvals."
+        )
+    
+    try:
+        # Build base query
+        query = db.query(School)
+        
+        # Apply filters based on request_type
+        if request_type == "business_signup":
+            # Business signups: account_type == BUSINESS AND is_business_approved == False
+            query = query.filter(
+                School.account_type == SchoolAccountType.BUSINESS,
+                School.is_business_approved == False
+            )
+        elif request_type == "promotion":
+            # Promotions: account_type == LISTING AND is_promotion_pending == True
+            query = query.filter(
+                School.account_type == SchoolAccountType.LISTING,
+                School.is_promotion_pending == True
+            )
+        else:
+            # All pending: either business signups OR promotions
+            query = query.filter(
+                or_(
+                    and_(
+                        School.account_type == SchoolAccountType.BUSINESS,
+                        School.is_business_approved == False
+                    ),
+                    and_(
+                        School.account_type == SchoolAccountType.LISTING,
+                        School.is_promotion_pending == True
+                    )
+                )
+            )
+        
+        # Apply additional filters
+        if school_name:
+            query = query.filter(School.school_name.ilike(f"%{school_name}%"))
+        
+        if school_email:
+            query = query.filter(School.school_email.ilike(f"%{school_email}%"))
+        
+        if account_type:
+            if account_type.lower() == "business":
+                query = query.filter(School.account_type == SchoolAccountType.BUSINESS)
+            elif account_type.lower() == "listing":
+                query = query.filter(School.account_type == SchoolAccountType.LISTING)
+        
+        if from_date:
+            try:
+                from_datetime = datetime.strptime(from_date, "%Y-%m-%d")
+                query = query.filter(School.created_at >= from_datetime)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid from_date format. Use YYYY-MM-DD"
+                )
+        
+        if to_date:
+            try:
+                to_datetime = datetime.strptime(to_date, "%Y-%m-%d")
+                # Add 23:59:59 to include the entire day
+                to_datetime = to_datetime.replace(hour=23, minute=59, second=59)
+                query = query.filter(School.created_at <= to_datetime)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid to_date format. Use YYYY-MM-DD"
+                )
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination and ordering
+        schools = query.order_by(School.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all()
+        
+        # Build result
+        result = []
+        for school in schools:
+            user = db.query(User).filter(User.id == school.user_id).first()
+            
+            # Determine request type
+            if school.account_type == SchoolAccountType.BUSINESS and not school.is_business_approved:
+                request_type_value = "business_signup"
+            elif school.account_type == SchoolAccountType.LISTING and school.is_promotion_pending:
+                request_type_value = "promotion"
+            else:
+                request_type_value = "unknown"
+            
+            result.append({
+                "school_id": school.id,
+                "school_name": school.school_name,
+                "school_email": school.school_email,
+                "school_phone": school.school_phone,
+                "school_website": school.school_website,
+                "account_type": school.account_type.value,
+                "request_type": request_type_value,  # "business_signup" or "promotion"
+                "is_business_approved": school.is_business_approved,
+                "is_promotion_pending": school.is_promotion_pending,
+                "created_at": school.created_at,
+                "user_id": user.id if user else None,
+                "user_name": user.name if user else None,
+                "user_email": user.email if user else None,
+            })
+        
+        return pagination.format_response(result, total)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching pending approvals: {str(e)}"
+        )
+
+
+@router.get("/schools/pending-business-signups/")
+def get_pending_business_signups(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    DEPRECATED: Use /schools/pending-approvals/?request_type=business_signup instead
+    Get all schools with business signup waiting for approval.
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view pending business signups."
+        )
+    
+    try:
+        schools = db.query(School).filter(
+            School.account_type == SchoolAccountType.BUSINESS,
+            School.is_business_approved == False
+        ).order_by(School.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all()
+        
+        total = db.query(func.count(School.id)).filter(
+            School.account_type == SchoolAccountType.BUSINESS,
+            School.is_business_approved == False
+        ).scalar()
+        
+        result = []
+        for school in schools:
+            user = db.query(User).filter(User.id == school.user_id).first()
+            result.append({
+                "school_id": school.id,
+                "school_name": school.school_name,
+                "school_email": school.school_email,
+                "school_phone": school.school_phone,
+                "school_website": school.school_website,
+                "account_type": school.account_type.value,
+                "created_at": school.created_at,
+                "user_name": user.name if user else None,
+                "user_email": user.email if user else None,
+            })
+        
+        return pagination.format_response(result, total)
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching pending business signups: {str(e)}"
+        )
+
+
+@router.put("/schools/{school_id}/approve-business/")
+def approve_business_signup(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    Approve business school signup. Allows school to login.
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to approve business signups."
+        )
+    
+    try:
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found."
+            )
+        
+        if school.account_type != SchoolAccountType.BUSINESS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This school is not a business signup."
+            )
+        
+        if school.is_business_approved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is already approved."
+            )
+        
+        school.is_business_approved = True
+        school.is_verified = True  # Also set general verification
+        
+        # Create credit master if doesn't exist
+        existing_credit = db.query(CreditMaster).filter(CreditMaster.school_id == school.id).first()
+        if not existing_credit:
+            credit_master = CreditMaster(
+                school_id=school.id,
+                earned_credit=100
+            )
+            db.add(credit_master)
+        
+        db.commit()
+        
+        # TODO: Notify school via email
+        
+        return {"detail": "Business school approved successfully. School can now login."}
+    
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+
+@router.put("/schools/{school_id}/approve/")
+def approve_school_request(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    Unified approval endpoint for both business signups and promotions.
+    Automatically detects the request type and approves accordingly.
+    
+    - For business signups: Sets is_business_approved = True
+    - For promotions: Upgrades account_type to BUSINESS and sets is_business_approved = True
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to approve school requests."
+        )
+    
+    try:
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found."
+            )
+        
+        # Determine request type and approve accordingly
+        if school.account_type == SchoolAccountType.BUSINESS and not school.is_business_approved:
+            # Business signup approval
+            school.is_business_approved = True
+            school.is_verified = True
+            request_type = "business_signup"
+            message = "Business school approved successfully. School can now login."
+            
+        elif school.account_type == SchoolAccountType.LISTING and school.is_promotion_pending:
+            # Promotion approval - upgrade to business
+            school.account_type = SchoolAccountType.BUSINESS
+            school.is_business_approved = True
+            school.is_promotion_pending = False
+            school.is_verified = True
+            request_type = "promotion"
+            message = "Promotion approved. Account upgraded to business (has both listing and business access)."
+            
+        else:
+            # No pending request found
+            if school.is_business_approved:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="School is already approved."
+                )
+            elif school.account_type == SchoolAccountType.BUSINESS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This school is already a business account and approved."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No pending approval request found for this school."
+                )
+        
+        # Create credit master if doesn't exist
+        existing_credit = db.query(CreditMaster).filter(CreditMaster.school_id == school.id).first()
+        if not existing_credit:
+            credit_master = CreditMaster(
+                school_id=school.id,
+                earned_credit=100
+            )
+            db.add(credit_master)
+        
+        db.commit()
+        
+        # TODO: Notify school via email
+        
+        return {
+            "detail": message,
+            "request_type": request_type,
+            "school_id": school.id,
+            "school_name": school.school_name,
+            "account_type": school.account_type.value,
+            "is_business_approved": school.is_business_approved
+        }
+    
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error approving school request: {str(e)}"
+        )
+
+
+@router.get("/schools/pending-promotions/")
+def get_pending_promotions(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    Get all listing schools requesting promotion to business.
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view pending promotions."
+        )
+    
+    try:
+        schools = db.query(School).filter(
+            School.account_type == SchoolAccountType.LISTING,
+            School.is_promotion_pending == True
+        ).order_by(School.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all()
+        
+        total = db.query(func.count(School.id)).filter(
+            School.account_type == SchoolAccountType.LISTING,
+            School.is_promotion_pending == True
+        ).scalar()
+        
+        result = []
+        for school in schools:
+            user = db.query(User).filter(User.id == school.user_id).first()
+            result.append({
+                "school_id": school.id,
+                "school_name": school.school_name,
+                "school_email": school.school_email,
+                "school_phone": school.school_phone,
+                "school_website": school.school_website,
+                "account_type": school.account_type.value,
+                "created_at": school.created_at,
+                "user_name": user.name if user else None,
+                "user_email": user.email if user else None,
+            })
+        
+        return pagination.format_response(result, total)
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching pending promotions: {str(e)}"
+        )
+
+
+@router.put("/schools/{school_id}/approve-promotion/")
+def approve_promotion(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    """
+    Approve promotion request. Changes account_type to BUSINESS (which has both listing + business permissions).
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to approve promotions."
+        )
+    
+    try:
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found."
+            )
+        
+        if school.account_type != SchoolAccountType.LISTING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This school is not a listing account."
+            )
+        
+        if not school.is_promotion_pending:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No promotion request pending for this school."
+            )
+        
+        # Upgrade to BUSINESS account type (business = both listing + business permissions)
+        school.account_type = SchoolAccountType.BUSINESS
+        school.is_business_approved = True
+        school.is_promotion_pending = False
+        school.is_verified = True
+        
+        # Create credit master if doesn't exist
+        existing_credit = db.query(CreditMaster).filter(CreditMaster.school_id == school.id).first()
+        if not existing_credit:
+            credit_master = CreditMaster(
+                school_id=school.id,
+                earned_credit=100
+            )
+            db.add(credit_master)
+        
+        db.commit()
+        
+        # TODO: Notify school via email
+        
+        return {"detail": "Promotion approved. Account upgraded to business (has both listing and business access)."}
+    
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+
 @router.get("/school/{school_id}/")
 def get_school_details(
     school_id: str,

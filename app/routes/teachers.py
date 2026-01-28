@@ -21,6 +21,7 @@ from app.services.pagination import PaginationParams
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 from app.models.admin import Chapter
+from app.utils.permission import verify_school_business_access
 router = APIRouter()
 
 
@@ -30,12 +31,16 @@ def create_teacher(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school and staff users can create teachers."
         )
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
     
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(status_code=400, detail="Email already exists.")
@@ -141,7 +146,7 @@ def create_teacher(
 
         # Send verification email
         token = create_verification_token(user.id)
-        verification_link = f"https://tek-school.learningmust.com/users/verify-account?token={token}"
+        verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Teacher Account Verification",
@@ -184,9 +189,13 @@ def get_all_teachers_for_school(
     section_name: str | None = Query(None, description="Filter by section name"),
     subject_name: str | None = Query(None, description="Filter by subject name"),
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only schools and staff can access this resource.")
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -421,9 +430,13 @@ def get_teacher_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only schools and staff can access this resource.")
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -532,12 +545,16 @@ def update_teacher_profile(
     Fields not provided in request remain unchanged.
     """
 
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school and staff users can update teacher profiles."
         )
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -658,6 +675,9 @@ def inactive_teacher(
     # Only school users can perform this action
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can perform this action.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Get current user's school profile
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -814,6 +834,9 @@ def make_teacher_payment(
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can make payments.")
     
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
+    
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
@@ -905,6 +928,9 @@ def make_bulk_teacher_payments(
     # Only school users can make payments
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
     
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -1076,9 +1102,13 @@ def get_teacher_pending_months(
     current_user: User = Depends(get_current_user),
 ):
     """Get pending payment months for a teacher"""
-    # Allow school and staff users
+    # Allow school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only school and staff users can view pending months.")
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
     
     # Get school
     if current_user.role == UserRole.SCHOOL:

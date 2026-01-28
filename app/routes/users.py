@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks,Query
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
-from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest
+from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest,SignupType
+from app.models.school import SchoolAccountType
 from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
@@ -60,6 +61,15 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
 
         # Create School Profile (if school)
         if role == UserRole.SCHOOL:
+            # Determine account type based on signup_type
+            if user_data.signup_type == SignupType.BUSINESS_SCHOOL:
+                account_type = SchoolAccountType.BUSINESS
+                is_business_approved = False  # Requires admin approval
+            else:
+                # Default to LISTING if not specified or listing_school_signup
+                account_type = SchoolAccountType.LISTING
+                is_business_approved = False  # Not applicable for listing
+            
             school_profile = School(
                 user_id=user.id,
                 school_name=user_data.name,

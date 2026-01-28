@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON
+from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON,TypeDecorator
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 import uuid
@@ -26,6 +26,7 @@ class SchoolBoard(str, Enum):
     STATE = "stateboard"
     IB = "ib"
     OTHER = "other"
+
 class ExamTypeEnum(str, Enum):
     MOCK = "mock"
     RANK = "rank"
@@ -34,6 +35,57 @@ class ExamStatusEnum(str, Enum):
     PENDING = "pending"
     EXPIRED = "expired"
     DECLINED = "declined"
+
+class SchoolAccountType(str, Enum):
+    LISTING = "listing"           # Only listing account (can login immediately)
+    BUSINESS = "business"         # Business account (has both listing + business permissions, requires admin approval)
+
+
+class SchoolAccountTypeDecorator(TypeDecorator):
+    """Custom type decorator to handle case-insensitive enum mapping"""
+    impl = String
+    cache_ok = True
+    
+    def __init__(self, enum_class, length=50):
+        self.enum_class = enum_class
+        self.length = length
+        super().__init__(length=length)
+    
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, self.enum_class):
+            return value.value
+        # Handle case-insensitive string matching
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for enum_member in self.enum_class:
+                if enum_member.value.lower() == value_lower:
+                    return enum_member.value
+        return value
+    
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, self.enum_class):
+            return value
+        # Handle case-insensitive string matching when reading from DB
+        if isinstance(value, str):
+            value_lower = value.lower()
+            for enum_member in self.enum_class:
+                if enum_member.value.lower() == value_lower:
+                    return enum_member
+            # If no match found, try direct value match
+            try:
+                return self.enum_class(value)
+            except ValueError:
+                # Try case-insensitive member name match as fallback
+                for enum_member in self.enum_class:
+                    if enum_member.name.lower() == value_lower:
+                        return enum_member
+        return value
+
+
 class School(Base):
     __tablename__ = "schools"
 
@@ -69,7 +121,23 @@ class School(Base):
     principal_phone = Column(String(15))
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
+    account_type = Column(SchoolAccountTypeDecorator(SchoolAccountType, length=50), default=SchoolAccountType.LISTING)
+    is_business_approved = Column(Boolean, default=False)
+    is_promotion_pending = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
+    
+    school_other_email = Column(String, nullable=True)
+    school_location = Column(String, nullable=True)
+    total_teachers = Column(Integer, nullable=True)
+    total_students = Column(Integer, nullable=True)
+    class_from = Column(String, nullable=True)
+    class_to = Column(String, nullable=True)
+    due_installment_type = Column(JSON, nullable=True)
+    transportation_facility = Column(Boolean, nullable=True, default=False)
+    playground_facility = Column(Boolean, nullable=True, default=False)
+    teaching_method = Column(JSON, nullable=True)
+    catalogue = Column(ARRAY(String), nullable=True)
+    photo_gallery = Column(ARRAY(String), nullable=True)
 
     user = relationship("User", backref="school")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
@@ -89,6 +157,7 @@ class School(Base):
     exam_data = relationship("StudentExamData", back_populates="school")
     leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
     bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
+    faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
 
 
     
@@ -608,3 +677,57 @@ class BankAccount(Base):
     # Note: Only one primary account per school is enforced at application level
     # A partial unique index can be added at database level for PostgreSQL:
     # CREATE UNIQUE INDEX uq_school_primary_account ON bank_accounts (school_id) WHERE is_primary = true;
+
+
+class Worker(Base):
+    __tablename__ = "workers"
+
+    id = Column(String, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # plumber, labor, electrician, technician, etc.
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # Relationships
+    school = relationship("School", backref="workers")
+    user = relationship("User", backref="worker_profile")
+    payment_records = relationship("PaymentRecord", back_populates="worker", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            # Generate ID based on role prefix
+            role_prefix_map = {
+                "technician": "TEC",
+                "plumber": "PLU",
+                "labor": "LAB",
+                "electrician": "ELE",
+                "carpenter": "CAR",
+                "painter": "PAI",
+                "mason": "MAS",
+                "welder": "WEL",
+                "mechanic": "MEC",
+            }
+            # Get prefix from role (case-insensitive)
+            role_lower = self.role.lower() if self.role else "WRK"
+            prefix = role_prefix_map.get(role_lower, "WRK")  # Default to WRK if role not found
+            self.id = f"{prefix}-{str(uuid.uuid4().int)[:6]}"
+
+
+class PaymentRecord(Base):
+    __tablename__ = "payment_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    worker_id = Column(String, ForeignKey("workers.id"), nullable=False, index=True)
+    description = Column(String(1000), nullable=True)
+    files = Column(JSON, nullable=True)  # Array of file URLs
+    status = Column(String(50), nullable=False)  # Input field for status
+    amount = Column(Float, nullable=True)  # Payment amount
+    payment_date = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # Relationships
+    worker = relationship("Worker", back_populates="payment_records")

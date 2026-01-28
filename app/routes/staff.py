@@ -17,7 +17,7 @@ from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequ
 from app.schemas.teachers import TeacherStaffPaymentRequest, TeacherStaffPaymentTransactionResponse, PendingMonthResponse, BulkStaffPaymentRequest, BulkPaymentResponse, FailedPaymentItem, BulkStaffPaymentRequest, BulkPaymentResponse
 from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
-from app.utils.permission import get_staff_permissions, require_roles
+from app.utils.permission import get_staff_permissions, require_roles, verify_school_business_access
 from app.utils.staff_logging import log_action
 from app.services.pagination import PaginationParams
 from typing import Optional, List
@@ -44,9 +44,12 @@ def create_staff(
     Create a staff account. Only school accounts have permission to create staff members.
     Creates both User and Staff profile, then emails credentials to the staff member.
     """
-    # Permission check: Only SCHOOL role can create staff
+    # Permission check: Only SCHOOL role (business account) can create staff
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school accounts can create staff members.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Validate email uniqueness
     existing_user = db.query(User).filter(User.email == data.email).first()
@@ -224,6 +227,10 @@ def get_staff_profile(
     if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can access staff profiles.")
 
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+
     staff = None
     
     if current_user.role == UserRole.STAFF:
@@ -338,6 +345,10 @@ def update_staff_profile(
     """
     if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can update staff profiles.")
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     staff = None
     
@@ -480,6 +491,9 @@ def assign_staff_permissions(
     """
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can assign staff permissions.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     school = getattr(current_user, "school_profile", None)
     if not school:
@@ -539,6 +553,10 @@ def get_staff_permissions_endpoint(
     """
     if current_user.role not in [UserRole.STAFF, UserRole.SCHOOL]:
         raise HTTPException(status_code=403, detail="Only staff members and school users can view permissions.")
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
     
     staff = None
     
@@ -612,6 +630,7 @@ def get_activity_logs(
     """
     # Determine school_id
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
@@ -884,6 +903,9 @@ def make_staff_payment(
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can make payments.")
     
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
+    
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
@@ -975,6 +997,9 @@ def make_bulk_staff_payments(
     # Only school users can make payments
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can make payments.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
     
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -1107,6 +1132,7 @@ def get_staff_payment_history(
     
     # Get school
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
@@ -1154,6 +1180,7 @@ def get_staff_pending_months(
     
     # Get school
     if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")

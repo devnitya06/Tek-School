@@ -6,6 +6,7 @@ from enum import Enum
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    login_type: Optional[str] = "business"  # For school users: "listing" or "business", default "business"
 
 class UserRole(str,Enum):
     SUPERADMIN = "superadmin"
@@ -16,6 +17,9 @@ class UserRole(str,Enum):
     STAFF = "staff"
     SELF_SIGNED_STUDENT = "self_signed_student"
 
+class SignupType(str, Enum):
+    BUSINESS_SCHOOL = "business_school_signup"
+    LISTING_SCHOOL = "listing_school_signup"
     
 # Base schema for user-related actions
 class UserBase(BaseModel):
@@ -36,7 +40,7 @@ class UserBase(BaseModel):
 
 # Schema used when creating a new user (no password, role is handled later)
 class UserCreate(UserBase):
-    pass
+    signup_type: Optional[SignupType] = None  # For school signups: business_school_signup or listing_school_signup
     
 class SignupResponse(BaseModel):
     detail: str

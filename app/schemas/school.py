@@ -48,22 +48,36 @@ class SchoolProfileOut(SchoolProfileBase):
     }
 
 class SchoolProfileUpdate(BaseModel):
-    school_type: Optional[str]
-    school_medium: Optional[str]
-    school_board: Optional[str]
-    establishment_year: Optional[int]
-    pin_code: Optional[str]
-    block_division: Optional[str]
-    district: Optional[str]
-    state: Optional[str]
-    country: Optional[str]
-    # profile_pic_url:Optional[str]
-    # banner_pic_url:Optional[str]
-    school_alt_phone: Optional[str]
-    principal_name: Optional[str]
-    principal_designation: Optional[str]
-    principal_email: Optional[EmailStr]
-    principal_phone: Optional[str]
+    school_name: Optional[str] = None
+    school_type: Optional[str] = None
+    school_medium: Optional[str] = None
+    school_board: Optional[str] = None
+    establishment_year: Optional[int] = None
+    pin_code: Optional[str] = None
+    block_division: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    school_email: Optional[str] = None
+    school_phone: Optional[str] = None
+    school_alt_phone: Optional[str] = None
+    school_website: Optional[str] = None
+    principal_name: Optional[str] = None
+    principal_designation: Optional[str] = None
+    principal_email: Optional[EmailStr] = None
+    principal_phone: Optional[str] = None
+    school_other_email: Optional[str] = None
+    school_location: Optional[str] = None
+    total_teachers: Optional[int] = None
+    total_students: Optional[int] = None
+    class_from: Optional[str] = None
+    class_to: Optional[str] = None
+    due_installment_type: Optional[List[str]] = None
+    transportation_facility: Optional[bool] = None
+    playground_facility: Optional[bool] = None
+    teaching_method: Optional[List[str]] = None
+    catalogue: Optional[List[str]] = None
+    photo_gallery: Optional[List[str]] = None
 
 
 # class ClassWithSubjectCreate(BaseModel):
@@ -403,3 +417,11 @@ class BankAccountResponse(BaseModel):
     model_config = {
         "from_attributes": True
     }
+
+# Promotion Account Schemas
+class PromoteAccountRequest(BaseModel):
+    pass  # No additional data needed, just triggers request
+
+class PromoteAccountResponse(BaseModel):
+    detail: str
+    status: str  # "pending", "approved", "rejected"

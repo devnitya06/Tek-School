@@ -1,10 +1,11 @@
 from datetime import datetime,date
-from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form
+from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form,Request,Body
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
 from app.models.students import Student
 from app.models.staff import Staff
 from app.models.school import *
+from app.models.admin import FAQ, school_faqs
 from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMaster
 from app.schemas.users import UserRole
 from app.schemas.school import *
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case,cast,String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
-from app.utils.permission import require_roles
+from app.utils.permission import require_roles, verify_school_business_access
 from typing import List,Optional
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
@@ -39,31 +40,7 @@ def timer():
     return time.perf_counter()
 @router.patch("/school-profile")
 async def update_school_profile(
-    school_name: Optional[str] = Form(None),
-    school_type: Optional[str] = Form(None),
-    school_medium: Optional[str] = Form(None),
-    school_board: Optional[str] = Form(None),
-    establishment_year: Optional[int] = Form(None),
-
-    pin_code: Optional[str] = Form(None),
-    block_division: Optional[str] = Form(None),
-    district: Optional[str] = Form(None),
-    state: Optional[str] = Form(None),
-    country: Optional[str] = Form(None),
-
-    school_email: Optional[str] = Form(None),
-    school_phone: Optional[str] = Form(None),
-    school_alt_phone: Optional[str] = Form(None),
-    school_website: Optional[str] = Form(None),
-
-    principal_name: Optional[str] = Form(None),
-    principal_designation: Optional[str] = Form(None),
-    principal_email: Optional[str] = Form(None),
-    principal_phone: Optional[str] = Form(None),
-
-    profile_pic: Optional[UploadFile] = File(None),
-    banner_pic: Optional[UploadFile] = File(None),
-
+    request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -72,62 +49,81 @@ async def update_school_profile(
     if not school:
         raise HTTPException(status_code=404, detail="School profile not found")
 
-    # Update only if data is provided
-    if school_name is not None:
-        school.school_name = school_name
-    if school_type is not None:
-        school.school_type = school_type
-    if school_medium is not None:
-        school.school_medium = school_medium
-    if school_board is not None:
-        school.school_board = school_board
-    if establishment_year is not None:
-        school.establishment_year = establishment_year
+    # Parse JSON body
+    try:
+        body = await request.json()
+        data = SchoolProfileUpdate(**body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
 
-    if pin_code is not None:
-        school.pin_code = pin_code
-    if block_division is not None:
-        school.block_division = block_division
-    if district is not None:
-        school.district = district
-    if state is not None:
-        school.state = state
-    if country is not None:
-        school.country = country
+    # Handle JSON body data - update only if data is provided
+    if data is not None:
+        if data.school_name is not None:
+            school.school_name = data.school_name
+        if data.school_type is not None:
+            school.school_type = data.school_type
+        if data.school_medium is not None:
+            school.school_medium = data.school_medium
+        if data.school_board is not None:
+            school.school_board = data.school_board
+        if data.establishment_year is not None:
+            school.establishment_year = data.establishment_year
 
-    if school_email is not None:
-        school.school_email = school_email
-    if school_phone is not None:
-        school.school_phone = school_phone
-    if school_alt_phone is not None:
-        school.school_alt_phone = school_alt_phone
-    if school_website is not None:
-        school.school_website = school_website
+        if data.pin_code is not None:
+            school.pin_code = data.pin_code
+        if data.block_division is not None:
+            school.block_division = data.block_division
+        if data.district is not None:
+            school.district = data.district
+        if data.state is not None:
+            school.state = data.state
+        if data.country is not None:
+            school.country = data.country
 
-    if principal_name is not None:
-        school.principal_name = principal_name
-    if principal_designation is not None:
-        school.principal_designation = principal_designation
-    if principal_email is not None:
-        school.principal_email = principal_email
-    if principal_phone is not None:
-        school.principal_phone = principal_phone
+        if data.school_email is not None:
+            school.school_email = data.school_email
+        if data.school_phone is not None:
+            school.school_phone = data.school_phone
+        if data.school_alt_phone is not None:
+            school.school_alt_phone = data.school_alt_phone
+        if data.school_website is not None:
+            school.school_website = data.school_website
 
-    # Handle profile image upload
-    if profile_pic:
-        try:
-            url= upload_to_s3(profile_pic, f"schools/{current_user.id}/profile")
-            school.profile_pic_url = url
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        if data.principal_name is not None:
+            school.principal_name = data.principal_name
+        if data.principal_designation is not None:
+            school.principal_designation = data.principal_designation
+        if data.principal_email is not None:
+            school.principal_email = data.principal_email
+        if data.principal_phone is not None:
+            school.principal_phone = data.principal_phone
 
-    # Handle banner image upload
-    if banner_pic:
-        try:
-            url = upload_to_s3(banner_pic, f"schools/{current_user.id}/banner")
-            school.banner_pic_url = url
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        if data.school_other_email is not None:
+            school.school_other_email = data.school_other_email
+        if data.school_location is not None:
+            school.school_location = data.school_location
+        if data.total_teachers is not None:
+            school.total_teachers = data.total_teachers
+        if data.total_students is not None:
+            school.total_students = data.total_students
+        if data.class_from is not None:
+            school.class_from = data.class_from
+        if data.class_to is not None:
+            school.class_to = data.class_to
+        if data.due_installment_type is not None:
+            school.due_installment_type = data.due_installment_type
+        if data.transportation_facility is not None:
+            school.transportation_facility = data.transportation_facility
+        if data.playground_facility is not None:
+            school.playground_facility = data.playground_facility
+        if data.teaching_method is not None:
+            school.teaching_method = data.teaching_method
+        if data.catalogue is not None:
+            school.catalogue = data.catalogue
+        if data.photo_gallery is not None:
+            school.photo_gallery = data.photo_gallery
+
+
 
     try:
         db.commit()
@@ -136,7 +132,385 @@ async def update_school_profile(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
 
-    return {"detail": "School profile updated successfully"}
+    return {
+        "detail": "School profile updated successfully",
+        "profile": {
+            "id": school.id,
+            "user_id": school.user_id,
+            "school_name": school.school_name,
+            "school_type": (
+                school.school_type.value if school.school_type else None
+            ),
+            "school_medium": (
+                school.school_medium.value if school.school_medium else None
+            ),
+            "school_board": (
+                school.school_board.value if school.school_board else None
+            ),
+            "school_logo": school.profile_pic_url,
+            "school_banner": school.banner_pic_url,
+            "establishment_year": school.establishment_year,
+            "pin_code": school.pin_code,
+            "block_division": school.block_division,
+            "district": school.district,
+            "state": school.state,
+            "country": school.country,
+            "school_email": school.school_email,
+            "school_phone": school.school_phone,
+            "school_alt_phone": school.school_alt_phone,
+            "school_website": school.school_website,
+            "principal_name": school.principal_name,
+            "principal_designation": school.principal_designation,
+            "principal_email": school.principal_email,
+            "principal_phone": school.principal_phone,
+            "account_type": school.account_type.value if school.account_type else None,
+            "is_business_approved": school.is_business_approved,
+            "is_promotion_pending": school.is_promotion_pending,
+            "created_at": school.created_at,
+            "school_other_email": school.school_other_email,
+            "school_location": school.school_location,
+            "total_teachers": school.total_teachers,
+            "total_students": school.total_students,
+            "class_from": school.class_from,
+            "class_to": school.class_to,
+            "due_installment_type": school.due_installment_type,
+            "transportation_facility": school.transportation_facility,
+            "playground_facility": school.playground_facility,
+            "teaching_method": school.teaching_method,
+        }
+    }
+
+
+@router.post("/catalogue", status_code=status.HTTP_201_CREATED)
+async def add_catalogue_images(
+    images: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Add images to school catalogue.
+    Accepts multiple image files and uploads them to S3.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    # Validate number of images (optional limit)
+    if len(images) > 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 images allowed per request")
+    
+    uploaded_urls = []
+    errors = []
+    
+    for image in images:
+        try:
+            # Upload to S3
+            url = upload_to_s3(image, f"schools/{current_user.id}/catalogue")
+            uploaded_urls.append(url)
+        except Exception as e:
+            errors.append(f"Failed to upload {image.filename}: {str(e)}")
+    
+    if errors and not uploaded_urls:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    
+    # Update catalogue - append new URLs to existing ones
+    if school.catalogue is None:
+        school.catalogue = uploaded_urls
+    else:
+        school.catalogue = list(school.catalogue) + uploaded_urls
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": f"Successfully added {len(uploaded_urls)} image(s) to catalogue",
+        "uploaded_urls": uploaded_urls,
+        "errors": errors if errors else None,
+        "total_catalogue_images": len(school.catalogue) if school.catalogue else 0
+    }
+
+
+@router.delete("/catalogue")
+async def clear_catalogue(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Clear all images from school catalogue.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    school.catalogue = None
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": "Catalogue cleared successfully",
+        "catalogue": None
+    }
+
+
+@router.delete("/catalogue/image")
+async def remove_catalogue_image(
+    image_url: str = Query(..., description="URL of the image to remove from catalogue"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Remove a specific image from school catalogue by URL.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    if not school.catalogue or len(school.catalogue) == 0:
+        raise HTTPException(status_code=404, detail="Catalogue is empty")
+    
+    # Convert to list and remove the URL
+    catalogue_list = list(school.catalogue)
+    
+    if image_url not in catalogue_list:
+        raise HTTPException(status_code=404, detail="Image URL not found in catalogue")
+    
+    catalogue_list.remove(image_url)
+    
+    # Update catalogue (set to None if empty, otherwise update list)
+    if len(catalogue_list) == 0:
+        school.catalogue = None
+    else:
+        school.catalogue = catalogue_list
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": "Image removed from catalogue successfully",
+        "removed_url": image_url,
+        "remaining_images": len(school.catalogue) if school.catalogue else 0
+    }
+
+
+@router.get("/catalogue")
+async def get_catalogue(
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get catalogue images for the school with pagination.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    catalogue_list = list(school.catalogue) if school.catalogue else []
+    total_images = len(catalogue_list)
+    
+    # Calculate pagination
+    total_pages = (total_images + page_size - 1) // page_size if total_images > 0 else 0
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    
+    # Get paginated results
+    paginated_catalogue = catalogue_list[start_index:end_index]
+    
+    return {
+        "catalogue": paginated_catalogue,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_images": total_images,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1
+        }
+    }
+
+
+@router.post("/photo-gallery", status_code=status.HTTP_201_CREATED)
+async def add_photo_gallery_images(
+    images: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Add images to school photo gallery.
+    Accepts multiple image files and uploads them to S3.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    # Validate number of images (optional limit)
+    if len(images) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 images allowed per request")
+    
+    uploaded_urls = []
+    errors = []
+    
+    for image in images:
+        try:
+            # Upload to S3
+            url = upload_to_s3(image, f"schools/{current_user.id}/photo_gallery")
+            uploaded_urls.append(url)
+        except Exception as e:
+            errors.append(f"Failed to upload {image.filename}: {str(e)}")
+    
+    if errors and not uploaded_urls:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    
+    # Update photo gallery - append new URLs to existing ones
+    if school.photo_gallery is None:
+        school.photo_gallery = uploaded_urls
+    else:
+        school.photo_gallery = list(school.photo_gallery) + uploaded_urls
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": f"Successfully added {len(uploaded_urls)} image(s) to photo gallery",
+        "uploaded_urls": uploaded_urls,
+        "errors": errors if errors else None,
+        "total_gallery_images": len(school.photo_gallery) if school.photo_gallery else 0
+    }
+
+
+@router.delete("/photo-gallery")
+async def clear_photo_gallery(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Clear all images from school photo gallery.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    school.photo_gallery = None
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": "Photo gallery cleared successfully",
+        "photo_gallery": None
+    }
+
+
+@router.delete("/photo-gallery/image")
+async def remove_photo_gallery_image(
+    image_url: str = Query(..., description="URL of the image to remove from photo gallery"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Remove a specific image from school photo gallery by URL.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    if not school.photo_gallery or len(school.photo_gallery) == 0:
+        raise HTTPException(status_code=404, detail="Photo gallery is empty")
+    
+    # Convert to list and remove the URL
+    gallery_list = list(school.photo_gallery)
+    
+    if image_url not in gallery_list:
+        raise HTTPException(status_code=404, detail="Image URL not found in photo gallery")
+    
+    gallery_list.remove(image_url)
+    
+    # Update photo gallery (set to None if empty, otherwise update list)
+    if len(gallery_list) == 0:
+        school.photo_gallery = None
+    else:
+        school.photo_gallery = gallery_list
+    
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+    
+    return {
+        "detail": "Image removed from photo gallery successfully",
+        "removed_url": image_url,
+        "remaining_images": len(school.photo_gallery) if school.photo_gallery else 0
+    }
+
+
+@router.get("/photo-gallery")
+async def get_photo_gallery(
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get photo gallery images for the school with pagination.
+    """
+    # Ensure school is found for current user
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found")
+    
+    gallery_list = list(school.photo_gallery) if school.photo_gallery else []
+    total_images = len(gallery_list)
+    
+    # Calculate pagination
+    total_pages = (total_images + page_size - 1) // page_size if total_images > 0 else 0
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    
+    # Get paginated results
+    paginated_gallery = gallery_list[start_index:end_index]
+    
+    return {
+        "photo_gallery": paginated_gallery,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_images": total_images,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1
+        }
+    }
 
 
 @router.get("/school")
@@ -186,7 +560,20 @@ async def get_school_profile(
         "principal_designation": school.principal_designation,
         "principal_email": school.principal_email,
         "principal_phone": school.principal_phone,
+        "account_type": school.account_type.value if school.account_type else None,
+        "is_business_approved": school.is_business_approved,
+        "is_promotion_pending": school.is_promotion_pending,
         "created_at": school.created_at,
+        "school_other_email": school.school_other_email,
+        "school_location": school.school_location,
+        "total_teachers": school.total_teachers,
+        "total_students": school.total_students,
+        "class_from": school.class_from,
+        "class_to": school.class_to,
+        "due_installment_type": school.due_installment_type,
+        "transportation_facility": school.transportation_facility,
+        "playground_facility": school.playground_facility,
+        "teaching_method": school.teaching_method,
     }
 
 # @router.post("/create-class-with-subjects/")
@@ -309,12 +696,16 @@ def create_class(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school and staff users can create classes"
         )
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -451,6 +842,8 @@ def update_class_section_fields(
 ):
     # Determine school context for current user
     if current_user.role == UserRole.SCHOOL:
+        # ✅ Verify business account access
+        verify_school_business_access(current_user, db)
         school_profile = current_user.school_profile
         if not school_profile:
             raise HTTPException(status_code=404, detail="School profile not found")
@@ -560,10 +953,14 @@ def get_school_classes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow school, teacher, and staff users
+    # ✅ Allow school (business only), teacher, and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only school, teacher, and staff users can access this resource.")
 
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+    
     if current_user.role == UserRole.SCHOOL:
         # Get the school associated with the current user
         school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -1043,6 +1440,12 @@ def publish_timetable(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can access this resource.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Get the school associated with the current user
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -1252,9 +1655,13 @@ def get_sections(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow school, teacher, and staff users
+    # ✅ Allow school (business only), teacher, and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only school, teacher, or staff users can access this resource.")
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
     
     # ✅ Get school for SCHOOL users
     if current_user.role == UserRole.SCHOOL:
@@ -1304,9 +1711,13 @@ def get_subjects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(status_code=403, detail="Only school and staff users can access this resource.")
+    
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
     
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -1342,12 +1753,16 @@ def create_transport(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # ✅ Allow both school and staff users
+    # ✅ Allow both school (business only) and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school and staff users can create transport records."
         )
+
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
 
     # ✅ Get school based on user role
     if current_user.role == UserRole.SCHOOL:
@@ -1598,6 +2013,10 @@ def get_school_dashboard(
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF))
 ):
+    # ✅ For SCHOOL users, verify business account access
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+    
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         school_id = current_user.school_profile.id
@@ -1967,8 +2386,11 @@ def create_timetable(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != "school":
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only schools can create timetables.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
     
     school = db.query(School).filter(School.id == current_user.school_profile.id).first()
     if not school:
@@ -2209,6 +2631,12 @@ def create_school_credit_configuration(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can create credit configurations.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     try:
         # Get the school associated with the current user
@@ -2340,6 +2768,9 @@ def create_payment_order(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can create payment orders.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -2381,6 +2812,9 @@ def verify_payment(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can verify payment.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Generate signature to verify
     generated_signature = hmac.new(
@@ -2456,6 +2890,9 @@ def transfer_school_credit(
 ):
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can transfer credit.")
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
 
     # Get the sender's school
     sender_school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -2930,6 +3367,9 @@ def update_exam_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only school users can update exam status"
         )
+    
+    # ✅ Verify business account access
+    verify_school_business_access(current_user, db)
     
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
@@ -4619,3 +5059,164 @@ def get_employees_with_payments(
     paginated_result = result[start:end]
     
     return pagination.format_response(paginated_result, total_count)
+
+
+@router.post("/promote-account", response_model=PromoteAccountResponse)
+def promote_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Listing school requests promotion to business account.
+    Sets is_promotion_pending = True and notifies admin.
+    """
+    # Only SCHOOL role
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school users can promote account"
+        )
+    
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School profile not found"
+        )
+    
+    # Check if already business
+    if school.account_type == SchoolAccountType.BUSINESS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account is already a business account"
+        )
+    
+    # Check if promotion already pending
+    if school.is_promotion_pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Promotion request already pending. Please wait for admin approval."
+        )
+    
+    # Set promotion pending
+    school.is_promotion_pending = True
+    db.commit()
+    
+    # TODO: Notify admin about promotion request (can be implemented later with email/notification system)
+    
+    return PromoteAccountResponse(
+        detail="Promotion request sent to admin. You will be notified once approved.",
+        status="pending"
+    )
+
+
+@router.post("/faqs/select")
+async def select_faqs(
+    faq_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    School selects FAQs to display on their page.
+    Requires school authentication.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school users can select FAQs"
+        )
+    
+    # Get school
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School profile not found"
+        )
+    
+    faq_ids = faq_data.get("faq_ids", [])
+    if not faq_ids or not isinstance(faq_ids, list) or len(faq_ids) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="faq_ids must be a non-empty list"
+        )
+    
+    # Validate all FAQ IDs exist and are active
+    faqs = db.query(FAQ).filter(
+        FAQ.id.in_(faq_ids),
+        FAQ.is_active == True
+    ).all()
+    
+    if len(faqs) != len(faq_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="One or more FAQ IDs are invalid or inactive"
+        )
+    
+    try:
+        # Remove existing FAQ associations
+        db.execute(
+            delete(school_faqs).where(school_faqs.c.school_id == school.id)
+        )
+        
+        # Add new FAQ associations
+        for faq_id in faq_ids:
+            db.execute(
+                insert(school_faqs).values(
+                    school_id=school.id,
+                    faq_id=faq_id
+                )
+            )
+        
+        db.commit()
+        
+        return {
+            "detail": f"Successfully selected {len(faq_ids)} FAQ(s)",
+            "selected_faq_ids": faq_ids,
+            "school_id": school.id
+        }
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to select FAQs: {str(e)}"
+        )
+
+
+@router.get("/faqs/public/{school_id}")
+async def get_school_faqs_public(
+    school_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get FAQs for a specific school. Public endpoint - no authentication required.
+    """
+    # Verify school exists
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found"
+        )
+    
+    # Get FAQs associated with this school
+    faqs = db.query(FAQ).join(
+        school_faqs, FAQ.id == school_faqs.c.faq_id
+    ).filter(
+        school_faqs.c.school_id == school_id,
+        FAQ.is_active == True
+    ).order_by(FAQ.created_at.asc()).all()
+    
+    return {
+        "school_id": school_id,
+        "school_name": school.school_name,
+        "faqs": [
+            {
+                "id": faq.id,
+                "question": faq.question,
+                "answer": faq.answer
+            }
+            for faq in faqs
+        ],
+        "total_faqs": len(faqs)
+    }

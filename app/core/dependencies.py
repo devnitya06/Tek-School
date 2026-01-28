@@ -15,6 +15,13 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
+    """
+    Get current authenticated user from JWT token.
+    
+    Note: Business account verification is handled in verify_school_business_access()
+    which is called in require_roles() and individual endpoints.
+    This ensures business accounts are verified by super admin before accessing any APIs.
+    """
     token = credentials.credentials
     payload = decode_token(token)
     if not payload:

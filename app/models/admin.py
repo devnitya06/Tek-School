@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float,UniqueConstraint
+from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float,UniqueConstraint,Table
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
@@ -373,3 +373,29 @@ class Payment(Base):
     created_at = Column(DateTime, default=func.now())
     # relationships
     subscription = relationship("StudentSubscription", back_populates="payments")
+
+
+class FAQ(Base):
+    __tablename__ = "faqs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    is_active = Column(Boolean, default=True)
+    
+    # relationships
+    creator = relationship("User", foreign_keys=[created_by])
+    schools = relationship("School", secondary="school_faqs", back_populates="faqs")
+
+
+# Association table for many-to-many relationship between School and FAQ
+school_faqs = Table(
+    "school_faqs",
+    Base.metadata,
+    Column("school_id", String, ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True),
+    Column("faq_id", Integer, ForeignKey("faqs.id", ondelete="CASCADE"), primary_key=True),
+    Column("created_at", DateTime, default=func.now())
+)
