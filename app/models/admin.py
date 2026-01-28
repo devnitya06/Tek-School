@@ -135,6 +135,26 @@ class AccountConfiguration(Base):
     value=Column(Integer, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class PaymentConfiguration(Base):
+    __tablename__ = "payment_configurations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer,ForeignKey("school_classes_subjects.id"),nullable=False,unique=True)
+    monthly_amount = Column(Integer, nullable=False)
+    monthly_discount = Column(Integer, nullable=False)
+    quarterly_amount = Column(Integer, nullable=False)
+    quarterly_discount = Column(Integer, nullable=False)
+    half_yearly_amount = Column(Integer, nullable=False)
+    half_yearly_discount = Column(Integer, nullable=False)
+    yearly_amount = Column(Integer, nullable=False)
+    yearly_discount = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # relationship (optional but recommended)
+    class_obj = relationship("SchoolClassSubject",backref="payment_configuration",uselist=False)
+
     
 class CreditConfiguration(Base):
     __tablename__ = "credit_configuration"
@@ -184,6 +204,7 @@ class SchoolClassSubject(Base):
     # ✅ Relationships
     chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
     admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
+
     __table_args__ = (
         UniqueConstraint(
             "school_board", "school_medium", "class_name", "subject",

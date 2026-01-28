@@ -154,3 +154,69 @@ class StudentPurchaseResponse(BaseModel):
     amount: int
     currency: str = "INR"
     status: str
+
+class AccountConfigurationCreate(BaseModel):
+    name: str
+    value: int
+
+
+class AccountConfigurationUpdate(BaseModel):
+    value: int
+
+
+class AccountConfigurationResponse(BaseModel):
+    id: int
+    name: str
+    value: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+class PaymentConfigurationCreate(BaseModel):
+    class_id: int
+
+    monthly_amount: int
+    monthly_discount: int
+
+    quarterly_amount: int
+    quarterly_discount: int
+
+    half_yearly_amount: int
+    half_yearly_discount: int
+
+    yearly_amount: int
+    yearly_discount: int
+
+class PaymentConfigurationUpdate(BaseModel):
+    monthly_amount: int
+    monthly_discount: int
+
+    quarterly_amount: int
+    quarterly_discount: int
+
+    half_yearly_amount: int
+    half_yearly_discount: int
+
+    yearly_amount: int
+    yearly_discount: int
+
+class PaymentConfigurationResponse(BaseModel):
+    id: int
+    class_id: int
+
+    monthly_amount: int
+    monthly_discount: int
+    quarterly_amount: int
+    quarterly_discount: int
+    half_yearly_amount: int
+    half_yearly_discount: int
+    yearly_amount: int
+    yearly_discount: int
+
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -1,23 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
-from app.models.admin import ( AccountConfiguration, CreditConfiguration,AdminExam,AdminExamStatus,AdminExamBank,
-                            QuestionType,StudentAdminExamData,QuestionSetBank,QuestionSet,StudentExamStatus,RechargePlan)
+from app.models.admin import *
 from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus,SelfSignedStudent
 from app.models.staff import Staff
-from app.schemas.admin import (
-    ConfigurationCreateSchema,SchoolClassSubjectBase,ChapterCreate,ChapterUpdate,AdminExamCreate,
-    AdminExamUpdate,ExamQuestionPayloadList,QuestionSetCreate,BulkQuestionCreate,QuestionUpdate,
-    StudentExamSubmitRequest,RechargePlanCreate,RechargePlanResponse,RechargePlanListResponse,
-    StudentPurchaseRequest,StudentPurchaseResponse
-)
+from app.schemas.admin import *
 from app.services.students import update_admin_exam_class_ranks
-from app.models.admin import ( CreditMaster,SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,
-                            ChapterPDF,ChapterQnA,PlanDuration,StudentSubscription,Payment,
-                            PaymentStatus)
+from app.models.admin import *
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
@@ -71,6 +63,77 @@ def create_account_credit_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error occurred: {str(e)}"
         )
+@router.post("/account-configurations/", status_code=status.HTTP_201_CREATED)
+def create_account_configurations(
+    data: list[AccountConfigurationCreate],
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    existing_names = {
+        name for (name,) in db.query(AccountConfiguration.name).all()
+    }
+
+    for item in data:
+        if item.name in existing_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Configuration '{item.name}' already exists"
+            )
+
+        db.add(AccountConfiguration(**item.dict()))
+
+    db.commit()
+    return {"detail": "Account configurations created successfully."}
+
+
+@router.get("/account-configurations/", response_model=list[AccountConfigurationResponse])
+def get_account_configurations(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    return db.query(AccountConfiguration).order_by(AccountConfiguration.id.asc()).all()
+
+@router.get("/account-configurations/{config_id}", response_model=AccountConfigurationResponse)
+def get_single_account_configuration(
+    config_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    config = db.query(AccountConfiguration).filter(
+        AccountConfiguration.id == config_id
+    ).first()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+
+    return config
+
+@router.put("/account-configurations/{config_id}")
+def update_account_configuration(
+    config_id: int,
+    data: AccountConfigurationUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    config = db.query(AccountConfiguration).filter(
+        AccountConfiguration.id == config_id
+    ).first()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+
+    print("BEFORE:", config.value)
+    config.value = data.value
+
+    db.commit()
+    db.refresh(config)
+
+    print("AFTER:", config.value)
+
+    return {
+        "detail": "Account configuration updated successfully.",
+        "updated_value": config.value
+    }
 
 
 @router.get("/all-school/")
@@ -256,6 +319,11 @@ def get_school_details(
         return {
             "school_id": school.id,
             "school_name": school.school_name,
+            "school_phone":school.school_phone,
+            "school_email":school.school_email,
+            "school_website":school.school_website,
+            "school_board":school.school_board,
+            "affilation":school.school_medium,
             "profile_image": school.profile_pic_url,
             "banner_image": school.banner_pic_url,
             "location": user.location,
@@ -545,16 +613,14 @@ def get_teacher_details(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
-
 @router.get("/class_subjects/")
 def get_class_subjects(
-    class_name: str = None,
-    school_board: str = None,
+    class_name: str | None = None,
+    school_board: str | None = None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
-    # Access check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=403,
@@ -562,20 +628,43 @@ def get_class_subjects(
         )
 
     try:
-        query = db.query(SchoolClassSubject)
+        query = (
+            db.query(
+                func.min(SchoolClassSubject.id).label("class_id"),  # ✅ class id
+                SchoolClassSubject.school_board,
+                SchoolClassSubject.school_medium,
+                SchoolClassSubject.class_name,
+                func.array_agg(
+                    func.json_build_object(
+                        "subject_id", SchoolClassSubject.id,
+                        "subject_name", SchoolClassSubject.subject
+                    )
+                ).label("subjects"),
+                func.min(SchoolClassSubject.created_at).label("created_at"),
+            )
+            .group_by(
+                SchoolClassSubject.school_board,
+                SchoolClassSubject.school_medium,
+                SchoolClassSubject.class_name,
+            )
+        )
 
-        # 🔍 Apply Filters
+        # 🔍 Filters
         if class_name:
-            query = query.filter(SchoolClassSubject.class_name.ilike(f"%{class_name}%"))
+            query = query.filter(
+                SchoolClassSubject.class_name.ilike(f"%{class_name}%")
+            )
 
         if school_board:
-            query = query.filter(cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%"))
+            query = query.filter(
+                cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%")
+            )
 
-        # Count before pagination
+        # 🔢 Count before pagination
         total_count = query.count()
 
-        # Apply pagination
-        subjects = (
+        # 📄 Pagination
+        records = (
             query
             .offset(pagination.offset())
             .limit(pagination.limit())
@@ -583,14 +672,14 @@ def get_class_subjects(
         )
 
         result = []
-        for obj in subjects:
+        for row in records:
             result.append({
-                "class_id": obj.id,
-                "school_board": obj.school_board,
-                "school_medium": obj.school_medium,
-                "class_name": obj.class_name,
-                "subject": obj.subject,
-                "created_at": obj.created_at,
+                "class_id": row.class_id,
+                "school_board": row.school_board,
+                "school_medium": row.school_medium,
+                "class_name": row.class_name,
+                "subjects": row.subjects,
+                "created_at": row.created_at,
             })
 
         return pagination.format_response(result, total_count)
@@ -600,6 +689,8 @@ def get_class_subjects(
             status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
+
+
 
 @router.post("/class_subjects/")
 def create_class_subjects(
@@ -2150,3 +2241,79 @@ def admin_payment_analytics(
         }
         for row in results
     ]
+
+@router.post("/payment-configurations/", status_code=status.HTTP_201_CREATED)
+def create_payment_configuration(
+    data: PaymentConfigurationCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    exists = db.query(PaymentConfiguration).filter(
+        PaymentConfiguration.class_id == data.class_id
+    ).first()
+
+    if exists:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment configuration already exists for this class"
+        )
+
+    config = PaymentConfiguration(**data.dict())
+    db.add(config)
+    db.commit()
+    db.refresh(config)
+
+    return {"detail": "Payment configuration created successfully"}
+
+@router.put("/payment-configurations/{config_id}")
+def update_payment_configuration(
+    config_id: int,
+    data: PaymentConfigurationUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    config = db.query(PaymentConfiguration).filter(
+        PaymentConfiguration.id == config_id
+    ).first()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+
+    for field, value in data.dict().items():
+        setattr(config, field, value)
+
+    db.commit()
+    db.refresh(config)
+
+    return {"detail": "Payment configuration updated successfully"}
+
+@router.get(
+    "/payment-configurations/",
+    response_model=list[PaymentConfigurationResponse]
+)
+def get_all_payment_configurations(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    return db.query(PaymentConfiguration).order_by(
+        PaymentConfiguration.id.asc()
+    ).all()
+
+@router.get(
+    "/payment-configurations/{config_id}",
+    response_model=PaymentConfigurationResponse
+)
+def get_payment_configuration_detail(
+    config_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    config = db.query(PaymentConfiguration).filter(
+        PaymentConfiguration.id == config_id
+    ).first()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+
+    return config
+
