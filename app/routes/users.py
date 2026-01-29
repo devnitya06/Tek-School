@@ -76,9 +76,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 school_email=user_data.email,
                 school_phone=user_data.phone,
                 school_website=user_data.website,
-                account_type=account_type,
-                is_business_approved=is_business_approved,
-                is_promotion_pending=False,
+                school_location=user_data.location
             )
             db.add(school_profile)
 

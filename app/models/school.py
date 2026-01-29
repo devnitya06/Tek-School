@@ -112,6 +112,7 @@ class School(Base):
     school_phone = Column(String(15), nullable=False)
     school_alt_phone = Column(String(15))
     school_website = Column(String)
+    school_location=Column(String(100),nullable=True)
     
     # Principal Information
     principal_name = Column(String, nullable=True)

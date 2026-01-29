@@ -1254,6 +1254,7 @@ def get_own_student_profile(
         "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
+        "school_name": student.school.school_name if student.school else None,
         "class_name": student.classes.name,
         "section_name": student.section.name if student.section else None,
         "created_at": student.created_at,

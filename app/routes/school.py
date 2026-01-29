@@ -3578,12 +3578,10 @@ def create_leave_request(
 
     attach_file_url = None
     if request.attach_file:
-        print("🔹 attach_file exists, uploading to S3...")
         attach_file_url = upload_base64_to_s3(
             base64_string=request.attach_file,
             filename_prefix="leave_request"
         )
-        print(f"🔹 attach_file_url: {attach_file_url}")
         if not attach_file_url:
             raise HTTPException(status_code=500, detail="Failed to upload attachment")
 
@@ -3677,7 +3675,7 @@ def get_all_leaves(
 
     # --- Role-based filtering ---
     if current_user.role == UserRole.SCHOOL:
-        pass
+        query=query.filter(LeaveRequest.school_id==current_user.school_profile.id)
     elif current_user.role == UserRole.TEACHER:
         query = query.filter(LeaveRequest.teacher_id == current_user.teacher_profile.id)
     elif current_user.role == UserRole.STUDENT:
