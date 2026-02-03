@@ -17,6 +17,7 @@ class ExamType(str, Enum):
 class QuestionType(str, Enum):
     short = "short"
     long = "long"
+    mcq = "mcq"
 
 
 class AdminExamStatus(str, Enum):
@@ -230,10 +231,8 @@ class Chapter(Base):
     images = relationship("ChapterImage", back_populates="chapter", cascade="all, delete-orphan")
     pdfs = relationship("ChapterPDF", back_populates="chapter", cascade="all, delete-orphan")
     qnas = relationship("ChapterQnA", back_populates="chapter", cascade="all, delete-orphan")
+    keypoints = relationship("ChapterKeyPoint",back_populates="chapter",cascade="all, delete-orphan")
     student_progress = relationship("StudentChapterProgress", back_populates="chapter")
-
-
-
 class ChapterVideo(Base):
     __tablename__ = "chapter_videos"
 
@@ -273,6 +272,22 @@ class ChapterQnA(Base):
     chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
 
     chapter = relationship("Chapter", back_populates="qnas")
+class ChapterKeyPoint(Base):
+    __tablename__ = "chapter_keypoints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    point = Column(Text, nullable=False)
+
+    chapter_id = Column(
+        Integer,
+        ForeignKey("chapters.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    created_at = Column(DateTime, default=func.now())
+
+    # relationship
+    chapter = relationship("Chapter", back_populates="keypoints")
 
 
 class StudentChapterProgress(Base):
@@ -399,3 +414,113 @@ school_faqs = Table(
     Column("faq_id", Integer, ForeignKey("faqs.id", ondelete="CASCADE"), primary_key=True),
     Column("created_at", DateTime, default=func.now())
 )
+
+class QuestionBank(Base):
+    __tablename__ = "question_banks"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    school_class_subject_id = Column(
+        Integer,
+        ForeignKey("school_classes_subjects.id"),
+        nullable=False
+    )
+
+    chapter_id = Column(
+        Integer,
+        ForeignKey("chapters.id"),
+        nullable=False
+    )
+
+    mcq_marks = Column(Integer, default=2)
+    short_marks = Column(Integer, default=2)
+    long_marks = Column(Integer, default=10)
+
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=func.now())
+
+    school_class_subject = relationship("SchoolClassSubject")
+    chapter = relationship("Chapter")
+
+    questions = relationship(
+        "Question",
+        back_populates="question_bank",
+        cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "school_class_subject_id", "chapter_id",
+            name="uq_question_bank_per_chapter"
+        ),
+    )
+
+class Question(Base):
+    __tablename__ = "questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    question_bank_id = Column(
+        Integer,
+        ForeignKey("question_banks.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    question_type = Column(SQLEnum(QuestionType), nullable=False)
+    marks = Column(Integer, nullable=False)
+
+    question_text = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=func.now())
+
+    question_bank = relationship("QuestionBank", back_populates="questions")
+
+    options = relationship(
+        "QuestionOption",
+        back_populates="question",
+        cascade="all, delete-orphan"
+    )
+
+    answer = relationship(
+        "QuestionAnswer",
+        back_populates="question",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    key_points = relationship(
+        "AnswerKeyPoint",
+        back_populates="question",
+        cascade="all, delete-orphan"
+    )
+
+class QuestionOption(Base):
+    __tablename__ = "question_options"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"))
+
+    option_text = Column(String(255), nullable=False)
+    is_correct = Column(Boolean, default=False)
+
+    question = relationship("Question", back_populates="options")
+
+class QuestionAnswer(Base):
+    __tablename__ = "question_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"), unique=True)
+
+    answer_text = Column(Text, nullable=False)
+
+    question = relationship("Question", back_populates="answer")
+
+class AnswerKeyPoint(Base):
+    __tablename__ = "answer_key_points"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"))
+
+    key_point = Column(String(255), nullable=False)
+
+    question = relationship("Question", back_populates="key_points")

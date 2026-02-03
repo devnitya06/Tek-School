@@ -10,6 +10,8 @@ from app.models.staff import Staff
 from app.schemas.admin import *
 from app.services.students import update_admin_exam_class_ranks
 from app.models.admin import *
+from app.models.school import *
+from app.models.teachers import *
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
@@ -1020,69 +1022,113 @@ def get_teacher_details(
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
+    # 🔐 Extra safety (even though require_roles already enforces this)
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to view teacher details."
-        )
+        raise HTTPException(status_code=403, detail="Only admin can access this.")
 
-    try:
-        teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
-        if not teacher:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Teacher not found."
-            )
-        
-        user = db.query(User).filter(User.id == teacher.user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Associated user not found."
-            )
-        school= db.query(School).filter(School.id == teacher.school_id).first()
-        if not school: 
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Associated school not found."
-            )
-        
-        assignments = (
+    teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found.")
+
+    user = db.query(User).filter(User.id == teacher.user_id).first()
+    school = db.query(School).filter(School.id == teacher.school_id).first()
+
+    # =========================
+    # Assignments
+    # =========================
+    assignments = (
         db.query(TeacherClassSectionSubject)
         .filter(TeacherClassSectionSubject.teacher_id == teacher.id)
         .all()
-            )
+    )
 
-    # Build detailed assignment info
-        detailed_assignments = []
-        for a in assignments:
-            detailed_assignments.append({
-            "class_id": a.class_id,
-            "class_name": a.class_.name if a.class_ else None,
-            "section_id": a.section_id,
-            "section_name": a.section.name if a.section else None,
-            "subject_id": a.subject_id,
-            "subject_name": a.subject.name if a.subject else None,
-            })    
+    detailed_assignments = [{
+        "class_id": a.class_id,
+        "class_name": a.class_.name if a.class_ else None,
+        "section_id": a.section_id,
+        "section_name": a.section.name if a.section else None,
+        "subject_id": a.subject_id,
+        "subject_name": a.subject.name if a.subject else None,
+    } for a in assignments]
 
-        return {
-            "teacher_id": teacher.id,
-            "profile_image": teacher.profile_image,
-            "name": f"{teacher.first_name} {teacher.last_name}",
-            "phone": teacher.phone,
-            "email": teacher.email,
-            "school_name": school.school_name if school else "N/A",
-            "location": user.location,
-            "assignments": detailed_assignments,
-            # "is_active": teacher.is_active,
-            "created_at": teacher.created_at,
-        }
+    # =========================
+    # Exams conducted by teacher
+    # =========================
+    exams = (
+        db.query(Exam)
+        .filter(Exam.created_by == teacher.id)
+        .order_by(Exam.created_at.desc())
+        .all()
+    )
 
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
+    exam_count = len(exams)
+    last_exam = exams[0] if exams else None
+
+    last_exam_data = {
+        "last_exam_date_time": last_exam.created_at if last_exam else None,
+        "last_exam_type": last_exam.exam_type.value if last_exam else None,
+        "last_exam_status": last_exam.status.value if last_exam else None,
+        "last_exam_total_mark": (
+            last_exam.no_of_questions if last_exam else 0
         )
+    }
+
+    # =========================
+    # Leave summary
+    # =========================
+    leaves = (
+        db.query(LeaveRequest)
+        .filter(LeaveRequest.teacher_id == teacher.id)
+        .all()
+    )
+
+    sick_total = sum(1 for l in leaves if l.leave_type == LeaveType.EMERGENCY)
+    sick_used = sum(1 for l in leaves if l.leave_type == LeaveType.EMERGENCY and l.status == LeaveStatus.APPROVED)
+
+    casual_total = sum(1 for l in leaves if l.leave_type == LeaveType.CASUAL)
+    casual_used = sum(1 for l in leaves if l.leave_type == LeaveType.CASUAL and l.status == LeaveStatus.APPROVED)
+
+    leave_summary = {
+        "sick": {"total": sick_total, "used": sick_used},
+        "casual": {"total": casual_total, "used": casual_used},
+    }
+
+    # =========================
+    # Salary (reference payment table)
+    # =========================
+    payment = (
+        db.query(TeacherStaffPayment)
+        .filter(TeacherStaffPayment.teacher_id == teacher.id)
+        .first()
+    )
+
+    salary_per_month = payment.monthly_in_hand_salary if payment else 0.0
+
+    # =========================
+    # Final response
+    # =========================
+    return {
+        "teacher_id": teacher.id,
+        "profile_image": teacher.profile_image,
+        "name": f"{teacher.first_name} {teacher.last_name}",
+        "email": teacher.email,
+        "phone": teacher.phone,
+        "school_name": school.school_name if school else None,
+        "location": user.location if user else None,
+
+        # 🔥 New fields
+        "exam_conduct_count": exam_count,
+        "exam_details": last_exam_data,
+        "active_since": teacher.created_at,
+        "leave_summary": leave_summary,
+        "salary_per_month": salary_per_month,
+
+        # Existing
+        "assignments": detailed_assignments,
+        "created_at": teacher.created_at,
+        "status": "active" if teacher.is_active else "inactive"
+    }
+
 @router.get("/class_subjects/")
 def get_class_subjects(
     class_name: str | None = None,
@@ -1212,6 +1258,68 @@ def create_class_subjects(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+    
+@router.put("/class_subjects/{class_subject_id}")
+def update_class_subject(
+    class_subject_id: int,
+    payload: SchoolClassSubjectUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    # 🔐 Access control
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to update class subjects."
+        )
+
+    record = (
+        db.query(SchoolClassSubject)
+        .filter(SchoolClassSubject.id == class_subject_id)
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail="Class subject not found."
+        )
+
+    # Use existing values if field not provided
+    new_board = payload.school_board or record.school_board
+    new_medium = payload.school_medium or record.school_medium
+    new_class_name = payload.class_name or record.class_name
+    new_subject = payload.subject or record.subject
+
+    # 🔍 Duplicate check
+    duplicate = db.query(SchoolClassSubject).filter(
+        SchoolClassSubject.id != class_subject_id,
+        SchoolClassSubject.school_board == new_board,
+        SchoolClassSubject.school_medium == new_medium,
+        SchoolClassSubject.class_name == new_class_name,
+        SchoolClassSubject.subject == new_subject
+    ).first()
+
+    if duplicate:
+        raise HTTPException(
+            status_code=400,
+            detail="Another record already exists with the same class, subject, board, and medium."
+        )
+
+    # ✏️ Update fields
+    record.school_board = new_board
+    record.school_medium = new_medium
+    record.class_name = new_class_name
+    record.subject = new_subject
+
+    db.commit()
+    db.refresh(record)
+
+    return {
+        "detail": "Class subject updated successfully.",
+        "class_subject_id": record.id
+    }
+
 
 @router.get("/classes/")
 def get_all_classes(
@@ -1455,6 +1563,8 @@ def add_chapter_to_subject(
         # Add QnAs
         for q in chapter.qnas:
             db.add(ChapterQnA(question=q.question, answer=q.answer, chapter_id=new_chapter.id))
+        for k in chapter.keypoints:
+            db.add(ChapterKeyPoint(point=k.point,chapter_id=new_chapter.id))
 
         db.commit()
 
@@ -1519,6 +1629,10 @@ def update_chapter(
             chapter.qnas.clear()
             for q in chapter_data.qnas:
                 chapter.qnas.append(ChapterQnA(question=q.question, answer=q.answer))
+        if chapter_data.keypoints:
+            chapter.keypoints.clear()
+            for k in chapter_data.keypoints:
+                chapter.keypoints.append(ChapterKeyPoint(point=k.point))
 
         db.commit()
         db.refresh(chapter)
@@ -1563,7 +1677,9 @@ def get_chapter_details(
             "videos": [{"id": v.id, "url": v.url} for v in chapter.videos],
             "images": [{"id": i.id, "url": i.url} for i in chapter.images],
             "pdfs": [{"id": p.id, "url": p.url} for p in chapter.pdfs],
-            "qnas": [{"id": q.id, "question": q.question, "answer": q.answer} for q in chapter.qnas],
+            "qnas": [{"id": q.id, "question": q.question, "answer": q.answer} for q in chapter.
+            qnas],
+            "keypoints":[{"id":k.id,"points":k.point} for k in chapter.keypoints],
             "created_at": chapter.created_at,
             "updated_at": chapter.updated_at
         }
