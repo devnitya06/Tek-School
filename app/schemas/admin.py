@@ -54,6 +54,13 @@ class SchoolClassSubjectBase(BaseModel):
     class_name: Optional[str]
     subject: Optional[str]
 
+class SchoolClassSubjectUpdate(BaseModel):
+    school_board: Optional[SchoolBoard] = None
+    school_medium: Optional[SchoolMedium] = None
+    class_name: Optional[str] = None
+    subject: Optional[str] = None
+
+
 class ChapterQnABase(BaseModel):
     id: int | None = None
     question: str
@@ -62,7 +69,8 @@ class ChapterQnABase(BaseModel):
 class ChapterContentBase(BaseModel):
     id: int | None = None
     url: str
-
+class ChapterKeyPointBase(BaseModel):
+    point: str
 class ChapterCreate(BaseModel):
     title: str
     description: Optional[str] = None
@@ -70,13 +78,15 @@ class ChapterCreate(BaseModel):
     images: Optional[List[ChapterContentBase]] = []
     pdfs: Optional[List[ChapterContentBase]] = []
     qnas: Optional[List[ChapterQnABase]] = []
+    keypoints: List[ChapterKeyPointBase] = []
 class ChapterUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
-    videos: Optional[List[ChapterContentBase]] = []
-    images: Optional[List[ChapterContentBase]] = []
-    pdfs: Optional[List[ChapterContentBase]] = []
-    qnas: Optional[List[ChapterQnABase]] = []
+    videos: Optional[List[ChapterContentBase]] = None
+    images: Optional[List[ChapterContentBase]] = None
+    pdfs: Optional[List[ChapterContentBase]] = None
+    qnas: Optional[List[ChapterQnABase]] = None
+    keypoints: Optional[List[ChapterKeyPointBase]] = None
 class AdminExamBase(BaseModel):
     name: str
     school_class_subject_id: int
@@ -250,3 +260,88 @@ class PaymentConfigurationResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+#Exam and Question Bank
+
+class MarksConfig(BaseModel):
+    mcq: int = 2
+    short: int = 2
+    long: int = 10
+
+
+class QuestionBankCreate(BaseModel):
+    school_class_subject_id: int
+    chapter_id: int
+    marks_config: MarksConfig
+
+class OptionCreate(BaseModel):
+    option_text: str
+    is_correct: bool = False
+
+
+class AnswerCreate(BaseModel):
+    answer_text: str
+
+
+class KeyPointCreate(BaseModel):
+    key_point: str
+
+
+class QuestionCreate(BaseModel):
+    question_type: QuestionType
+    question_text: str
+
+    options: list[OptionCreate] | None = None
+    answer: AnswerCreate | None = None
+    key_points: list[KeyPointCreate] | None = None
+
+class QuestionCountSchema(BaseModel):
+    total: int
+    mcq: int
+    short: int
+    long: int
+
+
+class ChapterOut(BaseModel):
+    id: int
+    name: str
+
+
+class QuestionBankListOut(BaseModel):
+    id: int
+
+    school_board: SchoolBoard
+    school_medium: SchoolMedium
+    class_name: str
+    subject: str
+
+    chapter: ChapterOut
+
+    marks_config: dict
+    question_counts: QuestionCountSchema
+
+    created_at: datetime
+
+class OptionCreate(BaseModel):
+    option_text: str
+    is_correct: bool = False
+
+
+class AnswerCreate(BaseModel):
+    answer_text: str
+
+
+class KeyPointCreate(BaseModel):
+    key_point: str
+
+
+class QuestionCreate(BaseModel):
+    question_type: QuestionType
+    question_text: str
+
+    options: list[OptionCreate] | None = None
+    answer: AnswerCreate | None = None
+    key_points: list[KeyPointCreate] | None = None
+class QuestionBulkCreate(BaseModel):
+    questions: list[QuestionCreate]
+

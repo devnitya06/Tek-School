@@ -772,18 +772,16 @@ def get_students(
     return pagination.format_response(data, total_count)
 
 
-@router.get(
-    "/students/{student_id}",
-    summary="Get student details",
-    description="Retrieve detailed information about a specific student including profile, payment details, and payment history. Students can only access their own profile."
-)
+@router.get("/students/{student_id}")
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF, UserRole.STUDENT))
+    current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.TEACHER, UserRole.STAFF, UserRole.STUDENT,UserRole.ADMIN))
 ):
     # ✅ Determine school_id based on user role
-    if current_user.role == UserRole.SCHOOL:
+    if current_user.role == UserRole.ADMIN:
+        school_id = None
+    elif current_user.role == UserRole.SCHOOL:
         verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
@@ -808,9 +806,9 @@ def get_student(
         
         school_id = student_profile.school_id
 
-    student = (
+    query  = (
         db.query(Student)
-        .filter(Student.id == student_id, Student.school_id == school_id)
+        .filter(Student.id == student_id)
         .options(
             joinedload(Student.classes),
             joinedload(Student.section),
@@ -820,11 +818,12 @@ def get_student(
             joinedload(Student.exam_data),
             joinedload(Student.driver),
         )
-        .first()
     )
 
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found.")
+    if school_id is not None:
+        query = query.filter(Student.school_id == school_id)
+
+    student = query.first()
     
     # Get student payment for current class
     student_payment = (

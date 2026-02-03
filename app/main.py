@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers,exams
 from app.core.config import settings
 from app.db.session import create_tables, add_missing_columns
 
@@ -24,6 +24,7 @@ app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(staff.router, prefix="/staff", tags=["Staff"])
 app.include_router(workers.router, prefix="/worker", tags=["Workers"])
 app.include_router(selfsignedstudents.router, prefix="/api", tags=["SelfSignedStudents"])
+app.include_router(exams.router,prefix="/exam",tags=["Exam"])
 
 
 @app.on_event("startup")
