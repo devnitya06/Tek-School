@@ -61,10 +61,11 @@ class PaymentRecordResponse(PaymentRecordBase):
 
 
 class PaymentRecordWithWorker(PaymentRecordResponse):
-    worker: Optional[WorkerResponse] = None
+    user_details: Optional[WorkerResponse] = Field(default=None, validation_alias="worker")
 
     model_config = {
-        "from_attributes": True
+        "from_attributes": True,
+        "populate_by_name": True
     }
 
 

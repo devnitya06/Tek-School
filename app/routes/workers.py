@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, or_
 from typing import Optional, List
 from datetime import datetime
 
@@ -335,6 +335,7 @@ def get_payment_records(
 )
 def get_all_payment_records(
     pagination: PaginationParams = Depends(),
+    search: Optional[str] = Query(None, description="Search by worker ID or worker name"),
     worker_id: Optional[str] = Query(None, description="Filter by worker ID (e.g., TEC-324567)"),
     status: Optional[str] = Query(None, description="Filter by payment status"),
     start_date: Optional[str] = Query(None, description="Filter by start date (YYYY-MM-DD)"),
@@ -346,7 +347,19 @@ def get_all_payment_records(
     school_id = get_school_id(current_user, db)
     
     # Get all workers for this school
-    workers = db.query(Worker).filter(Worker.school_id == school_id).all()
+    workers_query = db.query(Worker).filter(Worker.school_id == school_id)
+    
+    # Apply search filter (by worker ID or name)
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        workers_query = workers_query.filter(
+            or_(
+                Worker.id.ilike(search_term),
+                Worker.name.ilike(search_term)
+            )
+        )
+    
+    workers = workers_query.all()
     worker_ids = [worker.id for worker in workers]
     
     if not worker_ids:
@@ -383,12 +396,18 @@ def get_all_payment_records(
     # Get total count before pagination
     total_count = query.count()
     
-    # Apply pagination and ordering
-    payment_records = query.order_by(
-        PaymentRecord.payment_date.desc()
-    ).offset(pagination.offset()).limit(pagination.limit()).all()
+    # Apply pagination, ordering, and eager load worker details
+    payment_records = (
+        query.options(joinedload(PaymentRecord.worker))
+        .order_by(PaymentRecord.payment_date.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
     
-    return pagination.format_response(payment_records, total_count)
+    # Serialize with worker details using PaymentRecordWithWorker schema
+    items = [PaymentRecordWithWorker.model_validate(pr) for pr in payment_records]
+    return pagination.format_response(items, total_count)
 
 
 @router.get(
