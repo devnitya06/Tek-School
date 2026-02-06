@@ -847,17 +847,20 @@ def get_student(
         )
         
         for txn in transactions:
-            bank_account_data = None
+            bank_details = None
             if txn.bank_account:
-                bank_account_data = {
+                bank_details = {
                     "id": txn.bank_account.id,
+                    "school_id": txn.bank_account.school_id,
                     "account_holder_name": txn.bank_account.account_holder_name,
                     "account_number": txn.bank_account.account_number,
                     "ifsc_code": txn.bank_account.ifsc_code,
                     "bank_name": txn.bank_account.bank_name,
                     "branch_name": txn.bank_account.branch_name,
                     "account_type": txn.bank_account.account_type,
-                    "is_primary": txn.bank_account.is_primary
+                    "is_primary": txn.bank_account.is_primary,
+                    "created_at": txn.bank_account.created_at.isoformat() if txn.bank_account.created_at else None,
+                    "updated_at": txn.bank_account.updated_at.isoformat() if txn.bank_account.updated_at else None,
                 }
             
             payment_history.append({
@@ -870,8 +873,7 @@ def get_student(
                 "files": txn.files if txn.files else [],
                 "payment_method": txn.payment_method,
                 "transaction_reference": txn.transaction_reference,
-                "bank_account_id": txn.bank_account_id if txn.bank_account_id else None,
-                "bank_account": bank_account_data,
+                "bank_details": bank_details,
                 "status": txn.status if txn.status else 'verified',
                 "verified_at": txn.verified_at.isoformat() if txn.verified_at else None,
                 "rejection_reason": txn.rejection_reason if txn.rejection_reason else None,
