@@ -1056,21 +1056,30 @@ def get_teacher_payment_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get payment history for a teacher"""
-    # Allow school and staff users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
-        raise HTTPException(status_code=403, detail="Only school and staff users can view payment history.")
+    """Get payment history for a teacher. Teachers can only view their own payment history."""
+    # Allow school, staff, and teacher users (teachers can view their own only)
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF, UserRole.TEACHER]:
+        raise HTTPException(status_code=403, detail="Only school, staff, and teacher users can view payment history.")
     
     # Get school
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
-    else:  # STAFF
+    elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
         school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    else:  # TEACHER - can only view their own payment history
+        teacher_profile = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher_profile:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        if teacher_profile.id != teacher_id:
+            raise HTTPException(status_code=403, detail="You can only view your own payment history.")
+        school = db.query(School).filter(School.id == teacher_profile.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found.")
     
@@ -1101,10 +1110,10 @@ def get_teacher_pending_months(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get pending payment months for a teacher"""
-    # Allow school (business only) and staff users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
-        raise HTTPException(status_code=403, detail="Only school and staff users can view pending months.")
+    """Get pending payment months for a teacher. Teachers can only view their own pending months."""
+    # Allow school, staff, and teacher users (teachers can view their own only)
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF, UserRole.TEACHER]:
+        raise HTTPException(status_code=403, detail="Only school, staff, and teacher users can view pending months.")
     
     # ✅ For SCHOOL users, verify business account access
     if current_user.role == UserRole.SCHOOL:
@@ -1115,11 +1124,20 @@ def get_teacher_pending_months(
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
-    else:  # STAFF
+    elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
         school = db.query(School).filter(School.id == staff.school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+    else:  # TEACHER - can only view their own pending months
+        teacher_profile = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher_profile:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        if teacher_profile.id != teacher_id:
+            raise HTTPException(status_code=403, detail="You can only view your own pending months.")
+        school = db.query(School).filter(School.id == teacher_profile.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found.")
     
