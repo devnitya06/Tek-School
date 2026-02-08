@@ -312,7 +312,7 @@ class Attendance(Base):
     student = relationship("Student", back_populates="attendances")
     teacher = relationship("Teacher", back_populates="attendances")
     staff = relationship("Staff", back_populates="attendances")
-    is_today_present = Column(Boolean, default=False, nullable=False)
+    is_today_present = Column(Boolean, default=True, nullable=False)
 
     __table_args__ = (
         UniqueConstraint('student_id','date', name='uq_student_attendance'),

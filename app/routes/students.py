@@ -3,8 +3,9 @@ from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction,PaymentTransactionStatus
 from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount
 from app.models.staff import Staff
+from app.models.teachers import TeacherClassSectionSubject
 from app.schemas.users import UserRole
-from app.schemas.students import StudentCreateRequest,ParentWithAddressCreate,StudentUpdateRequest,ParentWithAddressUpdate,StudentPaymentCreate,StudentPaymentUpdate,PaymentTransactionCreate,PaymentReminderRequest,BulkPaymentReminderRequest,StudentPaymentSubmit,PaymentVerificationRequest
+from app.schemas.students import *
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func, and_, or_
@@ -392,18 +393,36 @@ def get_students(
     name: str | None = Query(None, description="Filter by student name"),
     class_name: str | None = Query(None, description="Filter by class name"),
     section_name: str | None = Query(None, description="Filter by section name"),
+    studentstatus:str | None =Query(None),
     installment_type: str | None = Query(None, description="Filter by installment type (monthly, quarterly, half_yearly, yearly)"),
     is_installment_pending: bool | None = Query(None, description="Filter by installment pending status (true for pending, false for no pending)"),
     last_transaction_start_date: date | None = Query(None, description="Filter by latest transaction start date (inclusive)"),
     last_transaction_end_date: date | None = Query(None, description="Filter by latest transaction end date (inclusive)"),
     status: List[str] | None = Query(None, description="Filter by latest transaction status(es). Can provide multiple statuses (comma-separated or multiple query params)")
 ):
+    teacher_assignments = None
     # ✅ Determine school_id based on user role
     if current_user.role == UserRole.SCHOOL:
         verify_school_business_access(current_user, db)
         school_id = current_user.school_profile.id
     elif current_user.role == UserRole.TEACHER:
-        school_id = current_user.teacher_profile.school_id
+        teacher = current_user.teacher_profile
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found")
+
+        school_id = teacher.school_id  # ✅ FIXED
+
+        teacher_assignments = (
+            db.query(
+                TeacherClassSectionSubject.class_id,
+                TeacherClassSectionSubject.section_id
+            )
+            .filter(TeacherClassSectionSubject.teacher_id == teacher.id)
+            .all()
+        )
+
+        if not teacher_assignments:
+            return pagination.format_response([], 0)
     else:  # STAFF
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
@@ -499,6 +518,17 @@ def get_students(
             joinedload(Student.section)
         )
     )
+    if teacher_assignments:
+        teacher_conditions = [
+            and_(
+                Student.class_id == class_id,
+                Student.section_id == section_id
+            )
+            for class_id, section_id in teacher_assignments
+        ]
+
+        base_query = base_query.filter(or_(*teacher_conditions))
+
 
     # --- Apply Filters ---
     if roll_no:
@@ -511,6 +541,8 @@ def get_students(
         base_query = base_query.filter(Class.name.ilike(f"%{class_name}%"))
     if section_name:
         base_query = base_query.filter(Section.name.ilike(f"%{section_name}%"))
+    if studentstatus:
+         base_query = base_query.filter(Student.status == studentstatus)
     if installment_type:
         # Filter by installment type in payment subquery
         base_query = base_query.filter(payment_subquery.c.installment_type == installment_type)
