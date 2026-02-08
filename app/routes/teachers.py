@@ -13,7 +13,7 @@ from app.utils.email_utility import generate_otp
 from datetime import datetime, timedelta, date
 from calendar import month_name
 from typing import List
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_ ,desc
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
 from app.utils.s3 import upload_base64_to_s3
@@ -361,6 +361,33 @@ def get_teacher_profile(
         .all()
     )
 
+    # ---------------- EXAM STATS ----------------
+
+    # Total exams conducted
+    exam_conduct_count = (
+        db.query(func.count(Exam.id))
+        .filter(Exam.created_by == teacher.id)
+        .scalar()
+    )
+
+    # Latest exam
+    last_exam = (
+        db.query(Exam)
+        .filter(Exam.created_by == teacher.id)
+        .order_by(desc(Exam.exam_activation_date))
+        .first()
+    )
+
+    if last_exam:
+        last_exam_conduct_date_time = last_exam.exam_activation_date
+        last_exam_type = last_exam.exam_type
+        last_exam_total_mark = last_exam.no_of_questions  # assuming 1 mark per question
+    else:
+        last_exam_conduct_date_time = None
+        last_exam_type = None
+        last_exam_total_mark = 0
+
+
     # Build detailed assignment info
     detailed_assignments = []
     for a in assignments:
@@ -421,7 +448,11 @@ def get_teacher_profile(
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
         "status": "active" if teacher.is_active else "inactive",
-        "salary": salary
+        "salary": salary,
+        "exam_conduct_count": exam_conduct_count,
+        "last_exam_conduct_date_time": last_exam_conduct_date_time,
+        "last_exam_type": last_exam_type,
+        "last_exam_total_mark": last_exam_total_mark,
     }    
 
 @router.get("/teacher/{teacher_id}")
