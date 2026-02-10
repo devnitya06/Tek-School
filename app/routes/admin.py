@@ -2903,3 +2903,141 @@ def get_payment_configuration_detail(
 
     return config
 
+
+# FAQ Management Endpoints
+
+@router.post("/faqs/", response_model=FAQResponse, status_code=status.HTTP_201_CREATED)
+def create_faq(
+    faq_data: FAQCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new FAQ. Only super admin can create FAQs.
+    """
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admin can create FAQs"
+        )
+    
+    try:
+        faq = FAQ(
+            question=faq_data.question,
+            answer=faq_data.answer,
+            created_by=current_user.id,
+            is_active=faq_data.is_active
+        )
+        db.add(faq)
+        db.commit()
+        db.refresh(faq)
+        return faq
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create FAQ: {str(e)}"
+        )
+
+
+@router.get("/faqs/", response_model=List[FAQResponse])
+def get_all_faqs(
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get all FAQs. Only super admin can view all FAQs.
+    """
+    print(current_user.role)
+    print(UserRole.ADMIN)
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admin can view all FAQs"
+        )
+    
+    query = db.query(FAQ)
+    if is_active is not None:
+        query = query.filter(FAQ.is_active == is_active)
+    
+    faqs = query.order_by(FAQ.created_at.desc()).all()
+    return faqs
+
+
+@router.put("/faqs/{faq_id}/", response_model=FAQResponse)
+def update_faq(
+    faq_id: int,
+    faq_data: FAQUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update an existing FAQ. Only super admin can update FAQs.
+    """
+    if current_user.role != UserRole.SUPERADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admin can update FAQs"
+        )
+    
+    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
+    if not faq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="FAQ not found"
+        )
+    
+    try:
+        if faq_data.question is not None:
+            faq.question = faq_data.question
+        if faq_data.answer is not None:
+            faq.answer = faq_data.answer
+        if faq_data.is_active is not None:
+            faq.is_active = faq_data.is_active
+        faq.updated_at = func.now()
+        
+        db.commit()
+        db.refresh(faq)
+        return faq
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update FAQ: {str(e)}"
+        )
+
+
+@router.delete("/faqs/{faq_id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_faq(
+    faq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete an FAQ. Only super admin can delete FAQs.
+    """
+    if current_user.role != UserRole.SUPERADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admin can delete FAQs"
+        )
+    
+    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
+    if not faq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="FAQ not found"
+        )
+    
+    try:
+        db.delete(faq)
+        db.commit()
+        return None
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete FAQ: {str(e)}"
+        )
