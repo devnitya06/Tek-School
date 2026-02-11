@@ -425,3 +425,43 @@ class PromoteAccountRequest(BaseModel):
 class PromoteAccountResponse(BaseModel):
     detail: str
     status: str  # "pending", "approved", "rejected"
+
+
+# ListedSchoolStudent Schemas (school listing students)
+class ListedSchoolStudentCreate(BaseModel):
+    student_name: str
+    gender: Optional[str] = None
+    phone_no: Optional[str] = None
+    email_id: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secured_mark_in_percentage: Optional[float] = Field(None, ge=0, le=100)
+    profile_picture: Optional[str] = None  # URL or base64 for upload
+
+
+class ListedSchoolStudentUpdate(BaseModel):
+    student_name: Optional[str] = None
+    gender: Optional[str] = None
+    phone_no: Optional[str] = None
+    email_id: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secured_mark_in_percentage: Optional[float] = Field(None, ge=0, le=100)
+    profile_picture: Optional[str] = None
+
+
+class ListedSchoolStudentResponse(BaseModel):
+    id: int
+    school_id: str
+    student_name: str
+    gender: Optional[str] = None
+    phone_no: Optional[str] = None
+    email_id: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secured_mark_in_percentage: Optional[float] = None
+    profile_picture: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}

@@ -5220,3 +5220,188 @@ async def get_school_faqs_public(
         ],
         "total_faqs": len(faqs)
     }
+
+
+# ==================== ListedSchoolStudent CRUD ====================
+
+def _get_school_id_for_listed_students(current_user: User, db: Session) -> str:
+    """Get school_id for SCHOOL or STAFF user. Used for ListedSchoolStudent endpoints."""
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        return school.id
+    elif current_user.role == UserRole.STAFF:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        return staff.school_id
+    else:
+        raise HTTPException(status_code=403, detail="Only school and staff can manage listed students.")
+
+
+@router.post(
+    "/listed-students/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ListedSchoolStudentResponse,
+    summary="Create listed school student",
+    description="Add a student to the school's listed students (for school listing display)",
+)
+def create_listed_school_student(
+    data: ListedSchoolStudentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+):
+    school_id = _get_school_id_for_listed_students(current_user, db)
+    profile_picture_url = None
+    if data.profile_picture:
+        if data.profile_picture.startswith("data:") or len(data.profile_picture) > 500:
+            try:
+                file_ext = "jpg"
+                if "image/png" in (data.profile_picture or ""):
+                    file_ext = "png"
+                elif "image/webp" in (data.profile_picture or ""):
+                    file_ext = "webp"
+                profile_picture_url = upload_base64_to_s3(
+                    data.profile_picture,
+                    f"schools/{school_id}/listed_students",
+                    ext=file_ext,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Profile picture upload failed: {str(e)}")
+        else:
+            profile_picture_url = data.profile_picture
+    obj = ListedSchoolStudent(
+        school_id=school_id,
+        student_name=data.student_name,
+        gender=data.gender,
+        phone_no=data.phone_no,
+        email_id=data.email_id,
+        class_name=data.class_name,
+        batch_of_student=data.batch_of_student,
+        secured_mark_in_percentage=data.secured_mark_in_percentage,
+        profile_picture=profile_picture_url,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.get(
+    "/listed-students/",
+    summary="List listed school students",
+    description="Get all listed students for the school with pagination",
+)
+def list_listed_school_students(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+):
+    school_id = _get_school_id_for_listed_students(current_user, db)
+    query = db.query(ListedSchoolStudent).filter(ListedSchoolStudent.school_id == school_id)
+    total_count = query.count()
+    items = (
+        query.order_by(ListedSchoolStudent.id.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    return pagination.format_response(items, total_count)
+
+
+@router.get(
+    "/listed-students/{listed_student_id}",
+    response_model=ListedSchoolStudentResponse,
+    summary="Get listed school student by ID",
+)
+def get_listed_school_student(
+    listed_student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+):
+    school_id = _get_school_id_for_listed_students(current_user, db)
+    obj = db.query(ListedSchoolStudent).filter(
+        ListedSchoolStudent.id == listed_student_id,
+        ListedSchoolStudent.school_id == school_id,
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Listed student not found.")
+    return obj
+
+
+@router.patch(
+    "/listed-students/{listed_student_id}",
+    response_model=ListedSchoolStudentResponse,
+    summary="Update listed school student",
+)
+def update_listed_school_student(
+    listed_student_id: int,
+    data: ListedSchoolStudentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+):
+    school_id = _get_school_id_for_listed_students(current_user, db)
+    obj = db.query(ListedSchoolStudent).filter(
+        ListedSchoolStudent.id == listed_student_id,
+        ListedSchoolStudent.school_id == school_id,
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Listed student not found.")
+    if data.student_name is not None:
+        obj.student_name = data.student_name
+    if data.gender is not None:
+        obj.gender = data.gender
+    if data.phone_no is not None:
+        obj.phone_no = data.phone_no
+    if data.email_id is not None:
+        obj.email_id = data.email_id
+    if data.class_name is not None:
+        obj.class_name = data.class_name
+    if data.batch_of_student is not None:
+        obj.batch_of_student = data.batch_of_student
+    if data.secured_mark_in_percentage is not None:
+        obj.secured_mark_in_percentage = data.secured_mark_in_percentage
+    if data.profile_picture is not None:
+        if data.profile_picture.startswith("data:") or len(data.profile_picture) > 500:
+            try:
+                file_ext = "jpg"
+                if "image/png" in data.profile_picture:
+                    file_ext = "png"
+                elif "image/webp" in data.profile_picture:
+                    file_ext = "webp"
+                obj.profile_picture = upload_base64_to_s3(
+                    data.profile_picture,
+                    f"schools/{school_id}/listed_students",
+                    ext=file_ext,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Profile picture upload failed: {str(e)}")
+        else:
+            obj.profile_picture = data.profile_picture
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete(
+    "/listed-students/{listed_student_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete listed school student",
+)
+def delete_listed_school_student(
+    listed_student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+):
+    school_id = _get_school_id_for_listed_students(current_user, db)
+    obj = db.query(ListedSchoolStudent).filter(
+        ListedSchoolStudent.id == listed_student_id,
+        ListedSchoolStudent.school_id == school_id,
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Listed student not found.")
+    db.delete(obj)
+    db.commit()
+    return None

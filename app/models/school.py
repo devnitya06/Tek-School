@@ -158,6 +158,7 @@ class School(Base):
     leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
     bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
+    listed_school_students = relationship("ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan")
 
 
     
@@ -731,3 +732,24 @@ class PaymentRecord(Base):
 
     # Relationships
     worker = relationship("Worker", back_populates="payment_records")
+
+
+class ListedSchoolStudent(Base):
+    """Listed school students - students displayed under a school (listing)."""
+    __tablename__ = "listed_school_students"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False, index=True)
+    student_name = Column(String(200), nullable=False)
+    gender = Column(String(20), nullable=True)
+    phone_no = Column(String(20), nullable=True)
+    email_id = Column(String(255), nullable=True)
+    class_name = Column(String(100), nullable=True)
+    batch_of_student = Column(String(100), nullable=True)
+    secured_mark_in_percentage = Column(Float, nullable=True)
+    profile_picture = Column(String(500), nullable=True)  # URL
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # Relationships
+    school = relationship("School", back_populates="listed_school_students")
