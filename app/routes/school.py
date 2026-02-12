@@ -38,16 +38,36 @@ router = APIRouter()
 
 def timer():
     return time.perf_counter()
+
+
+def _get_school_for_admin_or_school(
+    current_user: User, db: Session, school_id: Optional[str] = None
+) -> School:
+    """Get school: SCHOOL role from user profile, ADMIN role from school_id param (required)."""
+    if current_user.role == UserRole.ADMIN:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required when accessing as admin.")
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+        return school
+    elif current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found.")
+        return school
+    else:
+        raise HTTPException(status_code=403, detail="Only school and admin users can access this resource.")
+
+
 @router.patch("/school-profile")
 async def update_school_profile(
     request: Request,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
 
     # Parse JSON body
     try:
@@ -184,29 +204,19 @@ async def update_school_profile(
 @router.post("/catalogue", status_code=status.HTTP_201_CREATED)
 async def add_catalogue_images(
     images: List[UploadFile] = File(...),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Add images to school catalogue.
-    Accepts multiple image files and uploads them to S3.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
-    
-    # Validate number of images (optional limit)
+    """Add images to school catalogue. Accepts multiple image files and uploads them to S3."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     if len(images) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 images allowed per request")
-    
     uploaded_urls = []
     errors = []
-    
     for image in images:
         try:
-            # Upload to S3
-            url = upload_to_s3(image, f"schools/{current_user.id}/catalogue")
+            url = upload_to_s3(image, f"schools/{school.id}/catalogue")
             uploaded_urls.append(url)
         except Exception as e:
             errors.append(f"Failed to upload {image.filename}: {str(e)}")
@@ -237,16 +247,12 @@ async def add_catalogue_images(
 
 @router.delete("/catalogue")
 async def clear_catalogue(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Clear all images from school catalogue.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Clear all images from school catalogue."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     school.catalogue = None
     
@@ -266,16 +272,12 @@ async def clear_catalogue(
 @router.delete("/catalogue/image")
 async def remove_catalogue_image(
     image_url: str = Query(..., description="URL of the image to remove from catalogue"),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Remove a specific image from school catalogue by URL.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Remove a specific image from school catalogue by URL."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     if not school.catalogue or len(school.catalogue) == 0:
         raise HTTPException(status_code=404, detail="Catalogue is empty")
@@ -312,16 +314,12 @@ async def remove_catalogue_image(
 async def get_catalogue(
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Get catalogue images for the school with pagination.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Get catalogue images for the school with pagination."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     catalogue_list = list(school.catalogue) if school.catalogue else []
     total_images = len(catalogue_list)
@@ -350,29 +348,19 @@ async def get_catalogue(
 @router.post("/photo-gallery", status_code=status.HTTP_201_CREATED)
 async def add_photo_gallery_images(
     images: List[UploadFile] = File(...),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Add images to school photo gallery.
-    Accepts multiple image files and uploads them to S3.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
-    
-    # Validate number of images (optional limit)
+    """Add images to school photo gallery. Accepts multiple image files and uploads them to S3."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     if len(images) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 images allowed per request")
-    
     uploaded_urls = []
     errors = []
-    
     for image in images:
         try:
-            # Upload to S3
-            url = upload_to_s3(image, f"schools/{current_user.id}/photo_gallery")
+            url = upload_to_s3(image, f"schools/{school.id}/photo_gallery")
             uploaded_urls.append(url)
         except Exception as e:
             errors.append(f"Failed to upload {image.filename}: {str(e)}")
@@ -403,16 +391,12 @@ async def add_photo_gallery_images(
 
 @router.delete("/photo-gallery")
 async def clear_photo_gallery(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Clear all images from school photo gallery.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Clear all images from school photo gallery."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     school.photo_gallery = None
     
@@ -432,16 +416,12 @@ async def clear_photo_gallery(
 @router.delete("/photo-gallery/image")
 async def remove_photo_gallery_image(
     image_url: str = Query(..., description="URL of the image to remove from photo gallery"),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Remove a specific image from school photo gallery by URL.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Remove a specific image from school photo gallery by URL."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     if not school.photo_gallery or len(school.photo_gallery) == 0:
         raise HTTPException(status_code=404, detail="Photo gallery is empty")
@@ -478,16 +458,12 @@ async def remove_photo_gallery_image(
 async def get_photo_gallery(
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """
-    Get photo gallery images for the school with pagination.
-    """
-    # Ensure school is found for current user
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found")
+    """Get photo gallery images for the school with pagination."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     
     gallery_list = list(school.photo_gallery) if school.photo_gallery else []
     total_images = len(gallery_list)
@@ -515,22 +491,11 @@ async def get_photo_gallery(
 
 @router.get("/school")
 async def get_school_profile(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
 ):
-    # ✅ Only school users can access
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school users can view school profiles"
-        )
-    
-    if not current_user.school_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School profile not found"
-        )
-    school = current_user.school_profile
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
     return {
         "id": school.id,
         "user_id": school.user_id,

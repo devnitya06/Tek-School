@@ -283,6 +283,76 @@ def verify_school(
         )
 
 
+@router.get("/schools/")
+def list_all_schools(
+    pagination: PaginationParams = Depends(),
+    id: Optional[str] = Query(None, description="Filter by school ID (exact match)"),
+    account_type: Optional[str] = Query(None, description="Filter by type: 'business' or 'listing'"),
+    is_business_approved: Optional[bool] = Query(None, description="Filter by is_business_approved (true/false)"),
+    state: Optional[str] = Query(None, description="Filter by state (partial match)"),
+    district: Optional[str] = Query(None, description="Filter by district (partial match)"),
+    from_date: Optional[str] = Query(None, description="Filter by created_at from (YYYY-MM-DD)"),
+    to_date: Optional[str] = Query(None, description="Filter by created_at to (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+):
+    """List all schools with filters. Public endpoint - no authentication required."""
+    query = db.query(School)
+    if id:
+        query = query.filter(School.id == id)
+    if account_type:
+        at = account_type.lower()
+        if at == "business":
+            query = query.filter(School.account_type == SchoolAccountType.BUSINESS)
+        elif at == "listing":
+            query = query.filter(School.account_type == SchoolAccountType.LISTING)
+        else:
+            raise HTTPException(status_code=400, detail="account_type must be 'business' or 'listing'")
+    if is_business_approved is not None:
+        query = query.filter(School.is_business_approved == is_business_approved)
+    if state:
+        query = query.filter(School.state.ilike(f"%{state}%"))
+    if district:
+        query = query.filter(School.district.ilike(f"%{district}%"))
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            query = query.filter(School.created_at >= from_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            to_dt = to_dt.replace(hour=23, minute=59, second=59)
+            query = query.filter(School.created_at <= to_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+    total_count = query.count()
+    schools = (
+        query.order_by(School.created_at.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    items = [
+        {
+            "id": s.id,
+            "school_name": s.school_name,
+            "school_email": s.school_email,
+            "school_phone": s.school_phone,
+            "account_type": s.account_type.value if hasattr(s.account_type, "value") else str(s.account_type),
+            "is_business_approved": s.is_business_approved,
+            "is_promotion_pending": s.is_promotion_pending,
+            "state": s.state,
+            "district": s.district,
+            "total_students": s.total_students if s.total_students else 0,
+            "total_teachers": s.total_teachers if s.total_teachers else 0,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in schools
+    ]
+    return pagination.format_response(items, total_count)
+
+
 @router.get("/schools/pending-approvals/")
 def get_pending_approvals(
     pagination: PaginationParams = Depends(),
@@ -2976,7 +3046,7 @@ def update_faq(
     """
     Update an existing FAQ. Only super admin can update FAQs.
     """
-    if current_user.role != UserRole.SUPERADMIN:
+    if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only super admin can update FAQs"
@@ -3018,7 +3088,7 @@ def delete_faq(
     """
     Delete an FAQ. Only super admin can delete FAQs.
     """
-    if current_user.role != UserRole.SUPERADMIN:
+    if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only super admin can delete FAQs"
