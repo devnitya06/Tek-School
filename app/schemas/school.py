@@ -78,13 +78,6 @@ class SchoolProfileUpdate(BaseModel):
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None
-
-
-# class ClassWithSubjectCreate(BaseModel):
-#     class_name: str
-#     sections: List[str]
-#     subjects: List[str]
-#     extra_curriculums: List[str] 
 class SubjectItem(BaseModel):
     name: str
     school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
@@ -99,6 +92,20 @@ class ClassWithSubjectCreate(BaseModel):
     tek_school_payment_annually: Optional[float] = 1000.0
     class_start_date: date
     class_end_date: date   
+class ClassWithSubjectUpdate(BaseModel):
+    class_name: Optional[str] = None
+
+    sections: Optional[List[str]] = None
+    subjects: Optional[List[SubjectItem]] = None
+    extra_curriculums: Optional[List[str]] = None
+
+    annual_course_fee: Optional[float] = None
+    annual_transport_fee: Optional[float] = None
+    tek_school_payment_annually: Optional[float] = None
+
+    class_start_date: Optional[date] = None
+    class_end_date: Optional[date] = None
+
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]

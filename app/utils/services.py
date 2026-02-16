@@ -23,7 +23,6 @@ def create_mcq(db: Session, exam_id: str, mcq_bulk: McqBulkCreate):
         image_url = None
         if mcq.image:
             try:
-                print("🔹 Uploading MCQ image to S3...")
                 image_url = upload_base64_to_s3(
                     base64_string=mcq.image,
                     filename_prefix="exam_mcq"
