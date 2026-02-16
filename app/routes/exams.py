@@ -206,3 +206,164 @@ def add_questions_to_bank(
         "total_added": len(created_questions),
         "question_ids": created_questions
     }
+
+@router.get("/admin/question-banks/{question_bank_id}")
+def get_question_bank_details(
+    question_bank_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    bank = (
+        db.query(QuestionBank)
+        .options(
+            joinedload(QuestionBank.school_class_subject),
+            joinedload(QuestionBank.chapter),
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.options),
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.answer),
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.key_points),
+        )
+        .filter(QuestionBank.id == question_bank_id)
+        .first()
+    )
+
+    if not bank:
+        raise HTTPException(status_code=404, detail="Question bank not found")
+
+    questions_data = []
+
+    for q in bank.questions:
+        question_payload = {
+            "id": q.id,
+            "question_type": q.question_type.value,
+            "marks": q.marks,
+            "question_text": q.question_text,
+            "created_at": q.created_at,
+        }
+
+        # MCQ
+        if q.question_type == QuestionType.mcq:
+            question_payload["options"] = [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                    "is_correct": opt.is_correct
+                }
+                for opt in q.options
+            ]
+
+        # Short / Long Answer
+        if q.question_type in [QuestionType.short, QuestionType.long]:
+            question_payload["answer"] = (
+                {
+                    "id": q.answer.id,
+                    "answer_text": q.answer.answer_text
+                }
+                if q.answer else None
+            )
+
+        # Long answer key points
+        if q.question_type == QuestionType.long:
+            question_payload["key_points"] = [
+                {
+                    "id": kp.id,
+                    "key_point": kp.key_point
+                }
+                for kp in q.key_points
+            ]
+
+        questions_data.append(question_payload)
+
+    return {
+        "question_bank": {
+            "id": bank.id,
+            "school_board": bank.school_class_subject.school_board,
+            "school_medium": bank.school_class_subject.school_medium,
+            "class_name": bank.school_class_subject.class_name,
+            "subject": bank.school_class_subject.subject,
+            "chapter": {
+                "id": bank.chapter.id,
+                "name": bank.chapter.title
+            },
+            "marks_config": {
+                "mcq": bank.mcq_marks,
+                "short": bank.short_marks,
+                "long": bank.long_marks
+            },
+            "created_at": bank.created_at
+        },
+        "total_questions": len(questions_data),
+        "questions": questions_data
+    }
+
+@router.get("/admin/question-banks/{question_bank_id}/questions-with-answers")
+def list_questions_with_answers(
+    question_bank_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    question_bank = (
+        db.query(QuestionBank)
+        .options(
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.options),
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.answer),
+            joinedload(QuestionBank.questions)
+            .joinedload(Question.key_points),
+        )
+        .filter(QuestionBank.id == question_bank_id)
+        .first()
+    )
+
+    if not question_bank:
+        raise HTTPException(status_code=404, detail="Question bank not found")
+
+    questions_response = []
+
+    for q in question_bank.questions:
+        question_data = {
+            "question_id": q.id,
+            "question_type": q.question_type.value,
+            "marks": q.marks,
+            "question_text": q.question_text,
+        }
+
+        # ✅ MCQ
+        if q.question_type == QuestionType.mcq:
+            question_data["options"] = [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                    "is_correct": opt.is_correct
+                }
+                for opt in q.options
+            ]
+
+            correct_option = next(
+                (opt.option_text for opt in q.options if opt.is_correct),
+                None
+            )
+            question_data["correct_answer"] = correct_option
+
+        # ✅ Short / Long Answer
+        if q.question_type in [QuestionType.short, QuestionType.long]:
+            question_data["answer"] = (
+                q.answer.answer_text if q.answer else None
+            )
+
+        # ✅ Long answer key points
+        if q.question_type == QuestionType.long:
+            question_data["key_points"] = [
+                kp.key_point for kp in q.key_points
+            ]
+
+        questions_response.append(question_data)
+
+    return {
+        "question_bank_id": question_bank.id,
+        "total_questions": len(questions_response),
+        "questions": questions_response
+    }
