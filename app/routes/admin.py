@@ -1526,6 +1526,67 @@ def get_subjects_for_class(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+@router.get("/my-subjects/")
+def get_my_subjects(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
+        raise HTTPException(status_code=403, detail="Only self signed students allowed")
+
+    student = db.query(SelfSignedStudent).filter(
+        SelfSignedStudent.user_id == current_user.id
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    if not all([student.select_board, student.select_medium, student.select_class]):
+        raise HTTPException(status_code=400, detail="Student profile incomplete")
+
+    try:
+        query = (
+            db.query(
+                SchoolClassSubject.id.label("school_class_subject_id"),
+                SchoolClassSubject.subject.label("subject"),
+                func.count(Chapter.id).label("chapter_count")
+            )
+            .outerjoin(Chapter, Chapter.school_class_subject_id == SchoolClassSubject.id)
+            .filter(
+                SchoolClassSubject.school_board == student.select_board,
+                SchoolClassSubject.school_medium == student.select_medium,
+                SchoolClassSubject.class_name == student.select_class
+            )
+            .group_by(
+                SchoolClassSubject.id,
+                SchoolClassSubject.subject
+            )
+        )
+
+        total_count = db.query(func.count()).select_from(query.subquery()).scalar()
+
+        results = (
+            query.order_by(SchoolClassSubject.subject.asc())
+            .offset(pagination.offset())
+            .limit(pagination.limit())
+            .all()
+        )
+
+        return pagination.format_response(
+            [
+                {
+                    "school_class_subject_id": row.school_class_subject_id,
+                    "subject": row.subject,
+                    "total_chapters": row.chapter_count
+                }
+                for row in results
+            ],
+            total_count
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/subjects/{subject_id}/chapters/")
 def get_chapters_by_subject(
@@ -1761,32 +1822,38 @@ def get_chapter_details(
         )
 @router.get("/classes-with-subjects/")
 def get_classes_with_subject_names(
+    class_name: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
 ):
-    # ✅ Get school based on user role
+    # 🔹 Get school
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
+
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
+
         school = db.query(School).filter(School.id == staff.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     try:
-        # Filter classes for this school's board and medium
-        class_subjects = (
-            db.query(SchoolClassSubject)
-            .filter(
-                SchoolClassSubject.school_board == school.school_board,
-                SchoolClassSubject.school_medium == school.school_medium
-            )
-            .all()
+        # ✅ Build query (DON'T call .all() yet)
+        query = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.school_board == school.school_board,
+            SchoolClassSubject.school_medium == school.school_medium
         )
+
+        # ✅ Optional class filter
+        if class_name:
+            query = query.filter(SchoolClassSubject.class_name == class_name)
+
+        # ✅ Execute query ONCE
+        class_subjects = query.all()
 
         if not class_subjects:
             return {
@@ -1796,21 +1863,21 @@ def get_classes_with_subject_names(
                 "classes": []
             }
 
-        # Group subjects by class
+        # 🔹 Group subjects by class
         classes_dict = defaultdict(list)
         for cs in class_subjects:
             classes_dict[cs.class_name].append({
                 "name": cs.subject,
-                "school_class_subject_id": cs.id  # assuming id is the PK
+                "school_class_subject_id": cs.id
             })
 
-        # Format final structured response
-        result = []
-        for class_name, subjects in classes_dict.items():
-            result.append({
-                "class_name": class_name,
+        result = [
+            {
+                "class_name": cls,
                 "subjects": subjects
-            })
+            }
+            for cls, subjects in classes_dict.items()
+        ]
 
         return {
             "school_name": school.school_name,
@@ -1821,9 +1888,10 @@ def get_classes_with_subject_names(
 
     except SQLAlchemyError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
+
 
 @router.get("/available-credit/")
 def get_available_credit(
@@ -2638,14 +2706,20 @@ def create_recharge_plan(
 
 @router.get("/recharge-plans")
 def get_recharge_plans(
-    class_name: Optional[str] = Query(None, description="Student class (eg: 10)"),
+    class_name: Optional[str] = Query(None, description="Filter by class (Admin only)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     query = db.query(RechargePlan)
 
-    # ✅ Admin sees everything
+    # ======================================================
+    # ✅ ADMIN LOGIC
+    # ======================================================
     if current_user.role == UserRole.ADMIN:
+
+        if class_name:
+            query = query.filter(RechargePlan.class_name == class_name)
+
         plans = query.order_by(
             case(
                 (RechargePlan.duration == PlanDuration.MONTHLY, 1),
@@ -2654,35 +2728,61 @@ def get_recharge_plans(
             )
         ).all()
 
+        if not plans:
+            raise HTTPException(
+                status_code=404,
+                detail="No recharge plans found"
+            )
+
         return plans
 
-    # ❌ Non-admin must pass class_name
-    if not class_name:
-        raise HTTPException(
-            status_code=400,
-            detail="class_name is required"
-        )
+    # ======================================================
+    # ✅ SELF-SIGNED STUDENT LOGIC
+    # ======================================================
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
 
-    # ✅ Non-admin filtered view
-    plans = query.filter(
-        RechargePlan.class_name == class_name,
-        RechargePlan.is_active == True
-    ).order_by(
-        case(
-            (RechargePlan.duration == PlanDuration.MONTHLY, 1),
-            (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
-            (RechargePlan.duration == PlanDuration.YEARLY, 3),
-        )
-    ).all()
+        student_profile = db.query(SelfSignedStudent).filter(
+            SelfSignedStudent.user_id == current_user.id
+        ).first()
 
-    if not plans:
-        raise HTTPException(
-            status_code=404,
-            detail="No recharge plans found for this class"
-        )
+        if not student_profile:
+            raise HTTPException(
+                status_code=404,
+                detail="Student profile not found"
+            )
 
-    return plans
+        if not student_profile.select_class:
+            raise HTTPException(
+                status_code=400,
+                detail="Student class not set in profile"
+            )
 
+        plans = query.filter(
+            RechargePlan.class_name == student_profile.select_class,
+            RechargePlan.is_active == True
+        ).order_by(
+            case(
+                (RechargePlan.duration == PlanDuration.MONTHLY, 1),
+                (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
+                (RechargePlan.duration == PlanDuration.YEARLY, 3),
+            )
+        ).all()
+
+        if not plans:
+            raise HTTPException(
+                status_code=404,
+                detail="No recharge plans found for your class"
+            )
+
+        return plans
+
+    # ======================================================
+    # ❌ OTHER ROLES
+    # ======================================================
+    raise HTTPException(
+        status_code=403,
+        detail="Not authorized to view recharge plans"
+    )
 
 @router.post(
     "/student/purchase-plan/",
