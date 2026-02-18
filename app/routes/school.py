@@ -4851,6 +4851,136 @@ def delete_bank_account(
     return None
 
 
+# ==================== School Info (one-to-one: admission path, vision, mission, about us) ====================
+
+@router.post("/school-info/", status_code=status.HTTP_201_CREATED, response_model=SchoolInfoResponse)
+def create_school_info(
+    data: SchoolInfoCreate,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin/super admin"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create school info. School users create for their own school; admin/super admin must pass school_id."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        sid = school_id or data.school_id
+        if not sid:
+            raise HTTPException(status_code=400, detail="school_id is required when creating as admin/super admin.")
+        school = db.query(School).filter(School.id == sid).first()
+    else:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+    existing = db.query(SchoolInfo).filter(SchoolInfo.school_id == school.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="School info already exists for this school. Use update instead.")
+    obj = SchoolInfo(
+        school_id=school.id,
+        admission_path=data.admission_path,
+        vision=data.vision,
+        mission=data.mission,
+        about_us=data.about_us,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.get("/school-info/", response_model=List[SchoolInfoResponse])
+def list_school_info(
+    school_id: Optional[str] = Query(None, description="Filter by school (required for admin when listing one)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List school info. School users get their own; admin/super admin get all or filter by school_id."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        if school_id:
+            q = db.query(SchoolInfo).filter(SchoolInfo.school_id == school_id)
+        else:
+            q = db.query(SchoolInfo)
+        return q.all()
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        return []
+    return db.query(SchoolInfo).filter(SchoolInfo.school_id == school.id).all()
+
+
+@router.get("/school-info/by-school/{school_id}/", response_model=SchoolInfoResponse)
+def get_school_info_by_school(
+    school_id: str,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get school info by school_id. School users can only get their own."""
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or school.id != school_id:
+            raise HTTPException(status_code=404, detail="School info not found or access denied.")
+    obj = db.query(SchoolInfo).filter(SchoolInfo.school_id == school_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="School info not found for this school.")
+    return obj
+
+
+@router.get("/school-info/{id}/", response_model=SchoolInfoResponse)
+def get_school_info(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get school info by id. School users can only get their own school's info."""
+    obj = db.query(SchoolInfo).filter(SchoolInfo.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="School info not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=404, detail="School info not found or access denied.")
+    return obj
+
+
+@router.put("/school-info/{id}/", response_model=SchoolInfoResponse)
+def update_school_info(
+    id: int,
+    data: SchoolInfoUpdate,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Update school info. School users can only update their own."""
+    obj = db.query(SchoolInfo).filter(SchoolInfo.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="School info not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only update your own school info.")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(obj, field, value)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/school-info/{id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_school_info(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Delete school info. School users can only delete their own."""
+    obj = db.query(SchoolInfo).filter(SchoolInfo.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="School info not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only delete your own school info.")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
 @router.get(
     "/employees-payments/",
     summary="Get all teachers and staff with their payment information",

@@ -159,9 +159,8 @@ class School(Base):
     bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
     listed_school_students = relationship("ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan")
+    school_info = relationship("SchoolInfo", back_populates="school", uselist=False, cascade="all, delete-orphan")
 
-
-    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
@@ -732,6 +731,22 @@ class PaymentRecord(Base):
 
     # Relationships
     worker = relationship("Worker", back_populates="payment_records")
+
+
+class SchoolInfo(Base):
+    """One-to-one: school profile info (admission path, vision, mission, about us)."""
+    __tablename__ = "school_info"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, unique=True)
+    admission_path = Column(Text, nullable=True)
+    vision = Column(Text, nullable=True)
+    mission = Column(Text, nullable=True)
+    about_us = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="school_info")
 
 
 class ListedSchoolStudent(Base):

@@ -465,3 +465,32 @@ class ListedSchoolStudentResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+# SchoolInfo (one-to-one with School): admission path, vision, mission, about us
+class SchoolInfoCreate(BaseModel):
+    school_id: Optional[str] = None  # Required for super admin; ignored for school (uses own school)
+    admission_path: Optional[str] = None
+    vision: Optional[str] = None
+    mission: Optional[str] = None
+    about_us: Optional[str] = None
+
+
+class SchoolInfoUpdate(BaseModel):
+    admission_path: Optional[str] = None
+    vision: Optional[str] = None
+    mission: Optional[str] = None
+    about_us: Optional[str] = None
+
+
+class SchoolInfoResponse(BaseModel):
+    id: int
+    school_id: str
+    admission_path: Optional[str] = None
+    vision: Optional[str] = None
+    mission: Optional[str] = None
+    about_us: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
