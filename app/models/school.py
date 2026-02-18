@@ -160,6 +160,9 @@ class School(Base):
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
     listed_school_students = relationship("ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan")
     school_info = relationship("SchoolInfo", back_populates="school", uselist=False, cascade="all, delete-orphan")
+    class_fees = relationship("SchoolClassFee", back_populates="school", cascade="all, delete-orphan")
+    team_members = relationship("SchoolTeamMember", back_populates="school", cascade="all, delete-orphan")
+    excellent_students = relationship("ExcellentStudent", back_populates="school", cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -747,6 +750,60 @@ class SchoolInfo(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     school = relationship("School", back_populates="school_info")
+
+
+class SchoolClassFee(Base):
+    """Per-school class fee: class name, admission fee, course fee, transport fee. Super admin and school can CRUD."""
+    __tablename__ = "school_class_fees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    class_name = Column(String(100), nullable=False)
+    admission_fee = Column(Float, nullable=True, default=0)
+    course_fee = Column(Float, nullable=True, default=0)
+    transport_fee = Column(Float, nullable=True, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="class_fees")
+
+    __table_args__ = (UniqueConstraint("school_id", "class_name", name="uq_school_class_fee_class_name"),)
+
+
+class SchoolTeamMember(Base):
+    """Team members under a school. Fields: name, designation, member_story, profile_picture. Super admin and school can CRUD."""
+    __tablename__ = "school_team_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    designation = Column(String(200), nullable=True)
+    member_story = Column(Text, nullable=True)
+    profile_picture = Column(String(500), nullable=True)  # URL
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="team_members")
+
+
+class ExcellentStudent(Base):
+    """Excellent student list under school. Fields: school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark. School and admin can CRUD."""
+    __tablename__ = "excellent_students"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_name = Column(String(200), nullable=True)
+    gender = Column(String(20), nullable=True)
+    student_photo = Column(String(500), nullable=True)  # URL (file upload)
+    phone_no = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=True)
+    class_name = Column(String(100), nullable=True)
+    batch_of_student = Column(String(100), nullable=True)
+    secure_mark = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="excellent_students")
 
 
 class ListedSchoolStudent(Base):

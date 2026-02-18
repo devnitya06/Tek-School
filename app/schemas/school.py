@@ -501,3 +501,100 @@ class SchoolInfoResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+# SchoolClassFee: under school - class name, admission fee, course fee, transport fee
+class SchoolClassFeeCreate(BaseModel):
+    school_id: Optional[str] = None  # Required for super admin; ignored for school
+    class_name: str
+    admission_fee: Optional[float] = Field(None, ge=0)
+    course_fee: Optional[float] = Field(None, ge=0)
+    transport_fee: Optional[float] = Field(None, ge=0)
+
+
+class SchoolClassFeeUpdate(BaseModel):
+    class_name: Optional[str] = None
+    admission_fee: Optional[float] = Field(None, ge=0)
+    course_fee: Optional[float] = Field(None, ge=0)
+    transport_fee: Optional[float] = Field(None, ge=0)
+
+
+class SchoolClassFeeResponse(BaseModel):
+    id: int
+    school_id: str
+    class_name: str
+    admission_fee: Optional[float] = None
+    course_fee: Optional[float] = None
+    transport_fee: Optional[float] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# SchoolTeamMember: name, designation, school_id, member_story, profile_picture
+class SchoolTeamMemberCreate(BaseModel):
+    school_id: Optional[str] = None  # Required for super admin; ignored for school
+    name: str
+    designation: Optional[str] = None
+    member_story: Optional[str] = None
+    profile_picture: Optional[str] = None  # URL
+
+
+class SchoolTeamMemberUpdate(BaseModel):
+    name: Optional[str] = None
+    designation: Optional[str] = None
+    member_story: Optional[str] = None
+    profile_picture: Optional[str] = None
+
+
+class SchoolTeamMemberResponse(BaseModel):
+    id: int
+    school_id: str
+    name: str
+    designation: Optional[str] = None
+    member_story: Optional[str] = None
+    profile_picture: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ExcellentStudent: school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark
+class ExcellentStudentCreate(BaseModel):
+    school_id: Optional[str] = None
+    school_name: Optional[str] = None
+    gender: Optional[str] = None
+    phone_no: Optional[str] = None
+    email: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secure_mark: Optional[float] = Field(None, ge=0, le=100)
+
+
+class ExcellentStudentUpdate(BaseModel):
+    school_name: Optional[str] = None
+    gender: Optional[str] = None
+    phone_no: Optional[str] = None
+    email: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secure_mark: Optional[float] = Field(None, ge=0, le=100)
+
+
+class ExcellentStudentResponse(BaseModel):
+    id: int
+    school_id: str
+    school_name: Optional[str] = None
+    gender: Optional[str] = None
+    student_photo: Optional[str] = None
+    phone_no: Optional[str] = None
+    email: Optional[str] = None
+    class_name: Optional[str] = None
+    batch_of_student: Optional[str] = None
+    secure_mark: Optional[float] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}

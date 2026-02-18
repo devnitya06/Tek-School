@@ -3572,7 +3572,45 @@ def add_mcqs(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    
+
+# Team members: explicit routes for path without id (must be before /{mcq_id}/ so they match first)
+@router.put("/team-members/")
+@router.put("/team-members")
+def update_team_member_missing_id():
+    raise HTTPException(
+        status_code=400,
+        detail="Team member id is required in path. Use PUT /school/team-members/{id}",
+    )
+
+
+@router.delete("/team-members/")
+@router.delete("/team-members")
+def delete_team_member_missing_id():
+    raise HTTPException(
+        status_code=400,
+        detail="Team member id is required in path. Use DELETE /school/team-members/{id}",
+    )
+
+
+# Excellent students: explicit routes for path without id (must be before /{mcq_id}/)
+@router.put("/excellent-students/")
+@router.put("/excellent-students")
+def update_excellent_student_missing_id():
+    raise HTTPException(
+        status_code=400,
+        detail="Excellent student id is required in path. Use PUT /school/excellent-students/{id}",
+    )
+
+
+@router.delete("/excellent-students/")
+@router.delete("/excellent-students")
+def delete_excellent_student_missing_id():
+    raise HTTPException(
+        status_code=400,
+        detail="Excellent student id is required in path. Use DELETE /school/excellent-students/{id}",
+    )
+
+
 @router.put("/{mcq_id}/")
 def update_mcq(
     mcq_id: int,
@@ -5168,6 +5206,469 @@ def delete_school_info(
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(status_code=403, detail="You can only delete your own school info.")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ==================== School Class Fees (class name, admission fee, course fee, transport fee) ====================
+
+@router.post("/class-fees/", status_code=status.HTTP_201_CREATED, response_model=SchoolClassFeeResponse)
+def create_school_class_fee(
+    data: SchoolClassFeeCreate,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin/super admin"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create class fee. School users create for their own school; admin/super admin must pass school_id."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        sid = school_id or data.school_id
+        if not sid:
+            raise HTTPException(status_code=400, detail="school_id is required when creating as admin/super admin.")
+        school = db.query(School).filter(School.id == sid).first()
+    else:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+    existing = db.query(SchoolClassFee).filter(
+        SchoolClassFee.school_id == school.id,
+        SchoolClassFee.class_name == data.class_name.strip(),
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A fee record for class '{data.class_name}' already exists for this school. Use update instead.",
+        )
+    obj = SchoolClassFee(
+        school_id=school.id,
+        class_name=data.class_name.strip(),
+        admission_fee=data.admission_fee if data.admission_fee is not None else 0,
+        course_fee=data.course_fee if data.course_fee is not None else 0,
+        transport_fee=data.transport_fee if data.transport_fee is not None else 0,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.get("/class-fees/", response_model=List[SchoolClassFeeResponse])
+def list_school_class_fees(
+    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List class fees. School users get their own; admin/super admin get all or filter by school_id."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        if school_id:
+            q = db.query(SchoolClassFee).filter(SchoolClassFee.school_id == school_id)
+        else:
+            q = db.query(SchoolClassFee)
+        return q.order_by(SchoolClassFee.class_name).all()
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        return []
+    return db.query(SchoolClassFee).filter(SchoolClassFee.school_id == school.id).order_by(SchoolClassFee.class_name).all()
+
+
+@router.get("/class-fees/by-school/{school_id}/", response_model=List[SchoolClassFeeResponse])
+def get_class_fees_by_school(
+    school_id: str,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get all class fees for a school. School users can only get their own."""
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or school.id != school_id:
+            raise HTTPException(status_code=404, detail="Class fees not found or access denied.")
+    return db.query(SchoolClassFee).filter(SchoolClassFee.school_id == school_id).order_by(SchoolClassFee.class_name).all()
+
+
+@router.get("/class-fees/{id}/", response_model=SchoolClassFeeResponse)
+def get_school_class_fee(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get class fee by id. School users can only get their own school's records."""
+    obj = db.query(SchoolClassFee).filter(SchoolClassFee.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Class fee not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=404, detail="Class fee not found or access denied.")
+    return obj
+
+
+@router.put("/class-fees/{id}/", response_model=SchoolClassFeeResponse)
+def update_school_class_fee(
+    id: int,
+    data: SchoolClassFeeUpdate,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Update class fee. School users can only update their own."""
+    obj = db.query(SchoolClassFee).filter(SchoolClassFee.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Class fee not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only update your own school's class fees.")
+    if data.class_name is not None:
+        existing = db.query(SchoolClassFee).filter(
+            SchoolClassFee.school_id == obj.school_id,
+            SchoolClassFee.class_name == data.class_name.strip(),
+            SchoolClassFee.id != id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Another record with class name '{data.class_name}' already exists for this school.")
+        obj.class_name = data.class_name.strip()
+    update_data = data.model_dump(exclude_unset=True)
+    for field in ("admission_fee", "course_fee", "transport_fee"):
+        if field in update_data:
+            setattr(obj, field, update_data[field] if update_data[field] is not None else 0)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/class-fees/{id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_school_class_fee(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Delete class fee. School users can only delete their own."""
+    obj = db.query(SchoolClassFee).filter(SchoolClassFee.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Class fee not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only delete your own school's class fees.")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ==================== School Team Members (name, designation, member_story, profile_picture as file) ====================
+
+@router.post("/team-members/", status_code=status.HTTP_201_CREATED, response_model=SchoolTeamMemberResponse)
+def create_team_member(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin/super admin"),
+    name: str = Form(..., description="Team member name"),
+    designation: Optional[str] = Form(None),
+    member_story: Optional[str] = Form(None),
+    profile_picture: Optional[UploadFile] = File(None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create team member. School users create for their own school; admin/super admin must pass school_id. Use multipart/form-data; profile_picture is a file upload."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required when creating as admin/super admin.")
+        school = db.query(School).filter(School.id == school_id).first()
+    else:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    profile_picture_url = None
+    if profile_picture and profile_picture.filename:
+        try:
+            profile_picture_url = upload_to_s3(profile_picture, f"schools/{school.id}/team_members")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    obj = SchoolTeamMember(
+        school_id=school.id,
+        name=name.strip(),
+        designation=designation.strip() if designation else None,
+        member_story=member_story.strip() if member_story else None,
+        profile_picture=profile_picture_url,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.get("/team-members/", response_model=List[SchoolTeamMemberResponse])
+def list_team_members(
+    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List team members. School users get their own; admin/super admin get all or filter by school_id."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        if school_id:
+            q = db.query(SchoolTeamMember).filter(SchoolTeamMember.school_id == school_id)
+        else:
+            q = db.query(SchoolTeamMember)
+        return q.order_by(SchoolTeamMember.name).all()
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        return []
+    return db.query(SchoolTeamMember).filter(SchoolTeamMember.school_id == school.id).order_by(SchoolTeamMember.name).all()
+
+
+@router.get("/team-members/by-school/{school_id}/", response_model=List[SchoolTeamMemberResponse])
+def get_team_members_by_school(
+    school_id: str,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get all team members for a school. School users can only get their own."""
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or school.id != school_id:
+            raise HTTPException(status_code=404, detail="Team members not found or access denied.")
+    return db.query(SchoolTeamMember).filter(SchoolTeamMember.school_id == school_id).order_by(SchoolTeamMember.name).all()
+
+
+@router.get("/team-members/{id}/", response_model=SchoolTeamMemberResponse)
+@router.get("/team-members/{id}", response_model=SchoolTeamMemberResponse)
+def get_team_member(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get team member by id. School users can only get their own school's records."""
+    obj = db.query(SchoolTeamMember).filter(SchoolTeamMember.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Team member not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=404, detail="Team member not found or access denied.")
+    return obj
+
+
+@router.put("/team-members/{id}/", response_model=SchoolTeamMemberResponse)
+@router.put("/team-members/{id}", response_model=SchoolTeamMemberResponse)
+def update_team_member(
+    id: int,
+    name: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    member_story: Optional[str] = Form(None),
+    profile_picture: Optional[UploadFile] = File(None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Update team member. School users can only update their own. Use multipart/form-data; send only fields to change; profile_picture is a file upload."""
+    obj = db.query(SchoolTeamMember).filter(SchoolTeamMember.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Team member not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only update your own school's team members.")
+
+    if name is not None:
+        obj.name = name.strip()
+    if designation is not None:
+        obj.designation = designation.strip() if designation else None
+    if member_story is not None:
+        obj.member_story = member_story.strip() if member_story else None
+    if profile_picture and profile_picture.filename:
+        try:
+            obj.profile_picture = upload_to_s3(profile_picture, f"schools/{obj.school_id}/team_members")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/team-members/{id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/team-members/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_team_member(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Delete team member. School users can only delete their own."""
+    obj = db.query(SchoolTeamMember).filter(SchoolTeamMember.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Team member not found.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only delete your own school's team members.")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ==================== Excellent Student List (school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark) ====================
+
+@router.post("/excellent-students/", status_code=status.HTTP_201_CREATED, response_model=ExcellentStudentResponse)
+def create_excellent_student(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    school_name: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    phone_no: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    class_name: Optional[str] = Form(None),
+    batch_of_student: Optional[str] = Form(None),
+    secure_mark: Optional[float] = Form(None),
+    student_photo: Optional[UploadFile] = File(None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create excellent student. School: own school; Admin: pass school_id. Use multipart/form-data; student_photo is file upload."""
+    if current_user.role == UserRole.ADMIN:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required when creating as admin.")
+        school = db.query(School).filter(School.id == school_id).first()
+    else:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    student_photo_url = None
+    if student_photo and student_photo.filename:
+        try:
+            student_photo_url = upload_to_s3(student_photo, f"schools/{school.id}/excellent_students")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    obj = ExcellentStudent(
+        school_id=school.id,
+        school_name=(school_name.strip() if school_name else None) or getattr(school, "school_name", None),
+        gender=gender.strip() if gender else None,
+        phone_no=phone_no.strip() if phone_no else None,
+        email=email.strip() if email else None,
+        class_name=class_name.strip() if class_name else None,
+        batch_of_student=batch_of_student.strip() if batch_of_student else None,
+        secure_mark=secure_mark,
+        student_photo=student_photo_url,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.get("/excellent-students/", response_model=List[ExcellentStudentResponse])
+def list_excellent_students(
+    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List excellent students. School: own only; Admin: all or filter by school_id."""
+    if current_user.role == UserRole.ADMIN:
+        if school_id:
+            q = db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id)
+        else:
+            q = db.query(ExcellentStudent)
+        return q.order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc()).all()
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        return []
+    return db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school.id).order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc()).all()
+
+
+@router.get("/excellent-students/by-school/{school_id}/", response_model=List[ExcellentStudentResponse])
+def get_excellent_students_by_school(
+    school_id: str,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get all excellent students for a school. School can only get own."""
+    if current_user.role != UserRole.ADMIN:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or school.id != school_id:
+            raise HTTPException(status_code=404, detail="Not found or access denied.")
+    return db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id).order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc()).all()
+
+
+@router.get("/excellent-students/{id}/", response_model=ExcellentStudentResponse)
+@router.get("/excellent-students/{id}", response_model=ExcellentStudentResponse)
+def get_excellent_student(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Get excellent student by id."""
+    obj = db.query(ExcellentStudent).filter(ExcellentStudent.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Excellent student not found.")
+    if current_user.role != UserRole.ADMIN:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=404, detail="Not found or access denied.")
+    return obj
+
+
+@router.put("/excellent-students/{id}/", response_model=ExcellentStudentResponse)
+@router.put("/excellent-students/{id}", response_model=ExcellentStudentResponse)
+def update_excellent_student(
+    id: int,
+    school_name: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    phone_no: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    class_name: Optional[str] = Form(None),
+    batch_of_student: Optional[str] = Form(None),
+    secure_mark: Optional[float] = Form(None),
+    student_photo: Optional[UploadFile] = File(None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Update excellent student. Use multipart/form-data; student_photo is file upload."""
+    obj = db.query(ExcellentStudent).filter(ExcellentStudent.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Excellent student not found.")
+    if current_user.role != UserRole.ADMIN:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only update your own school's excellent students.")
+
+    if school_name is not None:
+        obj.school_name = school_name.strip() if school_name else None
+    if gender is not None:
+        obj.gender = gender.strip() if gender else None
+    if phone_no is not None:
+        obj.phone_no = phone_no.strip() if phone_no else None
+    if email is not None:
+        obj.email = email.strip() if email else None
+    if class_name is not None:
+        obj.class_name = class_name.strip() if class_name else None
+    if batch_of_student is not None:
+        obj.batch_of_student = batch_of_student.strip() if batch_of_student else None
+    if secure_mark is not None:
+        obj.secure_mark = secure_mark
+    if student_photo and student_photo.filename:
+        try:
+            obj.student_photo = upload_to_s3(student_photo, f"schools/{obj.school_id}/excellent_students")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/excellent-students/{id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/excellent-students/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_excellent_student(
+    id: int,
+    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Delete excellent student."""
+    obj = db.query(ExcellentStudent).filter(ExcellentStudent.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Excellent student not found.")
+    if current_user.role != UserRole.ADMIN:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or obj.school_id != school.id:
+            raise HTTPException(status_code=403, detail="You can only delete your own school's excellent students.")
     db.delete(obj)
     db.commit()
     return None
