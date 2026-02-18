@@ -1254,6 +1254,7 @@ def update_student_status(
         "new_status": student.status.value,
         "status_updated_at": getattr(student, "status_updated_at", None)
     }
+
 @router.get("/students/profile/")
 def get_own_student_profile(
     db: Session = Depends(get_db),
@@ -1268,19 +1269,22 @@ def get_own_student_profile(
             joinedload(Student.parent),
             joinedload(Student.present_address),
             joinedload(Student.permanent_address),
-            joinedload(Student.exam_data)
+            joinedload(Student.exam_data),
+            joinedload(Student.school),
+            joinedload(Student.driver)  # ✅ added this
         )
         .first()
     )
 
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found.")
+
     last_exam = (
-    db.query(StudentExamData)
-    .filter(StudentExamData.student_id == student.id)
-    .order_by(StudentExamData.submitted_at.desc())
-    .first()
-       )
+        db.query(StudentExamData)
+        .filter(StudentExamData.student_id == student.id)
+        .order_by(StudentExamData.submitted_at.desc())
+        .first()
+    )
 
     return {
         "student_id": student.id,
@@ -1288,17 +1292,31 @@ def get_own_student_profile(
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
         "school_name": student.school.school_name if student.school else None,
-        "class_name": student.classes.name,
+        "board": student.school.school_board if student.school else None,
+        "class_name": student.classes.name if student.classes else None,
         "section_name": student.section.name if student.section else None,
         "created_at": student.created_at,
         "total_attendance": len(student.attendances) if student.attendances else 0,
         "total_exams": len(student.exam_data) if student.exam_data else 0,
-        "last_appeared_exam":last_exam.submitted_at if last_exam else None,
-        "pickup_point":student.pickup_point,
-        "pickup_time":student.pickup_time,
-        "drop_point":student.drop_point,
-        "drop_time":student.drop_time,
-        # "exam_given": sum(1 for exam in student.exam_data if exam.is_exam_given) if student.exam_data else 0,
+        "last_appeared_exam": last_exam.submitted_at if last_exam else None,
+        "status": student.status,
+        "expiry": student.status_expiry_date,
+
+        # ✅ Transport Details
+        "transport_details": {
+            "vehicle_number": student.driver.vechicle_number,
+            "vehicle_name": student.driver.vechicle_name,
+            "driver_name": student.driver.driver_name,
+            "driver_phone": student.driver.phone_no,
+            "duty_start_time": student.driver.duty_start_time,
+            "duty_end_time": student.driver.duty_end_time,
+        } if student.driver else None,
+
+        "pickup_point": student.pickup_point,
+        "pickup_time": student.pickup_time,
+        "drop_point": student.drop_point,
+        "drop_time": student.drop_time,
+
         "parent": {
             "parent_name": student.parent.parent_name,
             "relation": student.parent.relation,
@@ -1307,6 +1325,7 @@ def get_own_student_profile(
             "occupation": student.parent.occupation,
             "organization": student.parent.organization
         } if student.parent else None,
+
         "present_address": {
             "enter_pin": student.present_address.enter_pin,
             "division": student.present_address.division,
@@ -1317,6 +1336,7 @@ def get_own_student_profile(
             "house_no": student.present_address.house_no,
             "floor_name": student.present_address.floor_name
         } if student.present_address else None,
+
         "permanent_address": {
             "enter_pin": student.permanent_address.enter_pin,
             "division": student.permanent_address.division,

@@ -796,6 +796,173 @@ def create_class(
         "class_id": new_class.id,
         "class_name": new_class.name
     }
+@router.put("/update-class/{class_id}")
+def update_class(
+    class_id: int,
+    class_data: ClassWithSubjectUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # ✅ Role check
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=403,
+            detail="Only school and staff users can update classes"
+        )
+
+    # ✅ Resolve school
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+        school = db.query(School).filter(
+            School.user_id == current_user.id
+        ).first()
+    else:
+        staff = db.query(Staff).filter(
+            Staff.user_id == current_user.id
+        ).first()
+        if not staff:
+            raise HTTPException(404, "Staff profile not found")
+
+        school = db.query(School).filter(
+            School.id == staff.school_id
+        ).first()
+
+    if not school:
+        raise HTTPException(404, "School not found")
+
+    # ✅ Fetch class
+    class_obj = db.query(Class).filter(
+        Class.id == class_id,
+        Class.school_id == school.id
+    ).first()
+
+    if not class_obj:
+        raise HTTPException(404, "Class not found")
+
+    # =====================================================
+    # ✅ UPDATE ONLY SCALAR FIELDS (VERY IMPORTANT)
+    # =====================================================
+    if class_data.class_name is not None:
+        class_obj.name = class_data.class_name
+
+    if class_data.annual_course_fee is not None:
+        class_obj.annual_course_fee = class_data.annual_course_fee
+
+    if class_data.annual_transport_fee is not None:
+        class_obj.annual_transport_fee = class_data.annual_transport_fee
+
+    if class_data.tek_school_payment_annually is not None:
+        class_obj.tek_school_payment_annually = class_data.tek_school_payment_annually
+
+    if class_data.class_start_date is not None:
+        class_obj.class_start_date = class_data.class_start_date
+
+    if class_data.class_end_date is not None:
+        class_obj.class_end_date = class_data.class_end_date
+
+    # =====================================================
+    # ✅ UPDATE SECTIONS
+    # =====================================================
+    if class_data.sections is not None:
+        db.execute(
+            class_section.delete().where(
+                class_section.c.class_id == class_id
+            )
+        )
+
+        for section_name in class_data.sections:
+            section = db.query(Section).filter(
+                Section.name == section_name,
+                Section.school_id == school.id
+            ).first()
+
+            if not section:
+                section = Section(
+                    name=section_name,
+                    school_id=school.id
+                )
+                db.add(section)
+                db.flush()
+
+            db.execute(
+                class_section.insert().values(
+                    class_id=class_id,
+                    section_id=section.id,
+                    school_id=school.id
+                )
+            )
+
+    # =====================================================
+    # ✅ UPDATE SUBJECTS (WITH school_class_subject_id)
+    # =====================================================
+    if class_data.subjects is not None:
+        db.execute(
+            class_subjects.delete().where(
+                class_subjects.c.class_id == class_id
+            )
+        )
+
+        for item in class_data.subjects:
+            subject = db.query(Subject).filter(
+                Subject.name == item.name,
+                Subject.school_id == school.id
+            ).first()
+
+            if not subject:
+                subject = Subject(
+                    name=item.name,
+                    school_id=school.id
+                )
+                db.add(subject)
+                db.flush()
+
+            db.execute(
+                class_subjects.insert().values(
+                    class_id=class_id,
+                    subject_id=subject.id,
+                    school_id=school.id,
+                    school_class_subject_id=item.school_class_subject_id
+                )
+            )
+
+    # =====================================================
+    # ✅ UPDATE EXTRA CURRICULAR ACTIVITIES
+    # =====================================================
+    if class_data.extra_curriculums is not None:
+        db.execute(
+            class_extra_curricular.delete().where(
+                class_extra_curricular.c.class_id == class_id
+            )
+        )
+
+        for activity_name in class_data.extra_curriculums:
+            activity = db.query(ExtraCurricularActivity).filter(
+                ExtraCurricularActivity.name == activity_name,
+                ExtraCurricularActivity.school_id == school.id
+            ).first()
+
+            if not activity:
+                activity = ExtraCurricularActivity(
+                    name=activity_name,
+                    school_id=school.id
+                )
+                db.add(activity)
+                db.flush()
+
+            db.execute(
+                class_extra_curricular.insert().values(
+                    class_id=class_id,
+                    activity_id=activity.id,
+                    school_id=school.id
+                )
+            )
+
+    db.commit()
+
+    return {
+        "detail": "Class updated successfully",
+        "class_id": class_obj.id
+    }
 
 @router.put("/classes/{class_id}/section/{section_id}/update")
 def update_class_section_fields(
@@ -1676,42 +1843,69 @@ def get_subjects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow both school (business only) and staff users
+    # ✅ Role check
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
-        raise HTTPException(status_code=403, detail="Only school and staff users can access this resource.")
-    
-    # ✅ For SCHOOL users, verify business account access
+        raise HTTPException(
+            status_code=403,
+            detail="Only school and staff users can access this resource."
+        )
+
+    # ✅ Resolve school
     if current_user.role == UserRole.SCHOOL:
         verify_school_business_access(current_user, db)
-    
-    # ✅ Get school based on user role
-    if current_user.role == UserRole.SCHOOL:
-        school = db.query(School).filter(School.user_id == current_user.id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this user.")
-    elif current_user.role == UserRole.STAFF:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school = db.query(School).filter(School.id == staff.school_id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
-    subjects = db.query(Subject).join(
-        class_subjects, class_subjects.c.subject_id == Subject.id
-    ).filter(
-        class_subjects.c.class_id == class_id,
-        Subject.school_id == school.id
-    ).all()
+        school = db.query(School).filter(
+            School.user_id == current_user.id
+        ).first()
+        if not school:
+            raise HTTPException(404, "School not found for this user.")
+
+    else:  # STAFF
+        staff = db.query(Staff).filter(
+            Staff.user_id == current_user.id
+        ).first()
+        if not staff:
+            raise HTTPException(404, "Staff profile not found.")
+
+        school = db.query(School).filter(
+            School.id == staff.school_id
+        ).first()
+        if not school:
+            raise HTTPException(404, "School not found for this staff member.")
+
+    # ✅ Fetch subjects + association data
+    subjects = (
+        db.query(
+            Subject.id.label("subject_id"),
+            Subject.name.label("subject_name"),
+            class_subjects.c.school_class_subject_id
+        )
+        .join(
+            class_subjects,
+            class_subjects.c.subject_id == Subject.id
+        )
+        .filter(
+            class_subjects.c.class_id == class_id,
+            Subject.school_id == school.id   # ← this is enough
+        )
+        .all()
+    )
+
+
+
     if not subjects:
-        raise HTTPException(status_code=404, detail="No subjects found for this class.")
+        raise HTTPException(404, "No subjects found for this class.")
+
     return [
         {
-            "subject_id": subject.id,
-            "subject_name": subject.name
+            "subject_id": row.subject_id,
+            "subject_name": row.subject_name,
+            "school_class_subject_id": row.school_class_subject_id
         }
-        for subject in subjects
-    ]    
+        for row in subjects
+    ]
+
+
 @router.post("/transports/")
 def create_transport(
     data: TransportCreate,
@@ -3988,8 +4182,6 @@ def create_home_task(
 
     class_id = class_subject.class_id
     subject_id = class_subject.subject_id
-    print(f"Class ID: {class_id}, Subject ID: {subject_id},techer:{teacher.id}")
-
     # ✅ Find all sections where this teacher teaches this subject in this class
     teacher_sections = (
         db.query(TeacherClassSectionSubject)
