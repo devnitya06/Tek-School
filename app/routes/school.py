@@ -1305,8 +1305,19 @@ def get_class_details(
 
         # Get teachers assigned to this class-section
         teacher_assignments = (
-            db.query(Teacher)
-            .join(TeacherClassSectionSubject)
+            db.query(
+                Teacher,
+                TeacherClassSectionSubject,
+                Subject
+            )
+            .join(
+                TeacherClassSectionSubject,
+                Teacher.id == TeacherClassSectionSubject.teacher_id
+            )
+            .join(
+                Subject,
+                Subject.id == TeacherClassSectionSubject.subject_id
+            )
             .filter(
                 TeacherClassSectionSubject.class_id == class_obj.id,
                 TeacherClassSectionSubject.section_id == section.id,
@@ -1320,10 +1331,13 @@ def get_class_details(
                 "teacher_id": teacher.id,
                 "teacher_name": f"{teacher.first_name} {teacher.last_name}",
                 "email": teacher.email,
-                "phone": teacher.phone
+                "phone": teacher.phone,
+                "subject_id": subject.id,
+                "subject_name": subject.name
             }
-            for teacher in teacher_assignments
+            for teacher, assignment, subject in teacher_assignments
         ]
+
 
         # Get exam count for this class-section
         exam_count = (
@@ -1601,7 +1615,6 @@ def publish_timetable(
     for day in timetable.days:
         day.is_published = True
         day.published_at = func.now()
-
     try:
         db.commit()
         db.refresh(timetable)
@@ -1614,7 +1627,6 @@ def publish_timetable(
     }
 
           
-@router.get("/timetable/{timetable_id}/periods/")
 @router.get("/timetable/{timetable_id}/periods/")
 def get_timetable_periods(
     timetable_id: int,

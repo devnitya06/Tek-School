@@ -1203,20 +1203,15 @@ def get_teacher_details(
 def get_class_subjects(
     class_name: str | None = None,
     school_board: str | None = None,
+    school_medium: str | None =None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN))
+    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
 ):
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=403,
-            detail="Only admin account is allowed to view class subjects."
-        )
-
     try:
         query = (
             db.query(
-                func.min(SchoolClassSubject.id).label("class_id"),  # ✅ class id
+                func.min(SchoolClassSubject.id).label("class_id"),
                 SchoolClassSubject.school_board,
                 SchoolClassSubject.school_medium,
                 SchoolClassSubject.class_name,
@@ -1244,6 +1239,10 @@ def get_class_subjects(
         if school_board:
             query = query.filter(
                 cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%")
+            )
+        if school_medium:
+            query = query.filter(
+                cast(SchoolClassSubject.school_medium, String).ilike(f"%{school_medium}%")
             )
 
         # 🔢 Count before pagination
@@ -1275,8 +1274,6 @@ def get_class_subjects(
             status_code=500,
             detail=f"Database error occurred: {str(e)}"
         )
-
-
 
 @router.post("/class_subjects/")
 def create_class_subjects(
@@ -1533,7 +1530,10 @@ def get_my_subjects(
     current_user = Depends(get_current_user)
 ):
     if current_user.role != UserRole.SELF_SIGNED_STUDENT:
-        raise HTTPException(status_code=403, detail="Only self signed students allowed")
+        raise HTTPException(
+            status_code=403,
+            detail="Only self signed students allowed"
+        )
 
     student = db.query(SelfSignedStudent).filter(
         SelfSignedStudent.user_id == current_user.id
@@ -1542,21 +1542,33 @@ def get_my_subjects(
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found")
 
-    if not all([student.select_board, student.select_medium, student.select_class]):
-        raise HTTPException(status_code=400, detail="Student profile incomplete")
+    if not student.select_class_id:
+        raise HTTPException(status_code=400, detail="Student class not selected")
 
     try:
+        # ✅ Step 1: Get class details using selected id
+        selected_class = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.id == student.select_class_id
+        ).first()
+
+        if not selected_class:
+            raise HTTPException(status_code=404, detail="Selected class not found")
+
+        # ✅ Step 2: Get all subjects of same board + medium + class
         query = (
             db.query(
                 SchoolClassSubject.id.label("school_class_subject_id"),
                 SchoolClassSubject.subject.label("subject"),
                 func.count(Chapter.id).label("chapter_count")
             )
-            .outerjoin(Chapter, Chapter.school_class_subject_id == SchoolClassSubject.id)
+            .outerjoin(
+                Chapter,
+                Chapter.school_class_subject_id == SchoolClassSubject.id
+            )
             .filter(
-                SchoolClassSubject.school_board == student.select_board,
-                SchoolClassSubject.school_medium == student.select_medium,
-                SchoolClassSubject.class_name == student.select_class
+                SchoolClassSubject.school_board == selected_class.school_board,
+                SchoolClassSubject.school_medium == selected_class.school_medium,
+                SchoolClassSubject.class_name == selected_class.class_name
             )
             .group_by(
                 SchoolClassSubject.id,
@@ -1586,7 +1598,10 @@ def get_my_subjects(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
 
 @router.get("/subjects/{subject_id}/chapters/")
 def get_chapters_by_subject(

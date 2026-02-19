@@ -120,8 +120,7 @@ class SelfSignedStudent(Base):
 
     select_board = Column(String(50), nullable=True)
     select_medium = Column(String(50), nullable=True)
-    select_class = Column(String(50), nullable=True)
-
+    select_class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
     school_name = Column(String(255), nullable=True)
     school_location = Column(String(255), nullable=True)
 
@@ -147,8 +146,7 @@ class SelfSignedStudent(Base):
     user = relationship("User", back_populates="self_signed_student_profile")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
     subscriptions = relationship("StudentSubscription", back_populates="student")
-
-
+    selected_class = relationship("SchoolClassSubject", backref="students")
 class StudentPayment(Base):
     __tablename__ = "student_payments"
     __table_args__ = (
