@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
-from app.models.admin import StudentAdminExamData
+from app.models.admin import StudentAdminExamData,SchoolClassSubject
 from app.models.school import SchoolBoard,SchoolMedium,SchoolType
 from app.schemas.students import SelfSignedStudentUpdate
 from app.models.students import SelfSignedStudent
@@ -74,20 +74,21 @@ def get_self_signed_student_profile(
     current_user=Depends(require_roles(UserRole.SELF_SIGNED_STUDENT))
 ):
     try:
-        # Ensure user is a student (additional check for safety)
-        if current_user.role != "self_signed_student":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only students can view this profile."
-            )
-
-        # Fetch student details mapped to user record
         profile = db.query(SelfSignedStudent).filter(
             SelfSignedStudent.user_id == current_user.id
         ).first()
 
         if not profile:
             raise HTTPException(status_code=404, detail="Student profile not found")
+
+        # ✅ Get class details using select_class_id
+        class_details = None
+        if profile.select_class_id:
+            class_details = db.query(SchoolClassSubject).filter(
+                SchoolClassSubject.id == profile.select_class_id
+            ).first()
+
+        # ✅ Get latest exam rank
         latest_exam_rank = (
             db.query(StudentAdminExamData)
             .filter(StudentAdminExamData.student_id == profile.id)
@@ -109,9 +110,12 @@ def get_self_signed_student_profile(
             "last_name": profile.last_name,
             "email": current_user.email,
             "phone": current_user.phone,
-            "board": profile.select_board,
-            "class": profile.select_class,
-            "medium": profile.select_medium,
+
+            # ✅ Now coming from SchoolClassSubject table
+            "board": class_details.school_board.value if class_details else None,
+            "class": class_details.class_name if class_details else None,
+            "medium": class_details.school_medium.value if class_details else None,
+
             "pin": profile.pin,
             "division": profile.division,
             "district": profile.district,
@@ -121,11 +125,13 @@ def get_self_signed_student_profile(
             "school_location": profile.school_location,
             "status": profile.status,
             "status_expiry_date": profile.status_expiry_date,
-            "parenrt_name": profile.parent_name,
+
+            "parent_name": profile.parent_name,
             "relation": profile.relation,
             "parent_phone": profile.parent_phone,
             "parent_email": profile.parent_email,
             "occupation": profile.occupation,
+
             "created_at": current_user.created_at,
             "class_rank": latest_rank,
         }
