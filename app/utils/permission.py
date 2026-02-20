@@ -34,6 +34,26 @@ def require_roles(*roles: UserRole):
     return permission_dependency
 
 
+def require_roles_allow_listing_school(*roles: UserRole):
+    """
+    Same as require_roles but does NOT verify business account for SCHOOL.
+    Use for APIs that both listing and business schools can access (e.g. school profile,
+    school-info, class-fees, team-members, excellent-students, catalogue, photo-gallery, listed-students).
+    """
+    def permission_dependency(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action."
+            )
+        # Do NOT call verify_school_business_access — allow listing schools
+        return current_user
+    return permission_dependency
+
+
 def require_staff_permission(permission: StaffPermissionType):
     """
     Returns a dependency that checks if the current staff user has the required permission.

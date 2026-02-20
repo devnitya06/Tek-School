@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case,cast,String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
-from app.utils.permission import require_roles, verify_school_business_access
+from app.utils.permission import require_roles, require_roles_allow_listing_school, verify_school_business_access
 from typing import List,Optional
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
@@ -65,7 +65,7 @@ async def update_school_profile(
     request: Request,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     school = _get_school_for_admin_or_school(current_user, db, school_id)
 
@@ -206,7 +206,7 @@ async def add_catalogue_images(
     images: List[UploadFile] = File(...),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Add images to school catalogue. Accepts multiple image files and uploads them to S3."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -249,7 +249,7 @@ async def add_catalogue_images(
 async def clear_catalogue(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Clear all images from school catalogue."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -274,7 +274,7 @@ async def remove_catalogue_image(
     image_url: str = Query(..., description="URL of the image to remove from catalogue"),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Remove a specific image from school catalogue by URL."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -316,7 +316,7 @@ async def get_catalogue(
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Get catalogue images for the school with pagination."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -350,7 +350,7 @@ async def add_photo_gallery_images(
     images: List[UploadFile] = File(...),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Add images to school photo gallery. Accepts multiple image files and uploads them to S3."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -393,7 +393,7 @@ async def add_photo_gallery_images(
 async def clear_photo_gallery(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Clear all images from school photo gallery."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -418,7 +418,7 @@ async def remove_photo_gallery_image(
     image_url: str = Query(..., description="URL of the image to remove from photo gallery"),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Remove a specific image from school photo gallery by URL."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -460,7 +460,7 @@ async def get_photo_gallery(
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
     """Get photo gallery images for the school with pagination."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -492,7 +492,7 @@ async def get_photo_gallery(
 @router.get("/school")
 async def get_school_profile(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -5099,7 +5099,7 @@ def delete_bank_account(
 def create_school_info(
     data: SchoolInfoCreate,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin/super admin"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Create school info. School users create for their own school; admin/super admin must pass school_id."""
@@ -5131,7 +5131,7 @@ def create_school_info(
 @router.get("/school-info/", response_model=List[SchoolInfoResponse])
 def list_school_info(
     school_id: Optional[str] = Query(None, description="Filter by school (required for admin when listing one)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """List school info. School users get their own; admin/super admin get all or filter by school_id."""
@@ -5150,7 +5150,7 @@ def list_school_info(
 @router.get("/school-info/by-school/{school_id}/", response_model=SchoolInfoResponse)
 def get_school_info_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get school info by school_id. School users can only get their own."""
@@ -5167,7 +5167,7 @@ def get_school_info_by_school(
 @router.get("/school-info/{id}/", response_model=SchoolInfoResponse)
 def get_school_info(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get school info by id. School users can only get their own school's info."""
@@ -5185,7 +5185,7 @@ def get_school_info(
 def update_school_info(
     id: int,
     data: SchoolInfoUpdate,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Update school info. School users can only update their own."""
@@ -5207,7 +5207,7 @@ def update_school_info(
 @router.delete("/school-info/{id}/", status_code=status.HTTP_204_NO_CONTENT)
 def delete_school_info(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Delete school info. School users can only delete their own."""
@@ -5229,7 +5229,7 @@ def delete_school_info(
 def create_school_class_fee(
     data: SchoolClassFeeCreate,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin/super admin"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Create class fee. School users create for their own school; admin/super admin must pass school_id."""
@@ -5267,7 +5267,7 @@ def create_school_class_fee(
 @router.get("/class-fees/", response_model=List[SchoolClassFeeResponse])
 def list_school_class_fees(
     school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """List class fees. School users get their own; admin/super admin get all or filter by school_id."""
@@ -5286,7 +5286,7 @@ def list_school_class_fees(
 @router.get("/class-fees/by-school/{school_id}/", response_model=List[SchoolClassFeeResponse])
 def get_class_fees_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get all class fees for a school. School users can only get their own."""
@@ -5300,7 +5300,7 @@ def get_class_fees_by_school(
 @router.get("/class-fees/{id}/", response_model=SchoolClassFeeResponse)
 def get_school_class_fee(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get class fee by id. School users can only get their own school's records."""
@@ -5318,7 +5318,7 @@ def get_school_class_fee(
 def update_school_class_fee(
     id: int,
     data: SchoolClassFeeUpdate,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Update class fee. School users can only update their own."""
@@ -5350,7 +5350,7 @@ def update_school_class_fee(
 @router.delete("/class-fees/{id}/", status_code=status.HTTP_204_NO_CONTENT)
 def delete_school_class_fee(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Delete class fee. School users can only delete their own."""
@@ -5375,7 +5375,7 @@ def create_team_member(
     designation: Optional[str] = Form(None),
     member_story: Optional[str] = Form(None),
     profile_picture: Optional[UploadFile] = File(None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Create team member. School users create for their own school; admin/super admin must pass school_id. Use multipart/form-data; profile_picture is a file upload."""
@@ -5411,7 +5411,7 @@ def create_team_member(
 @router.get("/team-members/", response_model=List[SchoolTeamMemberResponse])
 def list_team_members(
     school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """List team members. School users get their own; admin/super admin get all or filter by school_id."""
@@ -5430,7 +5430,7 @@ def list_team_members(
 @router.get("/team-members/by-school/{school_id}/", response_model=List[SchoolTeamMemberResponse])
 def get_team_members_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get all team members for a school. School users can only get their own."""
@@ -5445,7 +5445,7 @@ def get_team_members_by_school(
 @router.get("/team-members/{id}", response_model=SchoolTeamMemberResponse)
 def get_team_member(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get team member by id. School users can only get their own school's records."""
@@ -5467,7 +5467,7 @@ def update_team_member(
     designation: Optional[str] = Form(None),
     member_story: Optional[str] = Form(None),
     profile_picture: Optional[UploadFile] = File(None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Update team member. School users can only update their own. Use multipart/form-data; send only fields to change; profile_picture is a file upload."""
@@ -5500,7 +5500,7 @@ def update_team_member(
 @router.delete("/team-members/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_team_member(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     """Delete team member. School users can only delete their own."""
@@ -5529,7 +5529,7 @@ def create_excellent_student(
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
     student_photo: Optional[UploadFile] = File(None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Create excellent student. School: own school; Admin: pass school_id. Use multipart/form-data; student_photo is file upload."""
@@ -5569,7 +5569,7 @@ def create_excellent_student(
 @router.get("/excellent-students/", response_model=List[ExcellentStudentResponse])
 def list_excellent_students(
     school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """List excellent students. School: own only; Admin: all or filter by school_id."""
@@ -5588,7 +5588,7 @@ def list_excellent_students(
 @router.get("/excellent-students/by-school/{school_id}/", response_model=List[ExcellentStudentResponse])
 def get_excellent_students_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get all excellent students for a school. School can only get own."""
@@ -5603,7 +5603,7 @@ def get_excellent_students_by_school(
 @router.get("/excellent-students/{id}", response_model=ExcellentStudentResponse)
 def get_excellent_student(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Get excellent student by id."""
@@ -5629,7 +5629,7 @@ def update_excellent_student(
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
     student_photo: Optional[UploadFile] = File(None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Update excellent student. Use multipart/form-data; student_photo is file upload."""
@@ -5670,7 +5670,7 @@ def update_excellent_student(
 @router.delete("/excellent-students/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_excellent_student(
     id: int,
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
     db: Session = Depends(get_db),
 ):
     """Delete excellent student."""
@@ -6035,21 +6035,28 @@ async def get_school_faqs_public(
 
 # ==================== ListedSchoolStudent CRUD ====================
 
-def _get_school_id_for_listed_students(current_user: User, db: Session) -> str:
-    """Get school_id for SCHOOL or STAFF user. Used for ListedSchoolStudent endpoints."""
+def _get_school_id_for_listed_students(
+    current_user: User, db: Session, school_id: Optional[str] = None
+) -> str:
+    """Get school_id for SCHOOL, STAFF, or ADMIN. Allows listing and business schools. Admin must pass school_id."""
+    if current_user.role == UserRole.ADMIN:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required when accessing as admin.")
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+        return school.id
     if current_user.role == UserRole.SCHOOL:
-        verify_school_business_access(current_user, db)
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
         return school.id
-    elif current_user.role == UserRole.STAFF:
+    if current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
         return staff.school_id
-    else:
-        raise HTTPException(status_code=403, detail="Only school and staff can manage listed students.")
+    raise HTTPException(status_code=403, detail="Only school, staff, and admin can manage listed students.")
 
 
 @router.post(
@@ -6061,10 +6068,11 @@ def _get_school_id_for_listed_students(current_user: User, db: Session) -> str:
 )
 def create_listed_school_student(
     data: ListedSchoolStudentCreate,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.STAFF, UserRole.ADMIN)),
 ):
-    school_id = _get_school_id_for_listed_students(current_user, db)
+    school_id = _get_school_id_for_listed_students(current_user, db, school_id)
     profile_picture_url = None
     if data.profile_picture:
         if data.profile_picture.startswith("data:") or len(data.profile_picture) > 500:
@@ -6107,10 +6115,11 @@ def create_listed_school_student(
 )
 def list_listed_school_students(
     pagination: PaginationParams = Depends(),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.STAFF, UserRole.ADMIN)),
 ):
-    school_id = _get_school_id_for_listed_students(current_user, db)
+    school_id = _get_school_id_for_listed_students(current_user, db, school_id)
     query = db.query(ListedSchoolStudent).filter(ListedSchoolStudent.school_id == school_id)
     total_count = query.count()
     items = (
@@ -6129,10 +6138,11 @@ def list_listed_school_students(
 )
 def get_listed_school_student(
     listed_student_id: int,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.STAFF, UserRole.ADMIN)),
 ):
-    school_id = _get_school_id_for_listed_students(current_user, db)
+    school_id = _get_school_id_for_listed_students(current_user, db, school_id)
     obj = db.query(ListedSchoolStudent).filter(
         ListedSchoolStudent.id == listed_student_id,
         ListedSchoolStudent.school_id == school_id,
@@ -6150,10 +6160,11 @@ def get_listed_school_student(
 def update_listed_school_student(
     listed_student_id: int,
     data: ListedSchoolStudentUpdate,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.STAFF, UserRole.ADMIN)),
 ):
-    school_id = _get_school_id_for_listed_students(current_user, db)
+    school_id = _get_school_id_for_listed_students(current_user, db, school_id)
     obj = db.query(ListedSchoolStudent).filter(
         ListedSchoolStudent.id == listed_student_id,
         ListedSchoolStudent.school_id == school_id,
@@ -6203,10 +6214,11 @@ def update_listed_school_student(
 )
 def delete_listed_school_student(
     listed_student_id: int,
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.STAFF)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.STAFF, UserRole.ADMIN)),
 ):
-    school_id = _get_school_id_for_listed_students(current_user, db)
+    school_id = _get_school_id_for_listed_students(current_user, db, school_id)
     obj = db.query(ListedSchoolStudent).filter(
         ListedSchoolStudent.id == listed_student_id,
         ListedSchoolStudent.school_id == school_id,
