@@ -161,13 +161,13 @@ class StudentExamSubmitRequest(BaseModel):
     answers: List[StudentAnswer]
 
 class RechargePlanCreate(BaseModel):
-    class_name: str = Field(..., min_length=1)
+    class_id: int
     duration: PlanDuration
     amount: int = Field(..., gt=0)
 
 class RechargePlanResponse(BaseModel):
     id: int
-    class_name: str
+    class_id: int
     duration: PlanDuration
     amount: int
     validity_days: int
@@ -175,12 +175,18 @@ class RechargePlanResponse(BaseModel):
     model_config = {
         "from_attributes": True
     }
-class RechargePlanListResponse(BaseModel):
+class SchoolClassMiniResponse(BaseModel):
     id: int
     class_name: str
+    model_config = {
+        "from_attributes": True
+    }
+class RechargePlanListResponse(BaseModel):
+    id: int
     duration: PlanDuration
     amount: int
     validity_days: int
+    school_class_subject: SchoolClassMiniResponse
 
     model_config = {
         "from_attributes": True

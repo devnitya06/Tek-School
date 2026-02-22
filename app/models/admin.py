@@ -49,9 +49,7 @@ class AdminExam(Base):
     name = Column(String, nullable=False)
 
     school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
-    class_name = Column(String, nullable=False)
-    subject = Column(String, nullable=False)
-
+    school_class_subject_id = Column(Integer,ForeignKey("school_classes_subjects.id", ondelete="CASCADE"),nullable=False)
     exam_type = Column(SQLEnum(ExamType), nullable=False)
     question_type = Column(SQLEnum(QuestionType), nullable=False)
     passing_mark = Column(Integer, nullable=False)
@@ -205,6 +203,7 @@ class SchoolClassSubject(Base):
     # ✅ Relationships
     chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
     admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
+    recharge_plans = relationship("RechargePlan", back_populates="school_class_subject", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint(
@@ -339,7 +338,7 @@ class RechargePlan(Base):
     __tablename__ = "recharge_plans"
 
     id = Column(Integer, primary_key=True)
-    class_name= Column(String(50), nullable=False)
+    class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
 
     duration = Column(SQLEnum(PlanDuration), nullable=False)
     amount = Column(Integer, nullable=False)
@@ -348,9 +347,10 @@ class RechargePlan(Base):
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime, default=func.now())
+    school_class_subject = relationship("SchoolClassSubject", back_populates="recharge_plans")
 
     __table_args__ = (
-        UniqueConstraint("class_name", "duration", name="uq_class_duration_plan"),
+        UniqueConstraint("class_id", "duration", name="uq_class_duration_plan"),
     )
 
 class StudentSubscription(Base):

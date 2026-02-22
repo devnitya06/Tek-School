@@ -2640,31 +2640,36 @@ def create_timetable(
 
 
 
-@router.put("/timetable/{timetable_id}")
-def update_timetable(
+@router.patch("/timetable/{timetable_id}")
+def patch_timetable(
     timetable_id: int,
     data: TimetableUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Allow both school and staff users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
-        raise HTTPException(status_code=403, detail="Only schools and staff can update timetables.")
+        raise HTTPException(
+            status_code=403,
+            detail="Only schools and staff can update timetables."
+        )
 
-    # ✅ Get school based on user role
+    # ✅ Get school
     if current_user.role == UserRole.SCHOOL:
         school = current_user.school_profile
         if not school:
             raise HTTPException(status_code=400, detail="School profile not found.")
-    elif current_user.role == UserRole.STAFF:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+    else:
+        staff = db.query(Staff).filter(
+            Staff.user_id == current_user.id
+        ).first()
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school = db.query(School).filter(School.id == staff.school_id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
-    # ✅ Get the base timetable (one per class + section)
+        school = db.query(School).filter(
+            School.id == staff.school_id
+        ).first()
+
+    # ✅ Get timetable
     timetable = db.query(Timetable).filter_by(
         id=timetable_id,
         school_id=school.id
@@ -2673,7 +2678,10 @@ def update_timetable(
     if not timetable:
         raise HTTPException(status_code=404, detail="Timetable not found.")
 
-    # ✅ Find or create the day
+    if not data.day:
+        raise HTTPException(status_code=400, detail="Day is required.")
+
+    # ✅ Find or create day
     day = db.query(TimetableDay).filter_by(
         timetable_id=timetable.id,
         day=data.day
@@ -2685,79 +2693,220 @@ def update_timetable(
             day=data.day
         )
         db.add(day)
-        db.flush()  # assign day.id
+        db.flush()
 
-    # ✅ Get existing periods for that day
-    existing_periods = db.query(TimetablePeriod).filter_by(day_id=day.id).all()
+    existing_periods = db.query(TimetablePeriod).filter_by(
+        day_id=day.id
+    ).all()
 
-    for new_period in data.periods:
-        # 🔹 Validate teacher assignment
-        teacher_assignment = db.query(TeacherClassSectionSubject).filter_by(
-            school_id=school.id,
-            class_id=timetable.class_id,
-            section_id=timetable.section_id,
-            subject_id=new_period.subject_id,
-            teacher_id=new_period.teacher_id
-        ).first()
+    periods_added = 0
 
-        if not teacher_assignment:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Teacher {new_period.teacher_id} is not assigned to "
-                       f"Class {timetable.class_id}, Section {timetable.section_id}, "
-                       f"Subject {new_period.subject_id}"
-            )
+    # ✅ Add new periods
+    if data.periods:
+        for new_period in data.periods:
 
-        # 🔹 Check conflicts with existing periods
-        for existing in existing_periods:
-            if is_time_overlap(
-                new_period.start_time, new_period.end_time,
-                existing.start_time, existing.end_time
-            ):
+            teacher_assignment = db.query(TeacherClassSectionSubject).filter_by(
+                school_id=school.id,
+                class_id=timetable.class_id,
+                section_id=timetable.section_id,
+                subject_id=new_period.subject_id,
+                teacher_id=new_period.teacher_id
+            ).first()
+
+            if not teacher_assignment:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Conflict with existing period {existing.start_time}-{existing.end_time}"
+                    detail="Teacher not assigned to this class/section/subject."
                 )
 
-        # 🔹 Add new period (NO school_id here)
-        db.add(TimetablePeriod(
-            day_id=day.id,
-            subject_id=new_period.subject_id,
-            teacher_id=new_period.teacher_id,
-            start_time=new_period.start_time,
-            end_time=new_period.end_time
-        ))
+            # ✅ Time conflict check
+            for existing in existing_periods:
+                if is_time_overlap(
+                    new_period.start_time,
+                    new_period.end_time,
+                    existing.start_time,
+                    existing.end_time
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Time conflict with {existing.start_time}-{existing.end_time}"
+                    )
+
+            db.add(TimetablePeriod(
+                day_id=day.id,
+                subject_id=new_period.subject_id,
+                teacher_id=new_period.teacher_id,
+                start_time=new_period.start_time,
+                end_time=new_period.end_time
+            ))
+
+            periods_added += 1
 
     db.commit()
     db.refresh(day)
     db.refresh(timetable)
 
-    # ✅ Get class and section info for logging
-    class_obj = db.query(Class).filter(Class.id == timetable.class_id).first()
-    section_obj = db.query(Section).filter(Section.id == timetable.section_id).first()
+    # ✅ Get class & section names
+    class_obj = db.query(Class).filter(
+        Class.id == timetable.class_id
+    ).first()
+
+    section_obj = db.query(Section).filter(
+        Section.id == timetable.section_id
+    ).first()
+
     class_name = class_obj.name if class_obj else f"Class {timetable.class_id}"
     section_name = section_obj.name if section_obj else f"Section {timetable.section_id}"
 
-    # ✅ Log action
+    # ✅ Convert Enum properly
+    day_value = day.day.value if day.day else None
+
+    # ✅ Log action (FIXED ENUM ISSUE)
     log_action(
         db=db,
         current_user=current_user,
         action_type=ActionType.UPDATE,
         resource_type=ResourceType.CLASS,
         resource_id=str(timetable.id),
-        description=f"Updated timetable for {class_name} - {section_name} on {day.day}",
+        description=f"Updated timetable for {class_name} - {section_name} on {day_value}",
         metadata={
             "timetable_id": timetable.id,
             "class_id": timetable.class_id,
             "class_name": class_name,
             "section_id": timetable.section_id,
             "section_name": section_name,
-            "day": day.day,
-            "periods_added": len(data.periods)
+            "day": day_value,  # ✅ JSON safe
+            "periods_added": periods_added
         }
     )
 
-    return {"detail": f"Timetable updated for {day.day}"}
+    return {
+        "detail": f"Timetable updated for {day_value}",
+        "periods_added": periods_added
+    }
+
+@router.patch("/timetable/period/{period_id}")
+def update_period(
+    period_id: int,
+    data: PeriodUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Not allowed.")
+
+    period = db.query(TimetablePeriod).filter_by(id=period_id).first()
+
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    day = db.query(TimetableDay).filter_by(id=period.day_id).first()
+    timetable = db.query(Timetable).filter_by(id=day.timetable_id).first()
+
+    # ✅ Get school
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile
+    else:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        school = db.query(School).filter(School.id == staff.school_id).first()
+
+    # ✅ Validate teacher assignment if changed
+    if data.teacher_id or data.subject_id:
+
+        subject_id = data.subject_id if data.subject_id else period.subject_id
+        teacher_id = data.teacher_id if data.teacher_id else period.teacher_id
+
+        teacher_assignment = db.query(TeacherClassSectionSubject).filter_by(
+            school_id=school.id,
+            class_id=timetable.class_id,
+            section_id=timetable.section_id,
+            subject_id=subject_id,
+            teacher_id=teacher_id
+        ).first()
+
+        if not teacher_assignment:
+            raise HTTPException(
+                status_code=400,
+                detail="Teacher not assigned to this class/section/subject."
+            )
+
+    # ✅ Update fields
+    if data.subject_id:
+        period.subject_id = data.subject_id
+    if data.teacher_id:
+        period.teacher_id = data.teacher_id
+    if data.start_time:
+        period.start_time = data.start_time
+    if data.end_time:
+        period.end_time = data.end_time
+
+    # ✅ Check overlap (exclude itself)
+    other_periods = db.query(TimetablePeriod).filter(
+        TimetablePeriod.day_id == period.day_id,
+        TimetablePeriod.id != period.id
+    ).all()
+
+    for other in other_periods:
+        if is_time_overlap(
+            period.start_time, period.end_time,
+            other.start_time, other.end_time
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Time conflict with {other.start_time}-{other.end_time}"
+            )
+
+    db.commit()
+    db.refresh(period)
+
+    return {"detail": "Period updated successfully"}
+
+@router.delete("/timetable/period/{period_id}")
+def delete_period(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # ✅ Role check
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(status_code=403, detail="Not allowed.")
+
+    # ✅ Get period
+    period = db.query(TimetablePeriod).filter_by(id=period_id).first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    # ✅ Get related day & timetable
+    day = db.query(TimetableDay).filter_by(id=period.day_id).first()
+    timetable = db.query(Timetable).filter_by(id=day.timetable_id).first()
+
+    # ✅ Get school based on role
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile
+        if not school:
+            raise HTTPException(status_code=400, detail="School profile not found.")
+    else:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school = db.query(School).filter(School.id == staff.school_id).first()
+
+    # ✅ Ensure period belongs to this school
+    if timetable.school_id != school.id:
+        raise HTTPException(status_code=403, detail="You cannot delete this period.")
+
+    # ✅ Delete period
+    db.delete(period)
+    db.flush()
+
+    # ✅ Optional: If no periods left in that day, delete the day also
+    remaining_periods = db.query(TimetablePeriod).filter_by(day_id=day.id).count()
+    if remaining_periods == 0:
+        db.delete(day)
+
+    db.commit()
+
+    return {"detail": "Period deleted successfully"}
 
 @router.get("/account-credit/configuration/")
 def get_account_credit_configuration(

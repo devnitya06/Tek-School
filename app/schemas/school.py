@@ -214,6 +214,11 @@ class TimetableUpdate(BaseModel):
     model_config = {
         "from_attributes": True
     }
+class PeriodUpdate(BaseModel):
+    subject_id: Optional[int] = None
+    teacher_id: Optional[str] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
 class CreateSchoolCredit(BaseModel):
     class_id: int
     credit_configuration_id: int

@@ -22,6 +22,8 @@ from typing import Optional, List
 from app.services.pagination import PaginationParams
 from datetime import datetime, timedelta
 from app.utils.services import get_validity_days
+from datetime import datetime, timezone
+from sqlalchemy.orm import joinedload
 router = APIRouter()
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
@@ -1948,8 +1950,6 @@ def create_exam(
     db: Session = Depends(get_db),
     current_user = Depends(require_roles(UserRole.ADMIN))
 ):
-
-    # 1️⃣ Verify school mapping exists
     scs = db.query(SchoolClassSubject).filter(
         SchoolClassSubject.id == payload.school_class_subject_id
     ).first()
@@ -1960,7 +1960,6 @@ def create_exam(
             detail="Invalid school_class_subject_id provided."
         )
 
-    # 2️⃣ Optional duplicate prevention
     existing_exam = db.query(AdminExam).filter(
         AdminExam.name == payload.name,
         AdminExam.school_class_subject_id == payload.school_class_subject_id
@@ -1973,12 +1972,9 @@ def create_exam(
         )
 
     try:
-        # 3️⃣ Create Exam
         new_exam = AdminExam(
             name=payload.name,
             school_class_subject_id=payload.school_class_subject_id,
-            class_name=scs.class_name,
-            subject=scs.subject,
             exam_type=payload.exam_type,
             question_type=payload.question_type,
             passing_mark=payload.passing_mark,
@@ -1986,7 +1982,6 @@ def create_exam(
             duration=payload.duration,
             exam_validity=payload.exam_validity,
             description=payload.description,
-            status=AdminExamStatus.ACTIVE
         )
 
         db.add(new_exam)
@@ -2008,65 +2003,102 @@ def create_exam(
 @router.get("/exams/")
 def get_exams(
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
+    current_user = Depends(require_roles(
+        UserRole.ADMIN,
+        UserRole.SELF_SIGNED_STUDENT
+    ))
 ):
+    exams_query = db.query(AdminExam).join(SchoolClassSubject)
 
-    # Base query
-    exams_query = db.query(AdminExam)
-
-    # If user is a student → filter exams by student's selected class
     if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+
         student = db.query(SelfSignedStudent).filter(
             SelfSignedStudent.user_id == current_user.id
         ).first()
 
         if not student:
-            raise HTTPException(status_code=404, detail="Student profile not found.")
+            raise HTTPException(404, "Student profile not found.")
 
-        if not student.select_class:
+        if not student.select_class_id:
             raise HTTPException(
-                status_code=400,
-                detail="Student has not selected a class yet."
+                400,
+                "Student has not selected a class yet."
             )
 
-        # Filter only exams matching student's selected class
-        exams_query = exams_query.filter(AdminExam.class_name == student.select_class)
+        exams_query = exams_query.filter(
+            AdminExam.school_class_subject_id == student.select_class_id
+        )
 
     exams = exams_query.all()
 
     if not exams:
-        return {
-            "message": "No exams found.",
-            "count": 0,
-            "data": []
-        }
+        return {"message": "No exams found.", "count": 0, "data": []}
+
+    # Optimized counts
+    student_counts = dict(
+        db.query(
+            StudentAdminExamData.exam_id,
+            func.count(StudentAdminExamData.id)
+        )
+        .group_by(StudentAdminExamData.exam_id)
+        .all()
+    )
+
+    question_counts = dict(
+        db.query(
+            AdminExamBank.exam_id,
+            func.count(AdminExamBank.id)
+        )
+        .group_by(AdminExamBank.exam_id)
+        .all()
+    )
 
     response = []
+    now = datetime.now(timezone.utc)
+    expired_updated = False
 
     for exam in exams:
-        student_count = db.query(StudentAdminExamData).filter(
-            StudentAdminExamData.exam_id == exam.id
-        ).count()
 
-        question_count = db.query(AdminExamBank).filter(
-            AdminExamBank.exam_id == exam.id
-        ).count()
+        # ✅ SAFE expiry handling
+        if exam.exam_validity:
+
+            validity = exam.exam_validity
+
+            # Convert string → datetime if needed
+            if isinstance(validity, str):
+                try:
+                    validity = datetime.fromisoformat(validity)
+                except ValueError:
+                    validity = None
+
+            # Make timezone-aware if naive
+            if validity and validity.tzinfo is None:
+                validity = validity.replace(tzinfo=timezone.utc)
+
+            if validity and validity < now:
+                if exam.status != AdminExamStatus.EXPIRED:
+                    exam.status = AdminExamStatus.EXPIRED
+                    expired_updated = True
 
         response.append({
             "exam_id": exam.id,
             "name": exam.name,
-            "class_name": exam.class_name,
-            "subject": exam.subject,
-            "exam_type": exam.exam_type,
-            "question_type": exam.question_type,
+            "class_name": exam.school_class_subject.class_name,
+            "subject": exam.school_class_subject.subject,
+            "exam_type": exam.exam_type.value,
+            "question_type": exam.question_type.value,
             "passing_mark": exam.passing_mark,
             "duration": exam.duration,
             "repeat_allowed": exam.repeat,
             "valid_until": exam.exam_validity,
-            "status": exam.status,
-            "no_of_questions": question_count,
-            "no_of_students_attempted": student_count
+            "status": exam.status.value,
+            "no_of_questions": question_counts.get(exam.id, 0),
+            "no_of_students_attempted": student_counts.get(exam.id, 0)
         })
+
+    # Commit once if any expired updated
+    if expired_updated:
+        db.commit()
 
     return {
         "message": "Exam list retrieved successfully.",
@@ -2074,26 +2106,35 @@ def get_exams(
         "data": response
     }
 
-
 @router.put("/exams/{exam_id}/")
 def update_exam(
     exam_id: str,
     payload: AdminExamUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN,UserRole.SELF_SIGNED_STUDENT,UserRole.STAFF))
+    current_user = Depends(require_roles(
+        UserRole.ADMIN,
+        UserRole.STAFF
+    ))
 ):
-
-    # 1️⃣ Fetch the exam
-    exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+    exam = db.query(AdminExam).filter(
+        AdminExam.id == exam_id
+    ).first()
 
     if not exam:
-        raise HTTPException(
-            status_code=404,
-            detail="Exam not found."
-        )
+        raise HTTPException(404, "Exam not found.")
 
-    # 2️⃣ Update fields dynamically
     update_data = payload.dict(exclude_unset=True)
+
+    if "school_class_subject_id" in update_data:
+        scs = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.id == update_data["school_class_subject_id"]
+        ).first()
+
+        if not scs:
+            raise HTTPException(
+                404,
+                "Invalid school_class_subject_id provided."
+            )
 
     for field, value in update_data.items():
         setattr(exam, field, value)
@@ -2110,8 +2151,33 @@ def update_exam(
     except SQLAlchemyError as e:
         db.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Database error: {str(e)}"
+            500,
+            f"Database error: {str(e)}"
+        )
+@router.delete("/exams/{exam_id}/")
+def delete_exam(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_roles(UserRole.ADMIN))
+):
+    exam = db.query(AdminExam).filter(
+        AdminExam.id == exam_id
+    ).first()
+
+    if not exam:
+        raise HTTPException(404, "Exam not found.")
+
+    try:
+        db.delete(exam)
+        db.commit()
+
+        return {"detail": "Exam deleted successfully."}
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            500,
+            f"Database error: {str(e)}"
         )
 @router.post("/add-questions/{exam_id}/")
 async def add_questions(
@@ -2238,44 +2304,79 @@ def get_exam_questions(
         response_data.append(base)
 
     return response_data
+
 @router.get("/exams/{exam_id}/details/")
 def get_exam_details(
     exam_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT))
+    current_user = Depends(require_roles(
+        UserRole.ADMIN,
+        UserRole.SELF_SIGNED_STUDENT
+    ))
 ):
-    # 1️⃣ Check if exam exists
-    exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
+    # 1️⃣ Fetch exam with relationship
+    exam = (
+        db.query(AdminExam)
+        .join(SchoolClassSubject)
+        .filter(AdminExam.id == exam_id)
+        .first()
+    )
+
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="Exam not found."
+        )
 
-    # 2️⃣ Count how many questions exist
+    # 2️⃣ Count total questions
     total_questions = (
-        db.query(AdminExamBank)
+        db.query(func.count(AdminExamBank.id))
         .filter(AdminExamBank.exam_id == exam_id)
-        .count()
+        .scalar()
     )
 
-    # 3️⃣ Count how many student entries exist (who appeared)
+    # 3️⃣ Count total students appeared
     total_students_appeared = (
-        db.query(StudentAdminExamData)
+        db.query(func.count(StudentAdminExamData.id))
         .filter(StudentAdminExamData.exam_id == exam_id)
-        .count()
+        .scalar()
     )
+
+    # 4️⃣ Safe expiry handling (NO DB update)
+    status = exam.status
+    now = datetime.now(timezone.utc)
+
+    if exam.exam_validity:
+        validity = exam.exam_validity
+
+        if isinstance(validity, str):
+            try:
+                validity = datetime.fromisoformat(validity)
+            except ValueError:
+                validity = None
+
+        if validity and validity.tzinfo is None:
+            validity = validity.replace(tzinfo=timezone.utc)
+
+        if validity and validity < now:
+            status = AdminExamStatus.EXPIRED
 
     return {
         "exam_id": exam.id,
         "name": exam.name,
         "exam_type": exam.exam_type.value,
         "question_type": exam.question_type.value,
-        "class_name": exam.class_name,
-        "subject": exam.subject,
+
+        # ✅ FIXED HERE
+        "class_name": exam.school_class_subject.class_name,
+        "subject": exam.school_class_subject.subject,
+
         "duration": exam.duration,
         "passing_mark": exam.passing_mark,
         "total_questions": total_questions,
         "attempts_allowed": exam.repeat,
         "total_students_appeared": total_students_appeared,
-        "status": exam.status.value,
+        "status": status.value,
         "description": exam.description,
         "exam_validity": exam.exam_validity
     }
@@ -2684,16 +2785,26 @@ def create_recharge_plan(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 🔐 Admin check
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=403,
             detail="Only admin can create recharge plans"
         )
 
-    # 🔁 Prevent duplicate plan for same class & duration
+    # ✅ Check class exists
+    school_class = db.query(SchoolClassSubject).filter(
+        SchoolClassSubject.id == payload.class_id
+    ).first()
+
+    if not school_class:
+        raise HTTPException(
+            status_code=404,
+            detail="Class not found"
+        )
+
+    # ✅ Prevent duplicate plan
     existing_plan = db.query(RechargePlan).filter(
-        RechargePlan.class_name == payload.class_name,
+        RechargePlan.class_id == payload.class_id,
         RechargePlan.duration == payload.duration,
         RechargePlan.is_active == True
     ).first()
@@ -2707,7 +2818,7 @@ def create_recharge_plan(
     validity_days = get_validity_days(payload.duration)
 
     plan = RechargePlan(
-        class_name=payload.class_name,
+        class_id=payload.class_id,
         duration=payload.duration,
         amount=payload.amount,
         validity_days=validity_days
@@ -2721,19 +2832,19 @@ def create_recharge_plan(
 
 @router.get("/recharge-plans")
 def get_recharge_plans(
-    class_name: Optional[str] = Query(None, description="Filter by class (Admin only)"),
+    class_name: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(RechargePlan)
 
-    # ======================================================
-    # ✅ ADMIN LOGIC
-    # ======================================================
+    query = db.query(RechargePlan).join(SchoolClassSubject)
+
     if current_user.role == UserRole.ADMIN:
 
         if class_name:
-            query = query.filter(RechargePlan.class_name == class_name)
+            query = query.filter(
+                SchoolClassSubject.class_name == class_name
+            )
 
         plans = query.order_by(
             case(
@@ -2744,36 +2855,21 @@ def get_recharge_plans(
         ).all()
 
         if not plans:
-            raise HTTPException(
-                status_code=404,
-                detail="No recharge plans found"
-            )
+            raise HTTPException(404, "No recharge plans found")
 
         return plans
 
-    # ======================================================
-    # ✅ SELF-SIGNED STUDENT LOGIC
-    # ======================================================
     if current_user.role == UserRole.SELF_SIGNED_STUDENT:
 
-        student_profile = db.query(SelfSignedStudent).filter(
+        student = db.query(SelfSignedStudent).filter(
             SelfSignedStudent.user_id == current_user.id
         ).first()
 
-        if not student_profile:
-            raise HTTPException(
-                status_code=404,
-                detail="Student profile not found"
-            )
-
-        if not student_profile.select_class:
-            raise HTTPException(
-                status_code=400,
-                detail="Student class not set in profile"
-            )
+        if not student or not student.select_class_id:
+            raise HTTPException(400, "Student class not set")
 
         plans = query.filter(
-            RechargePlan.class_name == student_profile.select_class,
+            RechargePlan.class_id == student.select_class_id,
             RechargePlan.is_active == True
         ).order_by(
             case(
@@ -2784,20 +2880,12 @@ def get_recharge_plans(
         ).all()
 
         if not plans:
-            raise HTTPException(
-                status_code=404,
-                detail="No recharge plans found for your class"
-            )
+            raise HTTPException(404, "No recharge plans found for your class")
 
         return plans
 
-    # ======================================================
-    # ❌ OTHER ROLES
-    # ======================================================
-    raise HTTPException(
-        status_code=403,
-        detail="Not authorized to view recharge plans"
-    )
+    raise HTTPException(403, "Not authorized")
+
 
 @router.post(
     "/student/purchase-plan/",
@@ -2809,14 +2897,9 @@ def student_purchase_plan(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 🔐 Student only
     if current_user.role != UserRole.SELF_SIGNED_STUDENT:
-        raise HTTPException(
-            status_code=403,
-            detail="Only students can purchase plans"
-        )
+        raise HTTPException(403, "Only students can purchase plans")
 
-    # 1️⃣ Fetch student profile
     student = db.query(SelfSignedStudent).filter(
         SelfSignedStudent.user_id == current_user.id
     ).first()
@@ -2824,29 +2907,25 @@ def student_purchase_plan(
     if not student:
         raise HTTPException(404, "Student profile not found")
 
-    if not student.select_class:
+    if not student.select_class_id:
         raise HTTPException(400, "Student has not selected a class")
 
-    # 2️⃣ Find recharge plan based on class + duration
+    # ✅ Fetch plan using class_id
     plan = db.query(RechargePlan).filter(
-        RechargePlan.class_name == student.select_class,
+        RechargePlan.class_id == student.select_class_id,
         RechargePlan.duration == payload.duration,
         RechargePlan.is_active == True
     ).first()
 
     if not plan:
-        raise HTTPException(
-            status_code=404,
-            detail="Recharge plan not available for selected duration"
-        )
+        raise HTTPException(404, "Recharge plan not available")
 
-    # 3️⃣ Deactivate old subscriptions
+    # Deactivate old subscription
     db.query(StudentSubscription).filter(
         StudentSubscription.student_id == student.id,
         StudentSubscription.is_current == True
     ).update({"is_current": False})
 
-    # 4️⃣ Create subscription
     start_date = datetime.utcnow()
     end_date = start_date + timedelta(days=plan.validity_days)
 
@@ -2860,9 +2939,8 @@ def student_purchase_plan(
     )
 
     db.add(subscription)
-    db.flush()  # to get subscription.id
+    db.flush()
 
-    # 5️⃣ Create payment entry
     payment = Payment(
         student_id=student.id,
         subscription_id=subscription.id,
@@ -2882,6 +2960,7 @@ def student_purchase_plan(
         "amount": plan.amount,
         "status": "pending"
     }
+
 
 @router.get("/admin/students/")
 def admin_get_all_students(
