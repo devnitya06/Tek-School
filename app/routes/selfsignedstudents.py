@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
-from app.models.admin import StudentAdminExamData,SchoolClassSubject
+from app.models.admin import StudentAdminExamData,SchoolClassSubject,AdminExam,ExamType
 from app.models.school import SchoolBoard,SchoolMedium,SchoolType
 from app.schemas.students import SelfSignedStudentUpdate
 from app.models.students import SelfSignedStudent
 from app.core.dependencies import get_current_user
+from app.models.users import User
 from app.models.users import UserRole
 from app.utils.permission import require_roles
 router = APIRouter()
@@ -144,3 +145,55 @@ def get_self_signed_student_profile(
             status_code=500,
             detail="Something went wrong while fetching the profile."
         )
+
+@router.get("/exam-summary")
+def get_student_exam_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # ✅ Only self signed students allowed
+    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
+        raise HTTPException(
+            status_code=403,
+            detail="Only self signed students can access this."
+        )
+
+    student = db.query(SelfSignedStudent).filter(
+        SelfSignedStudent.user_id == current_user.id
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    # ✅ Get all exams attempted by student
+    student_exam_data = (
+        db.query(StudentAdminExamData)
+        .join(AdminExam, StudentAdminExamData.exam_id == AdminExam.id)
+        .filter(StudentAdminExamData.student_id == student.id)
+        .all()
+    )
+
+    mock_tests_given = 0
+    rank_tests_given = 0
+    rank_test_details = []
+
+    for exam_data in student_exam_data:
+        if exam_data.exam.exam_type == ExamType.mock:
+            mock_tests_given += 1
+
+        elif exam_data.exam.exam_type == ExamType.rank:
+            rank_tests_given += 1
+
+            rank_test_details.append({
+                "exam_id": exam_data.exam.id,
+                "exam_name": exam_data.exam.name,
+                "class_rank": exam_data.class_rank,
+                "result": exam_data.result
+            })
+
+    return {
+        "student_id": student.id,
+        "mock_tests_given": mock_tests_given,
+        "rank_tests_given": rank_tests_given,
+        "rank_test_details": rank_test_details
+    }
