@@ -3212,14 +3212,12 @@ def get_all_faqs(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get all FAQs. Only super admin can view all FAQs.
+    Get all FAQs. Admin and school can view all FAQs.
     """
-    print(current_user.role)
-    print(UserRole.ADMIN)
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in (UserRole.ADMIN, UserRole.SCHOOL):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only super admin can view all FAQs"
+            detail="Only admin or school can view all FAQs"
         )
     
     query = db.query(FAQ)
