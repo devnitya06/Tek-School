@@ -78,6 +78,7 @@ class SchoolProfileUpdate(BaseModel):
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None
+    school_logo: Optional[str] = None  # URL or base64 data URL (data:image/...;base64,...)
 class SubjectItem(BaseModel):
     name: str
     school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
