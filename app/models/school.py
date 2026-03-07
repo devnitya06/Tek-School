@@ -163,6 +163,7 @@ class School(Base):
     class_fees = relationship("SchoolClassFee", back_populates="school", cascade="all, delete-orphan")
     team_members = relationship("SchoolTeamMember", back_populates="school", cascade="all, delete-orphan")
     excellent_students = relationship("ExcellentStudent", back_populates="school", cascade="all, delete-orphan")
+    school_ratings = relationship("SchoolRating", back_populates="school", cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -825,3 +826,23 @@ class ListedSchoolStudent(Base):
 
     # Relationships
     school = relationship("School", back_populates="listed_school_students")
+
+
+class SchoolRating(Base):
+    """User rating and feedback for a listed school. Any user can submit."""
+    __tablename__ = "school_ratings"
+    __table_args__ = (
+        UniqueConstraint("school_id", "mobile", "email_id", name="uq_school_rating_school_mobile_email"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_name = Column(String(200), nullable=False)
+    user_role = Column(String(50), nullable=False)  # visitor, student, parent
+    mobile = Column(String(20), nullable=False)
+    email_id = Column(String(255), nullable=False)
+    feedback = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=False)  # 1 to 5
+    created_at = Column(DateTime, server_default=func.now())
+
+    school = relationship("School", back_populates="school_ratings")
