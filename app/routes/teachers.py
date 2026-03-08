@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPayment,TeacherStaffPaymentTransaction
-from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects
+from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum
 from app.models.staff import Staff
 from app.schemas.users import UserRole
 from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest,TeacherStaffPaymentRequest,TeacherStaffPaymentTransactionResponse,PendingMonthResponse,BulkTeacherPaymentRequest,BulkPaymentResponse,FailedPaymentItem,BulkTeacherPaymentRequest,BulkPaymentResponse
@@ -489,6 +489,27 @@ def get_teacher_by_id(
 
     if not teacher:
         raise HTTPException(status_code=404, detail="Teacher not found or doesn't belong to your school.")
+    # -------------------------
+    # EXAM STATISTICS
+    # -------------------------
+
+    mock_tests_created = (
+        db.query(func.count(Exam.id))
+        .filter(
+            Exam.created_by == teacher.id,
+            Exam.exam_type == ExamTypeEnum.MOCK
+        )
+        .scalar()
+    )
+
+    rank_tests_created = (
+        db.query(func.count(Exam.id))
+        .filter(
+            Exam.created_by == teacher.id,
+            Exam.exam_type == ExamTypeEnum.RANK
+        )
+        .scalar()
+    )
 
     assignments = (
         db.query(TeacherClassSectionSubject)
@@ -561,7 +582,11 @@ def get_teacher_by_id(
         "university": teacher.university,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
-        "salary": salary
+        "salary": salary,
+        "exam_statistics": {
+        "mock_tests_created": mock_tests_created or 0,
+        "rank_tests_created": rank_tests_created or 0
+},
     }
 
 @router.patch("/teacher/{teacher_id}")

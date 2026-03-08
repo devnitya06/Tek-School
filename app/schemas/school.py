@@ -4,6 +4,7 @@ from datetime import time
 from datetime import date,datetime
 from enum import Enum
 from fastapi import Query
+from app.models.school import *
 class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
@@ -237,70 +238,170 @@ class PaymentVerificationRequest(BaseModel):
     razorpay_order_id: str
     razorpay_signature: str
     amount: float            
-class ExamTypeEnum(str, Enum):
-    MOCK = "mock"
-    RANK = "rank"
-class ExamStatusEnum(str, Enum):
-    ACTIVE = "active"
-    PENDING = "pending"
-    EXPIRED = "expired"
-    DECLINED = "declined"
 class ExamCreateRequest(BaseModel):
-    class_id: int
-    sections: Optional[List[int]] = None
-    chapters: List[int]
+    class_id: Optional[int]=None
+    selected_class_id:Optional[int]=None
+    subject_id: Optional[int] = None
+    section_ids: List[int] = None
+    chapters: List[int] = None
     exam_type: ExamTypeEnum
-    no_of_questions: int
-    question_time: int
+    evaluation_scope: Optional[EvaluationScopeEnum] = None
+    # total_marks: int
     pass_percentage: int
+    question_time: Optional[int] = None
+    exam_description: Optional[str] = None
     exam_activation_date: datetime
     inactive_date: Optional[datetime] = None
     max_repeat: Optional[int] = 1
-    status: Optional[ExamStatusEnum] = ExamStatusEnum.PENDING
 
 class ExamUpdateRequest(BaseModel):
-    exam_type: Optional[ExamTypeEnum] = None
     class_id: Optional[int] = None
+    subject_id: Optional[int] = None
+    selected_class_id:Optional[int]=None
     section_ids: Optional[List[int]] = None
     chapters: Optional[List[int]] = None
-    no_of_questions: Optional[int] = None
+
+    exam_type: Optional[ExamTypeEnum] = None
+    evaluation_scope: Optional[EvaluationScopeEnum] = None
+
+    total_marks: Optional[int] = None
+    pass_percentage: Optional[int] = None
+
     question_time: Optional[int] = None
-    pass_percentage: Optional[float] = None
+    exam_description: Optional[str] = None
+
     exam_activation_date: Optional[datetime] = None
     inactive_date: Optional[datetime] = None
+
     max_repeat: Optional[int] = None
     status: Optional[ExamStatusEnum] = None
-
-
 class ExamListResponse(BaseModel):
     id: str
-    is_published: bool
+    # is_published: bool
     exam_type: ExamTypeEnum
-    class_id: int
-    standard: str
+    class_id: Optional[int] = None
+    selected_class_id: Optional[int] = None
+    standard: Optional[str] = None
+    subject_id: Optional[int] = None
+    subject_name: Optional[str] = None
     section_ids: List[int]
     section_names: List[str]
     chapters: List[int]
     no_of_chapters: int
+    total_marks: int
     no_of_questions: int
-    exam_time : Optional[int] = None
+    question_time: Optional[int] = None
     pass_percentage: int
     exam_activation_date: datetime
     inactive_date: Optional[datetime]
     max_repeat: int
     status: ExamStatusEnum
     no_students_appeared: int
-    created_by: str
+    created_by: Optional[str]=None
+    created_by_admin:bool
     created_at: datetime
+
     model_config = {
         "from_attributes": True
-    } 
-class ExamDetailResponse(ExamListResponse):
-    school_id: str
-    chapters: List[int]  # override chapters type if needed
-    pass_percentage: float  # override type if needed
-    created_by: Optional[str] = None  # make optional if needed
+    }
+class ExamDetailResponse(BaseModel):
+    id: str
+    is_published: bool
 
+    exam_type: ExamTypeEnum
+    evaluation_scope: Optional[EvaluationScopeEnum] = None
+
+    school_id: Optional[str] = None
+    school_name: Optional[str] = None
+
+    class_id: Optional[int] = None
+    selected_class_id: Optional[int] = None
+    standard: Optional[str] = None
+
+    subject_id: Optional[int] = None
+    subject_name: Optional[str] = None
+
+    section_ids: List[int]
+    section_names: List[str]
+
+    chapters: List[int]
+    no_of_chapters: int
+
+    total_marks: int
+    no_of_questions: int
+
+    question_time: Optional[int] = None
+    pass_percentage: float
+
+    exam_description: Optional[str] = None
+
+    exam_activation_date: datetime
+    inactive_date: Optional[datetime] = None
+
+    max_repeat: int
+    status: ExamStatusEnum
+
+    no_students_appeared: int
+    attempt_no: Optional[int] = None
+    created_by: Optional[str] = None
+    created_by_admin:bool
+    created_at: datetime
+
+class ExamQuestionOptionCreate(BaseModel):
+    option_text: str
+    is_correct: bool
+class ExamQuestionCreate(BaseModel):
+    question_type: QuestionTypeEnum
+    question_text: str
+    marks: int
+    image: Optional[str] = None
+    # For SHORT
+    correct_text_answer: Optional[str] = None
+    # For LONG
+    answer_keywords: Optional[List[str]] = None
+    # For MCQ
+    options: Optional[List["ExamQuestionOptionCreate"]] = None
+
+class ExamQuestionOptionUpdate(BaseModel):
+    option_text: Optional[str] = None
+    is_correct: Optional[bool] = None
+
+class ExamQuestionUpdate(BaseModel):
+    question_type: Optional[QuestionTypeEnum] = None
+    question_text: Optional[str] = None
+    marks: Optional[int] = None
+    image: Optional[str] = None
+    correct_text_answer: Optional[str] = None
+    answer_keywords: Optional[List[str]] = None
+
+    options: Optional[List[ExamQuestionOptionUpdate]] = None
+
+class AnswerSchema(BaseModel):
+    question_id: int
+    # For MCQ
+    selected_option_id: Optional[int] = None
+    # For SHORT / LONG
+    descriptive_answer: Optional[str] = None
+
+class ExamQuestionOptionResponse(BaseModel):
+    id: int
+    option_text: str
+
+    model_config = {"from_attributes": True}
+
+
+class ExamQuestionResponse(BaseModel):
+    id: int
+    question_type: QuestionTypeEnum
+    question_text: str
+    marks: int
+    image: Optional[str] = None
+
+    options: Optional[List[ExamQuestionOptionResponse]] = None
+
+    model_config = {"from_attributes": True}
+class StudentExamSubmitRequest(BaseModel):
+    answers: List[AnswerSchema]
 class ExamPublishResponse(BaseModel):
     exam_id: str
     is_published: bool
@@ -314,35 +415,35 @@ class ExamFilterParams(BaseModel):
     from_date: Optional[datetime] = None
     to_date: Optional[datetime] = None
 
-class McqCreate(BaseModel):
-    question: str
-    mcq_type: str = Field(..., pattern="^(1|2)$") 
-    image: Optional[str] = None
-    option_a: str
-    option_b: str
-    option_c: str
-    option_d: str
-    correct_option: List[str]  # ["A"] or ["A","C"]
+# class McqCreate(BaseModel):
+#     question: str
+#     mcq_type: str = Field(..., pattern="^(1|2)$") 
+#     image: Optional[str] = None
+#     option_a: str
+#     option_b: str
+#     option_c: str
+#     option_d: str
+#     correct_option: List[str]  # ["A"] or ["A","C"]
 
-class McqBulkCreate(BaseModel):
-    mcqs: List[McqCreate]
+# class McqBulkCreate(BaseModel):
+#     mcqs: List[McqCreate]
 
 class ExamStatusUpdateRequest(BaseModel):
     status: ExamStatusEnum
 
-class AnswerSchema(BaseModel):
-    question_id: int
-    selected_option: str  
+# class AnswerSchema(BaseModel):
+#     question_id: int
+#     selected_option: str  
 
-class StudentExamSubmitRequest(BaseModel):
-    answers: List[AnswerSchema]
-class McqResponse(McqCreate):
-    id: int
-    exam_id: str
+# class StudentExamSubmitRequest(BaseModel):
+#     answers: List[AnswerSchema]
+# class McqResponse(McqCreate):
+#     id: int
+#     exam_id: str
 
-    model_config = {
-        "from_attributes": True
-    } 
+#     model_config = {
+#         "from_attributes": True
+#     } 
 
 class LeaveCreate(BaseModel):
     subject: str
