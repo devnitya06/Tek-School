@@ -7,7 +7,6 @@ from sqlalchemy import Enum as SQLEnum
 from datetime import datetime
 from sqlalchemy.sql import func
 from datetime import date
-
 class SchoolType(str, Enum):
     PVT = "private"
     GOVT = "government"
@@ -39,7 +38,19 @@ class ExamStatusEnum(str, Enum):
 class SchoolAccountType(str, Enum):
     LISTING = "listing"           # Only listing account (can login immediately)
     BUSINESS = "business"         # Business account (has both listing + business permissions, requires admin approval)
+class EvaluationScopeEnum(str, Enum):
+    INTERNAL = "internal"
+    EXTERNAL = "external"
+    BOTH = "both"
 
+class QuestionTypeEnum(str, Enum):
+    MCQ = "mcq"
+    SHORT = "short"
+    LONG = "long"
+
+class ExamStatus(str,Enum):
+    pass_ = "pass"
+    fail = "fail"
 
 class SchoolAccountTypeDecorator(TypeDecorator):
     """Custom type decorator to handle case-insensitive enum mapping"""
@@ -413,42 +424,6 @@ exam_sections = Table(
     Column("exam_id", String, ForeignKey("exams.id"), primary_key=True),
     Column("section_id", Integer, ForeignKey("sections.id"), primary_key=True),
 )
-
-class Exam(Base):
-    __tablename__ = "exams"
-
-    id = Column(String, primary_key=True)
-    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
-    chapters = Column(ARRAY(Integer), nullable=False)
-    exam_type = Column(SQLEnum(ExamTypeEnum), nullable=False)
-    no_of_questions = Column(Integer, nullable=False)
-    question_time = Column(Integer, nullable=True)
-    pass_percentage = Column(Integer, nullable=False)
-    exam_activation_date = Column(DateTime, nullable=False)
-    inactive_date = Column(DateTime, nullable=True)
-    max_repeat = Column(Integer, nullable=False, default=1)
-    status = Column(SQLEnum(ExamStatusEnum), nullable=False, default=ExamStatusEnum.PENDING)
-    no_students_appeared = Column(Integer, default=0)
-    created_by = Column(String, ForeignKey("teachers.id"), nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    is_published = Column(Boolean, default=False)
-
-    # Relationships
-    school = relationship("School", back_populates="exams")
-    teacher = relationship("Teacher", back_populates="created_exams")
-    class_obj = relationship("Class", back_populates="exams")
-    sections = relationship("Section", secondary=exam_sections, back_populates="exams")
-    mcqs = relationship("McqBank", back_populates="exam")
-    student_exam_data = relationship("StudentExamData", back_populates="exam")
-
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if not self.id:
-            self.id = f"EXM-{str(uuid.uuid4().int)[:6]}"
-
-
 class Section(Base):
     __tablename__ = "sections"
     
@@ -462,53 +437,150 @@ class Section(Base):
     exams = relationship("Exam", secondary=exam_sections, back_populates="sections")
     timetables = relationship("Timetable", back_populates="section")
 
-class McqBank(Base):
-    __tablename__ = "mcq_bank"
+class Exam(Base):
+    __tablename__ = "exams"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String, primary_key=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    selected_class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+    subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+
+    chapters = Column(ARRAY(Integer), nullable=False)
+
+    exam_type = Column(SQLEnum(ExamTypeEnum), nullable=False)
+    evaluation_scope = Column(SQLEnum(EvaluationScopeEnum), nullable=True)
+    no_of_questions = Column(Integer, default=0)
+    total_marks = Column(Integer, default=0)
+    pass_percentage = Column(Integer, nullable=False)
+
+    question_time = Column(Integer, nullable=True)
+    exam_activation_date = Column(DateTime, nullable=False)
+    inactive_date = Column(DateTime, nullable=True)
+
+    max_repeat = Column(Integer, nullable=False, default=1)
+
+    status = Column(SQLEnum(ExamStatusEnum), default=ExamStatusEnum.PENDING)
+    no_students_appeared = Column(Integer, default=0)
+
+    created_by = Column(String, ForeignKey("teachers.id"), nullable=True)
+    created_by_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    is_published = Column(Boolean, default=False)
+    exam_description = Column(Text, nullable=True)
+
+    # Relationships
+    school = relationship("School", back_populates="exams")
+    teacher = relationship("Teacher", back_populates="created_exams")
+    class_obj = relationship("Class", back_populates="exams", foreign_keys=[class_id])
+    selected_class = relationship(
+        "SchoolClassSubject",
+        back_populates="exams_as_selected_class",
+        foreign_keys=[selected_class_id]
+    )
+    subject = relationship(
+        "SchoolClassSubject",
+        back_populates="exams_as_subject",
+        foreign_keys=[subject_id]
+    )
+    sections = relationship("Section", secondary=exam_sections, back_populates="exams")
+    questions = relationship("ExamQuestion", back_populates="exam", cascade="all, delete-orphan")
+    student_exam_data = relationship("StudentExamData", back_populates="exam")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            self.id = f"EXM-{str(uuid.uuid4().int)[:6]}"
+
+class ExamQuestion(Base):
+    __tablename__ = "exam_questions"
+
+    id = Column(Integer, primary_key=True)
     exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"))
-    question = Column(Text, nullable=False)
-    mcq_type = Column(String(1), nullable=False, default="1")  # '1' = Single, '2' = Multiple
+
+    question_type = Column(SQLEnum(QuestionTypeEnum), nullable=False)
+    question_text = Column(Text, nullable=False)
+    marks = Column(Integer, nullable=False)
     image = Column(String, nullable=True)
+    # SHORT type
+    correct_text_answer = Column(Text, nullable=True)
 
-    option_a = Column(String(100), nullable=False)
-    option_b = Column(String(100), nullable=False)
-    option_c = Column(String(100), nullable=False)
-    option_d = Column(String(100), nullable=False)
-
-    # For storing multiple correct answers → ARRAY of strings
-    correct_option = Column(ARRAY(String), nullable=False)
+    # LONG type
+    answer_keywords = Column(ARRAY(String), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationship with Exam
-    exam = relationship("Exam", back_populates="mcqs")
+    exam = relationship("Exam", back_populates="questions")
+    options = relationship("ExamQuestionOption", back_populates="question", cascade="all, delete")
+    student_answers = relationship("StudentAnswer", back_populates="question")
 
-class ExamStatus(str,Enum):
-    pass_ = "pass"
-    fail = "fail"
+class ExamQuestionOption(Base):
+    __tablename__ = "exam_question_options"
 
+    id = Column(Integer, primary_key=True)
+    question_id = Column(Integer, ForeignKey("exam_questions.id", ondelete="CASCADE"))
+
+    option_text = Column(String(255), nullable=False)
+    is_correct = Column(Boolean, default=False)
+
+    question = relationship("ExamQuestion", back_populates="options")
 
 class StudentExamData(Base):
     __tablename__ = "student_exam_data"
 
     id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
+
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=True)
+    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id", ondelete="CASCADE"), nullable=True)
     exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
+
     attempt_no = Column(Integer, default=1)
-    answers = Column(JSON, nullable=False)
-    result = Column(Float, nullable=True)
-    status = Column(SQLEnum(ExamStatus), nullable=True)
-    appeared_count = Column(Integer, default=0)
+
+    total_marks_obtained = Column(Integer, default=0)
+    percentage_scored = Column(Float, default=0.0)
+
+    status = Column(SQLEnum(ExamStatus), nullable=True)  # pass / fail
+
+    is_submitted = Column(Boolean, default=False)
+
     class_rank = Column(Integer, nullable=True)
+
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships (optional, if you want ORM navigation)
+    # Relationships
     student = relationship("Student", back_populates="exam_data")
+    self_signed_student = relationship("SelfSignedStudent", back_populates="exam_data")
     school = relationship("School", back_populates="exam_data")
     exam = relationship("Exam", back_populates="student_exam_data")
+
+    student_answers = relationship("StudentAnswer", back_populates="attempt", cascade="all, delete")
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "student_id", "attempt_no", name="unique_exam_student_attempt"),
+    )
+
+class StudentAnswer(Base):
+    __tablename__ = "student_answers"
+
+    id = Column(Integer, primary_key=True)
+
+    attempt_id = Column(Integer, ForeignKey("student_exam_data.id", ondelete="CASCADE"))
+    question_id = Column(Integer, ForeignKey("exam_questions.id", ondelete="CASCADE"))
+
+    # For MCQ
+    # selected_option_id = Column(Integer, ForeignKey("question_options.id"), nullable=True)
+    selected_option_id = Column(Integer, ForeignKey("exam_question_options.id"), nullable=True)
+
+    # For SHORT / LONG
+    descriptive_answer = Column(Text, nullable=True)
+
+    marks_awarded = Column(Integer, default=0)
+
+    attempt = relationship("StudentExamData", back_populates="student_answers")
+    question = relationship("ExamQuestion", back_populates="student_answers")
+
 
 class LeaveStatus(str, Enum):
     PENDING = "pending"

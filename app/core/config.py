@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     #Redis
     REDIS_URL: Optional[str] = None
     
+    #model changed
+    
     # CORS
     BACKEND_CORS_ORIGINS: list = [
     "http://localhost:3000",

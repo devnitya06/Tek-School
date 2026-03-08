@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction,PaymentTransactionStatus
-from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount
+from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount,Exam,ExamTypeEnum,class_subjects
 from app.models.staff import Staff
 from app.models.teachers import TeacherClassSectionSubject
 from app.schemas.users import UserRole
@@ -912,12 +912,89 @@ def get_student(
                 "created_at": txn.created_at.isoformat() if txn.created_at else None,
             })
     
+    # -----------------------------
+    # LAST EXAM
+    # -----------------------------
     last_exam = (
-    db.query(StudentExamData)
-    .filter(StudentExamData.student_id == student.id)
-    .order_by(StudentExamData.submitted_at.desc())
-    .first()
-       )
+        db.query(StudentExamData)
+        .options(joinedload(StudentExamData.exam))
+        .filter(StudentExamData.student_id == student.id)
+        .order_by(StudentExamData.submitted_at.desc())
+        .first()
+    )
+
+
+      # -------------------------
+    # LAST EXAM
+    # -------------------------
+    last_exam = (
+        db.query(StudentExamData)
+        .options(joinedload(StudentExamData.exam))
+        .filter(StudentExamData.student_id == student.id)
+        .order_by(StudentExamData.submitted_at.desc())
+        .first()
+    )
+
+
+    # -------------------------
+    # MOCK TEST COUNT
+    # -------------------------
+    mock_tests_count = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.MOCK,
+            StudentExamData.is_submitted == True
+        )
+        .scalar()
+    )
+
+
+    # -------------------------
+    # RANK TEST COUNT
+    # -------------------------
+    rank_tests_count = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.RANK,
+            StudentExamData.is_submitted == True
+        )
+        .scalar()
+    )
+
+
+    # -------------------------
+    # RANK TEST RESULTS
+    # -------------------------
+    rank_test_results = (
+        db.query(
+            Exam.id.label("exam_id"),
+            StudentExamData.class_rank,
+            StudentExamData.percentage_scored,
+            StudentExamData.total_marks_obtained,
+        )
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.RANK,
+            StudentExamData.is_submitted == True
+        )
+        .order_by(StudentExamData.submitted_at.desc())
+        .all()
+    )
+
+    rank_tests = [
+        {
+            "exam_id": r.exam_id,
+            "rank": r.class_rank,
+            "percentage": r.percentage_scored,
+            "marks": r.total_marks_obtained
+        }
+        for r in rank_test_results
+    ]
 
     # Calculate installment_pending_amount
     class_start_date = student.classes.class_start_date if student.classes else None
@@ -954,9 +1031,6 @@ def get_student(
         "created_at": student.created_at,
         "status": student.status.value,
         "status_expiry_date": student.status_expiry_date,
-        "last_appeared_exam":last_exam.submitted_at if last_exam else None,
-        "exam_type":last_exam.exam.exam_type if last_exam and last_exam.exam else None,
-        "exam_result":last_exam.result if last_exam else None,
         "vechicle_number":student.driver.vechicle_number if student.driver else None,
         "driver_name":student.driver.driver_name if student.driver else None,
         "pickup_point":student.pickup_point,
@@ -971,6 +1045,30 @@ def get_student(
             "occupation": student.parent.occupation,
             "organization": student.parent.organization
         } if student.parent else None,
+        "last_appeared_exam": (
+            last_exam.submitted_at.isoformat()
+            if last_exam and last_exam.submitted_at
+            else None
+        ),
+
+        "exam_type": (
+            last_exam.exam.exam_type
+            if last_exam and last_exam.exam
+            else None
+        ),
+
+        "exam_result": (
+            last_exam.status.value
+            if last_exam and last_exam.status
+            else None
+        ),
+        "exam_statistics": {
+
+            "mock_tests_given": mock_tests_count or 0,
+            "rank_tests_given": rank_tests_count or 0,
+
+            "rank_tests": rank_tests
+        },
         "present_address": {
             "enter_pin": student.present_address.enter_pin,
             "division": student.present_address.division,
@@ -1354,38 +1452,27 @@ def get_student_subjects(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.STUDENT)),
 ):
-    # ✅ Get student info with class + school
+    # Get student
     student = (
         db.query(Student)
         .filter(Student.user_id == current_user.id)
-        .options(
-            joinedload(Student.classes).joinedload(Class.school),
-        )
         .first()
     )
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
-    if not student.classes:
+
+    if not student.class_id:
         raise HTTPException(status_code=400, detail="Student class not assigned")
 
-    school = student.classes.school
-    class_name = student.classes.name
-    print(f"Student's class: {class_name}, School ID: {school.id if school else 'N/A'}")
-    school_board = getattr(school, "school_board", None)
-    school_medium = getattr(school, "school_medium", None)
-
-    if not school_board or not school_medium:
-        raise HTTPException(status_code=400, detail="School board/medium missing")
-
-    # ✅ Get subjects for this class, board, medium
+    # Get subjects mapped to this class
     subjects = (
         db.query(SchoolClassSubject)
-        .filter(
-            SchoolClassSubject.school_board == school_board,
-            SchoolClassSubject.school_medium == school_medium,
-            SchoolClassSubject.class_name == class_name,
+        .join(
+            class_subjects,
+            class_subjects.c.school_class_subject_id == SchoolClassSubject.id
         )
+        .filter(class_subjects.c.class_id == student.class_id)
         .all()
     )
 
@@ -1393,8 +1480,11 @@ def get_student_subjects(
         raise HTTPException(status_code=404, detail="No subjects found for this class")
 
     return [
-        {"subject_id": s.id, "subject_name": s.subject}
-        for s in subjects
+        {
+            "subject_id": subject.id,
+            "subject_name": subject.subject
+        }
+        for subject in subjects
     ]
 
 

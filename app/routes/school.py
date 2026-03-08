@@ -2,7 +2,7 @@ from datetime import datetime,date
 from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form,Request,Body
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
-from app.models.students import Student
+from app.models.students import Student,SelfSignedStudent
 from app.models.staff import Staff
 from app.models.school import *
 from app.models.admin import FAQ, school_faqs
@@ -10,7 +10,7 @@ from app.models.admin import AccountConfiguration, CreditConfiguration, CreditMa
 from app.schemas.users import UserRole
 from app.schemas.school import *
 from app.schemas.teachers import EmployeePaymentListResponse, TeacherStaffPaymentTransactionResponse
-from app.models.admin import Chapter
+from app.models.admin import Chapter,SchoolClassSubject
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, insert,extract,case,cast,String
 from app.db.session import get_db
@@ -26,7 +26,7 @@ import hmac
 import hashlib
 import uuid
 import time
-from app.utils.services import is_time_overlap, create_mcq,get_mcqs_by_exam,delete_mcq,evaluate_exam    
+from app.utils.services import is_time_overlap    
 from app.core.config import settings
 from app.services.students import update_class_ranks
 from app.services.pagination import PaginationParams
@@ -3245,197 +3245,638 @@ def transfer_school_credit(
 
 
 #Exam Modules
+# @router.post("/create-exam/", status_code=status.HTTP_201_CREATED)
+# def create_exam(
+#     data: ExamCreateRequest,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user),
+# ):
+
+#     teacher = None
+#     school_id = None
+#     created_by = None
+#     created_by_admin = False
+#     section_objs = []
+
+#     # =========================
+#     # TEACHER FLOW
+#     # =========================
+#     if current_user.role == UserRole.TEACHER:
+
+#         teacher = db.query(Teacher).filter(
+#             Teacher.user_id == current_user.id
+#         ).first()
+
+#         if not teacher:
+#             raise HTTPException(status_code=404, detail="Teacher profile not found.")
+
+#         subject = db.query(SchoolClassSubject).filter(
+#             SchoolClassSubject.id == data.subject_id
+#         ).first()
+
+#         if not subject:
+#             raise HTTPException(status_code=404, detail="Invalid subject selected.")
+
+#         section_objs = db.query(Section).filter(
+#             Section.id.in_(data.section_ids)
+#         ).all()
+
+#         if not section_objs:
+#             raise HTTPException(status_code=404, detail="Invalid sections provided.")
+
+#         school_id = teacher.school_id
+#         created_by = teacher.id
+
+#     # =========================
+#     # ADMIN FLOW
+#     # =========================
+#     elif current_user.role == UserRole.ADMIN:
+
+#         created_by_admin = True
+
+#         # Admin cannot assign sections
+#         if data.section_ids:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Admin cannot assign sections"
+#             )
+
+#         # Admin cannot assign chapters
+#         if data.chapters:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Admin cannot assign chapters"
+#             )
+
+#         # subject optional
+#         if data.subject_id:
+#             subject = db.query(SchoolClassSubject).filter(
+#                 SchoolClassSubject.id == data.subject_id
+#             ).first()
+
+#             if not subject:
+#                 raise HTTPException(status_code=404, detail="Invalid subject selected.")
+
+#     else:
+#         raise HTTPException(status_code=403, detail="Not allowed to create exams.")
+
+#     # =========================
+#     # MAX REPEAT LOGIC
+#     # =========================
+#     max_repeat = 1 if data.exam_type == ExamTypeEnum.RANK else data.max_repeat
+
+#     # =========================
+#     # CREATE EXAM
+#     # =========================
+#     exam = Exam(
+#         school_id=school_id,
+#         class_id=data.class_id,
+#         subject_id=data.subject_id,
+#         exam_type=data.exam_type,
+#         evaluation_scope=data.evaluation_scope,
+#         exam_description=data.exam_description,
+#         chapters=data.chapters if data.chapters else [],
+#         question_time=data.question_time,
+#         pass_percentage=data.pass_percentage,
+#         exam_activation_date=data.exam_activation_date,
+#         inactive_date=data.inactive_date,
+#         max_repeat=max_repeat,
+#         created_by=created_by,
+#         created_by_admin=created_by_admin
+#     )
+
+#     # Only teacher exams have sections
+#     if section_objs:
+#         exam.sections = section_objs
+
+#     db.add(exam)
+#     db.commit()
+#     db.refresh(exam)
+
+#     return {
+#         "detail": "Exam created successfully",
+#         "exam_id": exam.id
+#     }
+
 @router.post("/create-exam/", status_code=status.HTTP_201_CREATED)
 def create_exam(
     data: ExamCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ✅ Only teachers can create exams
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teachers can create exams."
-        )
+    teacher = None
+    school_id = None
+    created_by = None
+    created_by_admin = False
+    section_objs = []
 
-    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
-    if not teacher:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Teacher profile not found."
-        )
+    # =========================
+    # TEACHER FLOW
+    # =========================
+    if current_user.role == UserRole.TEACHER:
 
-    # ✅ Enforce business logic for max_repeat
-    max_repeat = 1 if data.exam_type == "rank" else data.max_repeat
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
 
-    try:
-        section_objs = []
-        # ✅ Only fetch sections if provided
-        if data.sections:
-            section_objs = db.query(Section).filter(Section.id.in_(data.sections)).all()
-            if not section_objs:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No valid sections found."
-                )
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
 
-        # ✅ Create exam record
-        exam = Exam(
-            school_id=teacher.school_id,
-            class_id=data.class_id,
-            exam_type=data.exam_type,
-            chapters=data.chapters,
-            no_of_questions=data.no_of_questions,
-            question_time=data.question_time,
-            pass_percentage=data.pass_percentage,
-            exam_activation_date=data.exam_activation_date,
-            inactive_date=data.inactive_date,
-            max_repeat=max_repeat,
-            status=data.status,
-            created_by=teacher.id,
-        )
+        # Ensure class exists
+        class_obj = db.query(Class).filter(Class.id == data.class_id).first()
+        if not class_obj:
+            raise HTTPException(status_code=404, detail=f"Class ID {data.class_id} does not exist.")
 
-        # ✅ Attach sections only if any
-        if section_objs:
-            exam.sections = section_objs
+        # Ensure subject exists
+        subject_obj = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.id == data.subject_id
+        ).first()
+        if not subject_obj:
+            raise HTTPException(status_code=404, detail="Invalid subject selected.")
 
-        db.add(exam)
-        db.commit()
-        db.refresh(exam)
+        # Validate sections
+        section_objs = db.query(Section).filter(
+            Section.id.in_(data.section_ids)
+        ).all()
+        if not section_objs:
+            raise HTTPException(status_code=404, detail="Invalid sections provided.")
 
-        return {
-            "detail": "Exam created successfully.",
-            "exam_id": exam.id
+        school_id = teacher.school_id
+        created_by = teacher.id
+
+        # Teacher exams use class_id
+        exam_kwargs = {
+            "class_id": data.class_id,
+            "selected_class_id": None,
+            "subject_id": data.subject_id,
         }
 
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
+    # =========================
+    # ADMIN FLOW
+    # =========================
+    elif current_user.role == UserRole.ADMIN:
+
+        created_by_admin = True
+
+        # Admin cannot assign sections or chapters
+        if data.section_ids:
+            raise HTTPException(status_code=400, detail="Admin cannot assign sections")
+        if data.chapters:
+            raise HTTPException(status_code=400, detail="Admin cannot assign chapters")
+
+        # Ensure selected_class_id exists
+        selected_class = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.id == data.selected_class_id
+        ).first()
+        if not selected_class:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SchoolClassSubject ID {data.selected_class_id} does not exist."
+            )
+
+        # Validate subject
+        subject_obj = db.query(SchoolClassSubject).filter(
+            SchoolClassSubject.id == data.subject_id
+        ).first()
+        if not subject_obj:
+            raise HTTPException(status_code=404, detail="Invalid subject selected.")
+
+        # Ensure combination exists
+        if subject_obj.id != selected_class.id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"The combination of selected_class_id {data.selected_class_id} and subject_id {data.subject_id} is invalid."
+            )
+
+        # Admin exams use selected_class_id
+        exam_kwargs = {
+            "class_id": None,
+            "selected_class_id": data.selected_class_id,
+            "subject_id": data.subject_id,
+        }
+
+    else:
+        raise HTTPException(status_code=403, detail="Not allowed to create exams.")
+
+    # =========================
+    # MAX REPEAT LOGIC
+    # =========================
+    max_repeat = 1 if data.exam_type == ExamTypeEnum.RANK else data.max_repeat
+
+    # =========================
+    # CREATE EXAM
+    # =========================
+    exam = Exam(
+        school_id=school_id,
+        exam_type=data.exam_type,
+        evaluation_scope=data.evaluation_scope,
+        exam_description=data.exam_description,
+        chapters=data.chapters if data.chapters else [],
+        question_time=data.question_time,
+        pass_percentage=data.pass_percentage,
+        exam_activation_date=data.exam_activation_date,
+        inactive_date=data.inactive_date,
+        max_repeat=max_repeat,
+        created_by=created_by,
+        created_by_admin=created_by_admin,
+        **exam_kwargs
+    )
+
+    # Only teacher exams have sections
+    if section_objs:
+        exam.sections = section_objs
+
+    db.add(exam)
+    db.commit()
+    db.refresh(exam)
+
+    return {
+        "detail": "Exam created successfully",
+        "exam_id": exam.id
+    }
+
     
+# @router.get("/exams/")
+# def list_exams(
+#     db: Session = Depends(get_db),
+#     current_user=Depends(get_current_user),
+#     pagination: PaginationParams = Depends(),
+#     filters: ExamFilterParams = Depends()
+# ):
+
+#     query = db.query(Exam).options(
+#         joinedload(Exam.sections),
+#         joinedload(Exam.teacher),
+#         joinedload(Exam.subject),
+#         joinedload(Exam.class_obj),
+#         joinedload(Exam.questions)
+#     )
+
+#     # ==================================================
+#     # ROLE BASED FILTERING
+#     # ==================================================
+
+#     # 🔹 TEACHER → Only their exams
+#     if current_user.role == UserRole.TEACHER:
+
+#         teacher = db.query(Teacher).filter(
+#             Teacher.user_id == current_user.id
+#         ).first()
+
+#         if not teacher:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Teacher not found"
+#             )
+
+#         query = query.filter(Exam.created_by == teacher.id)
+
+#     elif current_user.role == UserRole.ADMIN:
+#         query = query.filter(Exam.created_by_admin == True)
+
+#     # 🔹 STUDENT → class + section + evaluation scope
+#     elif current_user.role == UserRole.STUDENT:
+
+#         student = db.query(Student).filter(
+#             Student.user_id == current_user.id
+#         ).first()
+
+#         if not student:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Student not found"
+#             )
+
+#         query = query.filter(
+#             Exam.class_id == student.class_id,
+#             Exam.status == ExamStatusEnum.ACTIVE,
+#             or_(
+#                 and_(
+#                     Exam.created_by_admin == False,
+#                     Exam.sections.any(Section.id == student.section_id)
+#                 ),
+#                 Exam.created_by_admin == True
+#             )
+#         )
+
+#         # ============================================
+#         # Evaluation Scope Logic
+#         # ============================================
+
+#         query = query.filter(
+#             or_(
+
+#                 # INTERNAL → same school students only
+#                 and_(
+#                     Exam.evaluation_scope == EvaluationScopeEnum.INTERNAL,
+#                     Exam.school_id == student.school_id
+#                 ),
+
+#                 # EXTERNAL → other school students only
+#                 and_(
+#                     Exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL,
+#                     Exam.school_id != student.school_id
+#                 ),
+
+#                 # BOTH → everyone
+#                 Exam.evaluation_scope == EvaluationScopeEnum.BOTH
+#             )
+#         )
+#     elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+
+#         student = db.query(SelfSignedStudent).filter(
+#             SelfSignedStudent.user_id == current_user.id
+#         ).first()
+
+#         if not student:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Student not found"
+#             )
+
+#         query = query.filter(
+#             Exam.class_id == student.select_class_id,
+#             Exam.status == ExamStatusEnum.ACTIVE,
+#             or_(
+
+#                 # Admin created exams
+#                 Exam.created_by_admin == True,
+
+#                 # Teacher created exams allowed for external students
+#                 and_(
+#                     Exam.created_by_admin == False,
+#                     Exam.evaluation_scope.in_(
+#                         [EvaluationScopeEnum.EXTERNAL, EvaluationScopeEnum.BOTH]
+#                     )
+#                 )
+#             )
+#         )
+#     # 🔹 SCHOOL → only their exams
+#     elif current_user.role == UserRole.SCHOOL:
+
+#         school = db.query(School).filter(
+#             School.user_id == current_user.id
+#         ).first()
+
+#         if not school:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="School not found"
+#             )
+
+#         query = query.filter(Exam.school_id == school.id)
+
+#     # 🔹 STAFF → can see all exams
+#     elif current_user.role == UserRole.STAFF:
+#         pass
+
+#     else:
+#         raise HTTPException(
+#             status_code=status.HTTP_403_FORBIDDEN,
+#             detail="Not authorized"
+#         )
+
+#     # ==================================================
+#     # FILTERS
+#     # ==================================================
+
+#     if filters.exam_name_or_id:
+#         search = f"%{filters.exam_name_or_id.strip()}%"
+#         query = query.filter(
+#             cast(Exam.id, String).ilike(search)
+#         )
+
+#     if filters.exam_type:
+#         query = query.filter(
+#             Exam.exam_type == filters.exam_type
+#         )
+
+#     if filters.subject_id:
+#         query = query.filter(
+#             Exam.subject_id == filters.subject_id
+#         )
+
+#     # ==================================================
+#     # PAGINATION
+#     # ==================================================
+
+#     total_count = query.count()
+
+#     exams = (
+#         query.order_by(Exam.created_at.desc())
+#         .offset(pagination.offset())
+#         .limit(pagination.limit())
+#         .all()
+#     )
+
+#     # ==================================================
+#     # RESPONSE BUILDING
+#     # ==================================================
+
+#     response = []
+
+#     for exam in exams:
+
+#         response.append(
+#             ExamListResponse(
+#                 id=exam.id,
+#                 # is_published=exam.is_published,
+#                 exam_type=exam.exam_type,
+#                 class_id=exam.class_id,
+#                 standard=exam.class_obj.name if exam.class_obj else "",
+#                 subject_id=exam.subject_id,
+#                 subject_name=exam.subject.subject if exam.subject else None,
+#                 section_ids=[s.id for s in exam.sections],
+#                 section_names=[s.name for s in exam.sections],
+#                 chapters=exam.chapters,
+#                 no_of_chapters=len(exam.chapters or []),
+#                 total_marks=exam.total_marks,
+#                 no_of_questions=len(exam.questions or []),
+#                 question_time=exam.question_time,
+#                 pass_percentage=exam.pass_percentage,
+#                 evaluation_scope=exam.evaluation_scope,
+#                 exam_activation_date=exam.exam_activation_date,
+#                 inactive_date=exam.inactive_date,
+#                 max_repeat=exam.max_repeat,
+#                 status=exam.status,
+#                 no_students_appeared=exam.no_students_appeared,
+#                 created_by=(
+#                     f"{exam.teacher.first_name} {exam.teacher.last_name}"
+#                     if exam.teacher else ""
+#                 ),
+#                 created_by_admin=exam.created_by_admin,
+#                 created_at=exam.created_at
+#             )
+#         )
+
+#     return pagination.format_response(response, total_count)
 @router.get("/exams/")
 def list_exams(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     pagination: PaginationParams = Depends(),
     filters: ExamFilterParams = Depends()
 ):
 
-    query = db.query(Exam)
+    query = db.query(Exam).options(
+        joinedload(Exam.sections),
+        joinedload(Exam.teacher),
+        joinedload(Exam.subject),
+        joinedload(Exam.class_obj),
+        joinedload(Exam.questions)
+    )
 
-    # ----- ROLE BASED FILTER -----
-    if current_user.role == UserRole.SCHOOL:
-        school = db.query(School).filter(School.user_id == current_user.id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found")
+    # ==================================================
+    # ROLE BASED FILTERING
+    # ==================================================
 
-        query = query.filter(
-            Exam.school_id == school.id,
-            Exam.is_published == True
-        )
+    if current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
 
-    elif current_user.role == UserRole.STAFF:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        school = db.query(School).filter(School.id == staff.school_id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found for this staff member.")
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
 
-        query = query.filter(
-            Exam.school_id == school.id,
-            Exam.is_published == True
-        )
-
-    elif current_user.role == UserRole.TEACHER:
-        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
         query = query.filter(Exam.created_by == teacher.id)
 
+    elif current_user.role == UserRole.ADMIN:
+        query = query.filter(Exam.created_by_admin == True)
+
     elif current_user.role == UserRole.STUDENT:
-        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        student = db.query(Student).filter(
+            Student.user_id == current_user.id
+        ).first()
+
         if not student:
-            raise HTTPException(status_code=404, detail="Student profile not found")
+            raise HTTPException(status_code=404, detail="Student not found")
 
-        query = query.join(Exam.sections).filter(
-            Exam.school_id == student.school_id,
-            Exam.class_id == student.class_id,
-            Section.id == student.section_id,
-            Exam.status == ExamStatusEnum.ACTIVE,
-            Exam.is_published == True
+        query = query.filter(
+            or_(
+                # Teacher exams: match class_id + section
+                and_(
+                    Exam.created_by_admin == False,
+                    Exam.class_id == student.class_id,
+                    Exam.sections.any(Section.id == student.section_id)
+                ),
+                # Admin exams: match selected_class_id and active exams
+                and_(
+                    Exam.created_by_admin == True,
+                    Exam.selected_class_id == student.class_id
+                )
+            ),
+            Exam.status == ExamStatusEnum.ACTIVE
         )
+
+        # Evaluation scope logic
+        query = query.filter(
+            or_(
+                and_(Exam.evaluation_scope == EvaluationScopeEnum.INTERNAL, Exam.school_id == student.school_id),
+                and_(Exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL, Exam.school_id != student.school_id),
+                Exam.evaluation_scope == EvaluationScopeEnum.BOTH
+            )
+        )
+
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        student = db.query(SelfSignedStudent).filter(
+            SelfSignedStudent.user_id == current_user.id
+        ).first()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        query = query.filter(
+            Exam.status == ExamStatusEnum.ACTIVE,
+            or_(
+                Exam.created_by_admin == True,
+                and_(
+                    Exam.created_by_admin == False,
+                    Exam.evaluation_scope.in_([EvaluationScopeEnum.EXTERNAL, EvaluationScopeEnum.BOTH])
+                )
+            ),
+            or_(
+                Exam.selected_class_id == student.select_class_id,
+                Exam.class_id == student.select_class_id
+            )
+        )
+
+    elif current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(
+            School.user_id == current_user.id
+        ).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+        query = query.filter(Exam.school_id == school.id)
+
+    elif current_user.role == UserRole.STAFF:
+        pass  # Staff can see all exams
+
     else:
-        raise HTTPException(status_code=403, detail="Invalid role for viewing exams.")
+        raise HTTPException(status_code=403, detail="Not authorized")
 
-    # ----- APPLY SEARCH FILTERS -----
-
+    # ==================================================
+    # FILTERS
+    # ==================================================
     if filters.exam_name_or_id:
         search = f"%{filters.exam_name_or_id.strip()}%"
-        query = query.filter(
-        or_(
-            cast(Exam.id, String).ilike(search),  # exam_id match
-
-            # If you later add an exam name column, it will match here
-            # cast(Exam.name, String).ilike(search)
-        )
-    )
+        query = query.filter(cast(Exam.id, String).ilike(search))
 
     if filters.exam_type:
         query = query.filter(Exam.exam_type == filters.exam_type)
 
     if filters.subject_id:
-        query = query.join(Subject).filter(Subject.id.ilike(f"%{filters.subject_id}%"))
+        query = query.filter(Exam.subject_id == filters.subject_id)
 
-    if filters.teacher_name:
-        query = query.join(Teacher).filter(
-            (Teacher.first_name + " " + Teacher.last_name).ilike(f"%{filters.teacher_name}%")
-        )
-
-    if filters.from_date:
-        query = query.filter(Exam.created_at >= filters.from_date)
-
-    if filters.to_date:
-        query = query.filter(Exam.created_at <= filters.to_date)
-
-    # ----- PAGINATION -----
+    # ==================================================
+    # PAGINATION
+    # ==================================================
     total_count = query.count()
+    exams = query.order_by(Exam.created_at.desc())\
+                 .offset(pagination.offset())\
+                 .limit(pagination.limit())\
+                 .all()
 
-    exams = (
-        query.order_by(Exam.created_at.desc())
-        .offset(pagination.offset())
-        .limit(pagination.limit())
-        .all()
-    )
+    # ==================================================
+    # RESPONSE BUILDING
+    # ==================================================
+    response = []
 
-    # ----- SERIALIZATION -----
-    exam_list = [
-        ExamListResponse(
-            id=exam.id,
-            is_published=exam.is_published,
-            exam_type=exam.exam_type,
-            class_id=exam.class_id,
-            standard=exam.class_obj.name if exam.class_obj else "",
-            section_ids=[section.id for section in exam.sections],
-            section_names=[section.name for section in exam.sections],
-            chapters=exam.chapters,
-            no_of_chapters=len(exam.chapters),
-            no_of_questions=exam.no_of_questions,
-            exam_time=exam.no_of_questions * exam.question_time if exam.no_of_questions and exam.question_time else 0,
-            pass_percentage=exam.pass_percentage,
-            exam_activation_date=exam.exam_activation_date,
-            inactive_date=exam.inactive_date,
-            max_repeat=exam.max_repeat,
-            status=exam.status,
-            no_students_appeared=exam.no_students_appeared,
-            created_by=f"{exam.teacher.first_name} {exam.teacher.last_name}" if exam.teacher else "",
-            created_at=exam.created_at
+    for exam in exams:
+        # Decide which class name to display
+        class_name = (
+            exam.class_obj.name if exam.class_obj else
+            (exam.subject.class_name if exam.subject else "")
         )
-        for exam in exams
-    ]
 
-    return pagination.format_response(exam_list, total_count)
+        response.append(
+            ExamListResponse(
+                id=exam.id,
+                exam_type=exam.exam_type,
+                class_id=exam.class_id or exam.selected_class_id,
+                standard=class_name,
+                subject_id=exam.subject_id,
+                subject_name=exam.subject.subject if exam.subject else None,
+                section_ids=[s.id for s in exam.sections],
+                section_names=[s.name for s in exam.sections],
+                chapters=exam.chapters,
+                no_of_chapters=len(exam.chapters or []),
+                total_marks=exam.total_marks,
+                no_of_questions=len(exam.questions or []),
+                question_time=exam.question_time,
+                pass_percentage=exam.pass_percentage,
+                evaluation_scope=exam.evaluation_scope,
+                exam_activation_date=exam.exam_activation_date,
+                inactive_date=exam.inactive_date,
+                max_repeat=exam.max_repeat,
+                status=exam.status,
+                no_students_appeared=exam.no_students_appeared,
+                created_by=(f"{exam.teacher.first_name} {exam.teacher.last_name}" if exam.teacher else ""),
+                created_by_admin=exam.created_by_admin,
+                created_at=exam.created_at
+            )
+        )
 
+    return pagination.format_response(response, total_count)
 @router.get("/exams/{exam_id}/", response_model=ExamDetailResponse)
 def get_exam_detail(
     exam_id: str,
@@ -3443,75 +3884,146 @@ def get_exam_detail(
     current_user: User = Depends(get_current_user)
 ):
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
+
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
 
-    # 🏫 School user access
-    if current_user.role == UserRole.SCHOOL:
+    # default attempt_no
+    attempt_no = 0
+
+    # =========================
+    # ROLE VALIDATION
+    # =========================
+
+    # 🔹 ADMIN
+    if current_user.role == UserRole.ADMIN:
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can only view admin created exams"
+            )
+
+    # 🔹 SCHOOL
+    elif current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
-        if not school:
-            raise HTTPException(status_code=404, detail="School not found")
+        if not school or exam.school_id != school.id:
+            raise HTTPException(status_code=403, detail="Not authorized")
 
-        if exam.school_id != school.id:
-            raise HTTPException(status_code=403, detail="Not authorized to view this exam")
-
-    # 👨‍🏫 Teacher access
+    # 🔹 TEACHER
     elif current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
-        if not teacher:
-            raise HTTPException(status_code=404, detail="Teacher not found")
+        if not teacher or exam.created_by != teacher.id:
+            raise HTTPException(status_code=403, detail="Not authorized")
 
-        if exam.created_by != teacher.id:
-            raise HTTPException(status_code=403, detail="You can only view exams you created")
-
-    # 👨‍🎓 Student access
+    # 🔹 STUDENT
     elif current_user.role == UserRole.STUDENT:
         student = db.query(Student).filter(Student.user_id == current_user.id).first()
         if not student:
             raise HTTPException(status_code=404, detail="Student not found")
 
         if (
-            exam.school_id != student.school_id
-            or exam.class_id != student.class_id
+            exam.class_id != student.class_id
             or not any(s.id == student.section_id for s in exam.sections)
             or exam.status != ExamStatusEnum.ACTIVE
             or not exam.is_published
         ):
-            raise HTTPException(status_code=403, detail="You are not allowed to view this exam")
+            raise HTTPException(status_code=403, detail="Not allowed")
 
-    # 👨‍💼 Staff access
+        # Evaluation scope
+        if exam.evaluation_scope == EvaluationScopeEnum.INTERNAL and exam.school_id != student.school_id:
+            raise HTTPException(status_code=403, detail="Not allowed (Internal exam)")
+
+        # Check student attempts
+        attempt = (
+            db.query(StudentExamData)
+            .filter(
+                StudentExamData.exam_id == exam.id,
+                StudentExamData.student_id == student.id
+            )
+            .order_by(StudentExamData.attempt_no.desc())
+            .first()
+        )
+        attempt_no = attempt.attempt_no if attempt else 0
+
+    # 🔹 SELF-SIGNED STUDENT
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        student = db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == current_user.id).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        if exam.selected_class_id != student.select_class_id or exam.status != ExamStatusEnum.ACTIVE:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+        # Teacher-created exams must allow external students
+        if not exam.created_by_admin and exam.evaluation_scope not in [
+            EvaluationScopeEnum.EXTERNAL,
+            EvaluationScopeEnum.BOTH
+        ]:
+            raise HTTPException(status_code=403, detail="Not allowed for self signed students")
+
+        attempt = (
+            db.query(StudentExamData)
+            .filter(
+                StudentExamData.exam_id == exam.id,
+                StudentExamData.student_id == student.id
+            )
+            .order_by(StudentExamData.attempt_no.desc())
+            .first()
+        )
+        attempt_no = attempt.attempt_no if attempt else 0
+
+    # 🔹 STAFF
     elif current_user.role == UserRole.STAFF:
         staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found")
-
-        if exam.school_id != staff.school_id:
-            raise HTTPException(status_code=403, detail="Not authorized to view this exam")
+        if not staff or exam.school_id != staff.school_id:
+            raise HTTPException(status_code=403, detail="Not authorized")
 
     else:
-        raise HTTPException(status_code=403, detail="Invalid role for viewing exam details")
+        raise HTTPException(status_code=403, detail="Invalid role")
 
-    # ✅ Build response
+    # =========================
+    # PREPARE RESPONSE
+    # =========================
+
+    # Ensure class_id and selected_class_id are never None
+    class_id = exam.class_id or exam.selected_class_id
+    selected_class_id = exam.selected_class_id or exam.class_id
+
+    # Fallback for standard (class name)
+    standard = (
+        exam.class_obj.name if exam.class_obj else
+        (exam.subject.class_name if exam.subject else "")
+    )
+
     return ExamDetailResponse(
         id=exam.id,
         is_published=exam.is_published,
         exam_type=exam.exam_type,
+        evaluation_scope=exam.evaluation_scope,
         school_id=exam.school_id,
-        class_id=exam.class_id,
-        standard=exam.class_obj.name if exam.class_obj else "",
-        section_ids=[section.id for section in exam.sections],
-        section_names=[section.name for section in exam.sections],
+        school_name=exam.school.school_name if exam.school else None,
+        class_id=class_id,
+        selected_class_id=selected_class_id,
+        standard=standard,
+        subject_id=exam.subject_id,
+        subject_name=exam.subject.subject if exam.subject else None,
+        section_ids=[s.id for s in exam.sections],
+        section_names=[s.name for s in exam.sections],
         chapters=exam.chapters,
-        no_of_chapters=len(exam.chapters),
-        no_of_questions=exam.no_of_questions,
-        exam_time=exam.no_of_questions * exam.question_time if exam.no_of_questions and exam.question_time else 0,
+        no_of_chapters=len(exam.chapters or []),
+        total_marks=exam.total_marks,
+        no_of_questions=len(exam.questions),
+        question_time=exam.question_time,
         pass_percentage=exam.pass_percentage,
+        exam_description=exam.exam_description,
         exam_activation_date=exam.exam_activation_date,
         inactive_date=exam.inactive_date,
         max_repeat=exam.max_repeat,
         status=exam.status,
         no_students_appeared=exam.no_students_appeared,
-        created_by=f"{exam.teacher.first_name} {exam.teacher.last_name}" if exam.teacher else "",
+        attempt_no=attempt_no,
+        created_by=f"{exam.teacher.first_name} {exam.teacher.last_name}" if exam.teacher else None,
+        created_by_admin=exam.created_by_admin,
         created_at=exam.created_at
     )
 
@@ -3523,9 +4035,10 @@ def update_exam(
     current_user: User = Depends(get_current_user),
 ):
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
+
     if not exam:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail="Exam not found."
         )
 
@@ -3533,26 +4046,38 @@ def update_exam(
     # ROLE BASED ACCESS
     # --------------------------------------
 
-    # If School → full permission
     if current_user.role == UserRole.SCHOOL:
-        pass  # no restrictions
+        pass
+    elif current_user.role == UserRole.ADMIN:
 
-    # If Teacher → must be owner AND exam must be pending
+    # Admin can update only admin created exams
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="You can update only admin created exams."
+            )
+
+        if exam.status != ExamStatusEnum.PENDING:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only update exams that are in pending status."
+            )
+
     elif current_user.role == UserRole.TEACHER:
 
-        # Verify teacher exists
-        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher record not found.")
 
-        # Check if this teacher created the exam
-        if exam.created_by  != teacher.id:
+        if exam.created_by != teacher.id:
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to update this exam."
             )
 
-        # Ensure exam status is pending only
         if exam.status != ExamStatusEnum.PENDING:
             raise HTTPException(
                 status_code=403,
@@ -3566,36 +4091,53 @@ def update_exam(
         )
 
     # --------------------------------------
-    # UPDATE EXAM DETAILS
+    # UPDATE LOGIC
     # --------------------------------------
     try:
         update_data = data.dict(exclude_unset=True)
 
-        sections_data = update_data.pop("section_ids", None)
-        chapters_data = update_data.pop("chapters", None)
+        section_ids = update_data.pop("section_ids", None)
+        chapters_ids = update_data.pop("chapters", None)
+        subject_id = update_data.get("subject_id")
 
-        # Update normal fields
+        # ✅ Validate subject if updating
+        if subject_id:
+            subject = db.query(SchoolClassSubject).filter(
+                SchoolClassSubject.id == subject_id
+            ).first()
+            if not subject:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Invalid subject selected."
+                )
+
+        # ✅ Update simple fields
         for key, value in update_data.items():
             setattr(exam, key, value)
 
-        # Update sections if provided
-        if sections_data is not None:
-            section_objs = db.query(Section).filter(Section.id.in_(sections_data)).all()
+        # ✅ Update sections (many-to-many)
+        if section_ids is not None:
+            section_objs = db.query(Section).filter(
+                Section.id.in_(section_ids)
+            ).all()
+
             exam.sections = section_objs
 
-        # Update chapters if provided
-        if chapters_data is not None:
-            chapter_objs = db.query(Chapter).filter(Chapter.id.in_(chapters_data)).all()
-            exam.chapters = chapter_objs
+        # ✅ Update chapters (ARRAY field)
+        if chapters_ids is not None:
+            exam.chapters = chapters_ids
 
-        # Business rule: rank exam → max_repeat fixed to 1
-        if data.exam_type == ExamTypeEnum.RANK:
+        # ✅ Business Rule: rank exam → max_repeat = 1
+        if exam.exam_type == ExamTypeEnum.RANK:
             exam.max_repeat = 1
 
         db.commit()
         db.refresh(exam)
 
-        return {"detail": "Exam updated successfully.", "exam_id": exam.id}
+        return {
+            "detail": "Exam updated successfully.",
+            "exam_id": exam.id
+        }
 
     except SQLAlchemyError as e:
         db.rollback()
@@ -3603,8 +4145,6 @@ def update_exam(
             status_code=500,
             detail=f"Database error: {str(e)}"
         )
-
-
 
 # ✅ Delete Exam
 @router.delete("/exams/{exam_id}", status_code=status.HTTP_200_OK)
@@ -3618,7 +4158,14 @@ def delete_exam(
         raise HTTPException(status_code=404, detail="Exam not found.")
 
     # ✅ Role-based access
-    if current_user.role == UserRole.TEACHER:
+    if current_user.role == UserRole.ADMIN:
+
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can delete only admin created exams."
+            )
+    elif current_user.role == UserRole.TEACHER:
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
         if not teacher or exam.created_by != teacher.id:
             raise HTTPException(status_code=403, detail="You can only delete your own exams.")
@@ -3681,33 +4228,65 @@ def update_exam_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Only school users allowed
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school users can update exam status"
-        )
-    
-    # ✅ Verify business account access
-    verify_school_business_access(current_user, db)
-    
+
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
+
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
-    
-    # ✅ Only allow ACTIVE or DECLINED
+
+    # --------------------------------------------------
+    # ROLE BASED ACCESS
+    # --------------------------------------------------
+
+    # 🔹 SCHOOL
+    if current_user.role == UserRole.SCHOOL:
+
+        verify_school_business_access(current_user, db)
+
+        school = db.query(School).filter(
+            School.user_id == current_user.id
+        ).first()
+
+        if not school or exam.school_id != school.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to update this exam status"
+            )
+
+    # 🔹 ADMIN
+    elif current_user.role == UserRole.ADMIN:
+
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can only update status of admin created exams"
+            )
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update exam status"
+        )
+
+    # --------------------------------------------------
+    # STATUS VALIDATION
+    # --------------------------------------------------
+
     if data.status not in [ExamStatusEnum.ACTIVE, ExamStatusEnum.DECLINED]:
         raise HTTPException(
             status_code=400,
             detail="Status can only be set to ACTIVE or DECLINED"
         )
 
+    # --------------------------------------------------
+    # UPDATE STATUS
+    # --------------------------------------------------
+
     exam.status = data.status
-    
-    # Optional: set activation date when activating
+
     if data.status == ExamStatusEnum.ACTIVE:
         exam.exam_activation_date = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(exam)
 
@@ -3716,26 +4295,498 @@ def update_exam_status(
         "new_status": exam.status,
         "exam_activation_date": exam.exam_activation_date
     }
-@router.post("/exam/{exam_id}/mcqs", response_model=List[McqResponse])
-def add_mcqs(
+
+@router.post("/exam/{exam_id}/questions")
+def add_multiple_questions(
     exam_id: str,
-    mcq_bulk: McqBulkCreate,
+    questions: List[ExamQuestionCreate],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school or teacher can add MCQs"
+
+    if current_user.role not in [UserRole.TEACHER, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # -----------------------------
+    # ADMIN VALIDATION
+    # -----------------------------
+    if current_user.role == UserRole.ADMIN:
+
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can only add questions to admin exams"
+            )
+
+    # -----------------------------
+    # TEACHER VALIDATION
+    # -----------------------------
+    if current_user.role == UserRole.TEACHER:
+
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+        if not teacher or exam.created_by != teacher.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only add questions to your own exams"
+            )
+
+    created_questions = []
+
+    for q_data in questions:
+
+        question = ExamQuestion(
+            exam_id=exam.id,
+            question_type=q_data.question_type,
+            question_text=q_data.question_text,
+            marks=q_data.marks,
+            image=q_data.image,
+            correct_text_answer=q_data.correct_text_answer,
+            answer_keywords=q_data.answer_keywords
         )
-    try:
-        return create_mcq(db, exam_id, mcq_bulk)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
+        db.add(question)
+        db.flush()
 
+        # Create options for MCQ
+        if q_data.options:
+            for opt in q_data.options:
+                option = ExamQuestionOption(
+                    question_id=question.id,
+                    option_text=opt.option_text,
+                    is_correct=opt.is_correct
+                )
+                db.add(option)
+
+        # update exam counters
+        exam.total_marks += q_data.marks
+        exam.no_of_questions += 1
+
+        created_questions.append(question.id)
+
+    db.commit()
+
+    return {
+        "detail": "Questions added successfully",
+        "question_ids": created_questions
+    }
+
+@router.get("/exam/{exam_id}/questions")
+def fetch_questions(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role not in [
+        UserRole.SCHOOL,
+        UserRole.TEACHER,
+        UserRole.STUDENT,
+        UserRole.STAFF,
+        UserRole.ADMIN,
+        UserRole.SELF_SIGNED_STUDENT
+    ]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # --------------------------------------------------
+    # STUDENT ACCESS CHECK (Exam must be active)
+    # --------------------------------------------------
+    if current_user.role == UserRole.STUDENT:
+        now = datetime.utcnow()
+
+        if exam.exam_activation_date > now:
+            raise HTTPException(status_code=403, detail="Exam not started yet")
+
+        if exam.inactive_date and exam.inactive_date < now:
+            raise HTTPException(status_code=403, detail="Exam is no longer active")
+
+    questions = (
+        db.query(ExamQuestion)
+        .filter(ExamQuestion.exam_id == exam_id)
+        .all()
+    )
+
+    response = []
+
+    for q in questions:
+
+        question_data = {
+            "id": q.id,
+            "exam_id": q.exam_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type,
+            "image": q.image,
+            "marks": q.marks,
+            "options": [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                }
+                for opt in q.options
+            ]
+        }
+
+        # --------------------------------------------------
+        # ONLY NON STUDENTS CAN SEE ANSWERS
+        # --------------------------------------------------
+        if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+
+            question_data["options"] = [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                    "is_correct": opt.is_correct
+                }
+                for opt in q.options
+            ]
+
+            question_data["correct_text_answer"] = q.correct_text_answer
+            question_data["answer_keywords"] = q.answer_keywords
+
+        response.append(question_data)
+
+    return response
+
+@router.put("/question/{question_id}")
+def update_question(
+    question_id: int,
+    question_update: ExamQuestionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+
+    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    question = db.query(ExamQuestion).filter(
+        ExamQuestion.id == question_id
+    ).first()
+
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    exam = question.exam
+
+    # -------------------------------
+    # ADMIN validation
+    # -------------------------------
+    if current_user.role == UserRole.ADMIN:
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can only update admin exam questions"
+            )
+
+    # -------------------------------
+    # TEACHER validation
+    # -------------------------------
+    if current_user.role == UserRole.TEACHER:
+
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+        if not teacher or exam.created_by != teacher.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only update your exam questions"
+            )
+
+    update_data = question_update.dict(exclude_unset=True)
+
+    old_marks = question.marks
+
+    # -------------------------------
+    # update question fields
+    # -------------------------------
+    for key, value in update_data.items():
+
+        if key not in ["options"]:
+            setattr(question, key, value)
+
+    # -------------------------------
+    # update exam total marks
+    # -------------------------------
+    if "marks" in update_data:
+        exam.total_marks += update_data["marks"] - old_marks
+
+    # -------------------------------
+    # update MCQ options
+    # -------------------------------
+    if "options" in update_data:
+
+        # delete old options
+        db.query(ExamQuestionOption).filter(
+            ExamQuestionOption.question_id == question.id
+        ).delete()
+
+        # insert new options
+        for opt in update_data["options"]:
+            new_option = ExamQuestionOption(
+                question_id=question.id,
+                option_text=opt["option_text"],
+                is_correct=opt["is_correct"]
+            )
+            db.add(new_option)
+
+    db.commit()
+    db.refresh(question)
+
+    return {"detail": "Question updated successfully"}
+
+@router.delete("/question/{question_id}")
+def delete_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.TEACHER, UserRole.STAFF, UserRole.ADMIN]:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to delete questions"
+        )
+
+    question = db.query(ExamQuestion).filter(
+        ExamQuestion.id == question_id
+    ).first()
+
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    exam = question.exam
+
+    # 🔹 ADMIN restriction
+    if current_user.role == UserRole.ADMIN:
+        if not exam.created_by_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin can delete only admin created exam questions"
+            )
+
+    # 🔹 TEACHER restriction
+    if current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+        if not teacher or exam.created_by != teacher.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can delete only your exam questions"
+            )
+
+    # 🔹 decrease counters
+    exam.total_marks -= question.marks
+    exam.no_of_questions -= 1
+
+    db.delete(question)
+    db.commit()
+
+    return {"detail": "Question deleted successfully"}
+
+@router.post("/exam/{exam_id}/submit")
+def submit_exam(
+    exam_id: str,
+    submission: StudentExamSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=403, detail="Only students can submit exams")
+
+    student_profile = current_user.student_profile
+    self_signed_profile = current_user.self_signed_student_profile
+
+    if not student_profile and not self_signed_profile:
+        raise HTTPException(status_code=400, detail="Student profile not found")
+    
+    student_id = None
+    self_signed_student_id = None
+    school_id = None
+
+    if student_profile:
+        student_id = student_profile.id
+        school_id = student_profile.school_id
+
+    elif self_signed_profile:
+        self_signed_student_id = self_signed_profile.id
+
+    student_already_appeared = (
+        db.query(StudentExamData)
+        .filter(
+            StudentExamData.exam_id == exam_id,
+            or_(
+                StudentExamData.student_id == student_id,
+                StudentExamData.self_signed_student_id == self_signed_student_id
+            )
+        )
+        .first()
+    )
+
+    last_attempt = (
+        db.query(StudentExamData)
+        .filter(
+            StudentExamData.exam_id == exam_id,
+            or_(
+                StudentExamData.student_id == student_id,
+                StudentExamData.self_signed_student_id == self_signed_student_id
+            )
+        )
+        .order_by(StudentExamData.attempt_no.desc())
+        .first()
+    )
+
+    next_attempt_no = (last_attempt.attempt_no + 1) if last_attempt and last_attempt.attempt_no else 1
+
+    # ==============================
+    # Get Exam
+    # ==============================
+
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # ==============================
+    # Get exam questions
+    # ==============================
+
+    questions = db.query(ExamQuestion).filter(
+        ExamQuestion.exam_id == exam_id
+    ).all()
+
+    question_map = {q.id: q for q in questions}
+
+    total_marks = sum(q.marks for q in questions)
+    obtained_marks = 0
+
+    # ==============================
+    # Create exam attempt
+    # ==============================
+
+    student_exam_data = StudentExamData(
+        student_id=student_id,
+        self_signed_student_id=self_signed_student_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        attempt_no=next_attempt_no,
+        total_marks_obtained=0,
+        percentage_scored=0,
+        status=None,
+        is_submitted=False,
+        submitted_at=datetime.utcnow()
+    )
+
+    db.add(student_exam_data)
+    db.commit()
+    db.refresh(student_exam_data)
+
+    # ==============================
+    # Save Student Answers
+    # ==============================
+
+    for ans in submission.answers:
+
+        question = question_map.get(ans.question_id)
+        if not question:
+            continue
+
+        marks_awarded = 0
+
+        # ==============================
+        # MCQ
+        # ==============================
+
+        if question.question_type.value == "mcq":
+
+            correct_option = db.query(ExamQuestionOption).filter(
+                ExamQuestionOption.question_id == question.id,
+                ExamQuestionOption.is_correct == True
+            ).first()
+
+            if correct_option and ans.selected_option_id == correct_option.id:
+                marks_awarded = question.marks
+
+        # ==============================
+        # SHORT ANSWER
+        # ==============================
+
+        elif question.question_type.value == "short":
+
+            student_answer = (ans.descriptive_answer or "").strip().lower()
+            correct_answer = (question.correct_text_answer or "").strip().lower()
+
+            if student_answer == correct_answer:
+                marks_awarded = question.marks
+
+        # ==============================
+        # DESCRIPTIVE / LONG
+        # ==============================
+
+        elif question.question_type.value == "descriptive":
+
+            answer_text = (ans.descriptive_answer or "").lower()
+            keywords = question.answer_keywords or []
+
+            if all(keyword.lower() in answer_text for keyword in keywords):
+                marks_awarded = question.marks
+
+        obtained_marks += marks_awarded
+
+        student_answer = StudentAnswer(
+            attempt_id=student_exam_data.id,
+            question_id=question.id,
+            selected_option_id=ans.selected_option_id,
+            descriptive_answer=ans.descriptive_answer,
+            marks_awarded=marks_awarded
+        )
+
+        db.add(student_answer)
+
+    # ==============================
+    # Calculate Result
+    # ==============================
+
+    percentage = (obtained_marks / total_marks * 100) if total_marks else 0
+
+    status_result = ExamStatus.pass_ if percentage >= 40 else ExamStatus.fail
+
+    student_exam_data.total_marks_obtained = obtained_marks
+    student_exam_data.percentage_scored = percentage
+    student_exam_data.status = status_result
+    student_exam_data.is_submitted = True
+
+    # ==============================
+    # Increase students appeared count
+    # ==============================
+
+    if not student_already_appeared:
+        exam.no_students_appeared = (exam.no_students_appeared or 0) + 1
+
+    db.commit()
+
+    return {
+        "detail": "Exam submitted successfully",
+        "exam_id": exam_id,
+        "attempt_no": next_attempt_no,
+        "total_marks": total_marks,
+        "obtained_marks": obtained_marks,
+        "percentage": percentage,
+        "status": status_result.value
+    }
 # Team members: explicit routes for path without id (must be before /{mcq_id}/ so they match first)
-@router.put("/team-members/")
 @router.put("/team-members")
 def update_team_member_missing_id():
     raise HTTPException(
@@ -3744,7 +4795,6 @@ def update_team_member_missing_id():
     )
 
 
-@router.delete("/team-members/")
 @router.delete("/team-members")
 def delete_team_member_missing_id():
     raise HTTPException(
@@ -3754,7 +4804,6 @@ def delete_team_member_missing_id():
 
 
 # Excellent students: explicit routes for path without id (must be before /{mcq_id}/)
-@router.put("/excellent-students/")
 @router.put("/excellent-students")
 def update_excellent_student_missing_id():
     raise HTTPException(
@@ -3763,165 +4812,12 @@ def update_excellent_student_missing_id():
     )
 
 
-@router.delete("/excellent-students/")
 @router.delete("/excellent-students")
 def delete_excellent_student_missing_id():
     raise HTTPException(
         status_code=400,
         detail="Excellent student id is required in path. Use DELETE /school/excellent-students/{id}",
     )
-
-
-@router.put("/{mcq_id}/")
-def update_mcq(
-    mcq_id: int,
-    mcq_update: McqCreate,  # reuse schema
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    # only school or teacher can update
-    if current_user.role not in ["school", "teacher"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    mcq = db.query(McqBank).filter(McqBank.id == mcq_id).first()
-    if not mcq:
-        raise HTTPException(status_code=404, detail="MCQ not found")
-
-    mcq.question = mcq_update.question
-    mcq.mcq_type = mcq_update.mcq_type
-    mcq.image = mcq_update.image
-    mcq.option_a = mcq_update.option_a
-    mcq.option_b = mcq_update.option_b
-    mcq.option_c = mcq_update.option_c
-    mcq.option_d = mcq_update.option_d
-    mcq.correct_option = mcq_update.correct_option
-    mcq.updated_at = datetime.utcnow()
-
-    db.commit()
-    db.refresh(mcq)
-    return mcq
-
-
-@router.delete("/{mcq_id}")
-def delete_mcq_endpoint(
-    mcq_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if current_user.role not in [UserRole.TEACHER, UserRole.STAFF]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only teacher or staff can delete MCQs"
-        )
-    success = delete_mcq(db, mcq_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="MCQ not found")
-    return {"detail": "MCQ deleted successfully"}
-@router.get("/exam/{exam_id}")
-def fetch_mcqs(exam_id: str, db: Session = Depends(get_db),current_user: User = Depends(get_current_user)):
-    if current_user.role not in [UserRole.SCHOOL, UserRole.TEACHER, UserRole.STUDENT, UserRole.STAFF]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school, teacher, staff, or student can fetch MCQs"
-        )
-    mcqs = get_mcqs_by_exam(db, exam_id)
-    if current_user.role == UserRole.STUDENT:
-        return [
-            {
-                "id": mcq.id,
-                "exam_id": mcq.exam_id,
-                "question": mcq.question,
-                "mcq_type": mcq.mcq_type,
-                "image": mcq.image,
-                "option_a": mcq.option_a,
-                "option_b": mcq.option_b,
-                "option_c": mcq.option_c,
-                "option_d": mcq.option_d,
-            }
-            for mcq in mcqs
-        ]
-
-    # For school, teacher, and staff, return full rows from DB
-    return mcqs
-
-@router.post("/{exam_id}/submit")
-def submit_exam(
-    exam_id: str,
-    submission: StudentExamSubmitRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != UserRole.STUDENT:
-        raise HTTPException(status_code=403, detail="Only students can submit exams")
-
-    student_profile = current_user.student_profile
-    if not student_profile:
-        raise HTTPException(status_code=400, detail="Student profile not found")
-
-    # Last attempt check
-    last_attempt = (
-        db.query(StudentExamData)
-        .filter(
-            StudentExamData.student_id == student_profile.id,
-            StudentExamData.exam_id == exam_id
-        )
-        .order_by(StudentExamData.attempt_no.desc())
-        .first()
-    )
-    next_attempt_no = last_attempt.attempt_no + 1 if last_attempt else 1
-
-    # Fetch questions
-    mcqs = db.query(McqBank).filter(McqBank.exam_id == exam_id).all()
-    mcq_map = {mcq.id: mcq for mcq in mcqs}
-
-    correct_count = 0
-    total = len(submission.answers)
-
-    for ans in submission.answers:
-        mcq = mcq_map.get(ans.question_id)
-        if mcq:
-            correct_options = mcq.correct_option
-            selected_options = ans.selected_option
-
-        # Normalize: ensure both are lists
-            if not isinstance(correct_options, list):
-                correct_options = [correct_options]
-            if not isinstance(selected_options, list):
-                selected_options = [selected_options]
-
-        # Count correct matches
-            matched = [opt for opt in selected_options if opt in correct_options]
-
-            if matched:
-                correct_count += len(matched)
-    result_percentage = (correct_count / total * 100) if total > 0 else 0
-    status_result = "pass" if result_percentage >= 40 else "fail"
-
-    # Save result
-    student_exam_data = StudentExamData(
-        student_id=student_profile.id,
-        school_id=student_profile.school_id,
-        exam_id=exam_id,
-        attempt_no=next_attempt_no,
-        answers=[ans.dict() for ans in submission.answers],
-        result=result_percentage,
-        status=status_result,
-        submitted_at=datetime.utcnow()
-    )
-    db.add(student_exam_data)
-    db.commit()
-    db.refresh(student_exam_data)
-
-    # ✅ Update rank in class
-    update_class_ranks(db, exam_id, student_profile.class_id)
-
-    return {
-        "detail": "Exam submitted successfully",
-        "exam_id": exam_id,
-        "attempt_no": next_attempt_no,
-        "result": result_percentage,
-        "status": status_result
-    }
 
 @router.post("/leave-request/")
 def create_leave_request(

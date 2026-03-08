@@ -204,6 +204,19 @@ class SchoolClassSubject(Base):
     chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
     admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
     recharge_plans = relationship("RechargePlan", back_populates="school_class_subject", cascade="all, delete-orphan")
+    exams_as_selected_class = relationship(
+        "Exam",
+        back_populates="selected_class",
+        foreign_keys="[Exam.selected_class_id]",
+        cascade="all, delete-orphan"
+    )
+
+    exams_as_subject = relationship(
+        "Exam",
+        back_populates="subject",
+        foreign_keys="[Exam.subject_id]",
+        cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint(

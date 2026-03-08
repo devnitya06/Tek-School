@@ -144,6 +144,7 @@ class SelfSignedStudent(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="self_signed_student_profile")
+    exam_data = relationship("StudentExamData", back_populates="self_signed_student")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
     subscriptions = relationship("StudentSubscription", back_populates="student")
     selected_class = relationship("SchoolClassSubject", backref="students")
