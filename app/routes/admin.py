@@ -8,6 +8,7 @@ from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus,SelfSignedStudent
 from app.models.staff import Staff
 from app.schemas.admin import *
+from app.schemas.school import SchoolRatingCreate, SchoolRatingResponse
 from app.services.students import update_admin_exam_class_ranks
 from app.models.admin import *
 from app.models.school import *
@@ -335,6 +336,22 @@ def list_all_schools(
         .limit(pagination.limit())
         .all()
     )
+    school_ids = [s.id for s in schools]
+    rating_by_school = {}
+    if school_ids:
+        rating_stats = (
+            db.query(
+                SchoolRating.school_id,
+                func.count(SchoolRating.id).label("rating_count"),
+                func.avg(SchoolRating.rating).label("average_rating"),
+            )
+            .filter(SchoolRating.school_id.in_(school_ids))
+            .group_by(SchoolRating.school_id)
+        )
+        rating_by_school = {
+            row.school_id: {"rating_count": row.rating_count, "average_rating": float(round(row.average_rating, 2)) if row.average_rating is not None else None}
+            for row in rating_stats
+        }
     items = [
         {
             "id": s.id,
@@ -348,9 +365,107 @@ def list_all_schools(
             "district": s.district,
             "total_students": s.total_students if s.total_students else 0,
             "total_teachers": s.total_teachers if s.total_teachers else 0,
+            "rating_count": rating_by_school.get(s.id, {}).get("rating_count", 0),
+            "average_rating": rating_by_school.get(s.id, {}).get("average_rating"),
             "created_at": s.created_at.isoformat() if s.created_at else None,
         }
         for s in schools
+    ]
+    return pagination.format_response(items, total_count)
+
+
+@router.post("/schools/rating/", response_model=SchoolRatingResponse, status_code=status.HTTP_201_CREATED)
+def create_school_rating(
+    data: SchoolRatingCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Submit a rating and feedback for a listed school. Any user can submit (no authentication required).
+    Pass: school_id, user_name, user_role (visitor | student | parent), mobile, email_id, feedback, rating (1-5).
+    One rating per combination of school_id + mobile + email_id (duplicate not allowed).
+    """
+    school = db.query(School).filter(School.id == data.school_id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found.",
+        )
+    email_normalized = data.email_id.strip().lower()
+    existing = (
+        db.query(SchoolRating)
+        .filter(
+            SchoolRating.school_id == data.school_id,
+            SchoolRating.mobile == data.mobile.strip(),
+            func.lower(SchoolRating.email_id) == email_normalized,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You have already submitted a rating for this school with this mobile and email.",
+        )
+    rating = SchoolRating(
+        school_id=data.school_id,
+        user_name=data.user_name,
+        user_role=data.user_role,
+        mobile=data.mobile.strip(),
+        email_id=email_normalized,
+        feedback=data.feedback,
+        rating=data.rating,
+    )
+    db.add(rating)
+    try:
+        db.commit()
+        db.refresh(rating)
+    except SQLAlchemyError as e:
+        db.rollback()
+        if "uq_school_rating_school_mobile_email" in str(e).lower() or "unique" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You have already submitted a rating for this school with this mobile and email.",
+            )
+        raise
+    return rating
+
+
+@router.get("/schools/{school_id}/ratings/")
+def list_school_ratings(
+    school_id: str,
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+):
+    """
+    List all ratings for a school with user details and feedback. Paginated.
+    Pass school_id in the path. Query params: page (default 1), per_page (default 10, max 100).
+    """
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found.",
+        )
+    query = db.query(SchoolRating).filter(SchoolRating.school_id == school_id)
+    total_count = query.count()
+    ratings = (
+        query.order_by(SchoolRating.created_at.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    items = [
+        {
+            "id": r.id,
+            "school_id": r.school_id,
+            "user_name": r.user_name,
+            "user_role": r.user_role,
+            "mobile": r.mobile,
+            "email_id": r.email_id,
+            "feedback": r.feedback,
+            "rating": r.rating,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in ratings
     ]
     return pagination.format_response(items, total_count)
 

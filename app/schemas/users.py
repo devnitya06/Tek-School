@@ -6,7 +6,6 @@ from enum import Enum
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    login_type: Optional[str] = "business"  # For school users: "listing" or "business", default "business"
 
 class UserRole(str,Enum):
     SUPERADMIN = "superadmin"

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, HttpUrl,Field
-from typing import Optional,List,Dict
+from typing import Optional,List,Dict,Literal
 from datetime import time
 from datetime import date,datetime
 from enum import Enum
@@ -79,6 +79,7 @@ class SchoolProfileUpdate(BaseModel):
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None
+    school_logo: Optional[str] = None  # URL or base64 data URL (data:image/...;base64,...)
 class SubjectItem(BaseModel):
     name: str
     school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
@@ -702,5 +703,32 @@ class ExcellentStudentResponse(BaseModel):
     secure_mark: Optional[float] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# SchoolRating: any user can submit rating/feedback for a listed school
+class SchoolRatingCreate(BaseModel):
+    school_id: str
+    user_name: str = Field(..., min_length=1, max_length=200)
+    user_role: Literal["visitor", "student", "parent"] = Field(
+        ..., description="One of: visitor, student, parent"
+    )
+    mobile: str = Field(..., min_length=1, max_length=20)
+    email_id: EmailStr
+    feedback: Optional[str] = None
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5 stars")
+
+
+class SchoolRatingResponse(BaseModel):
+    id: int
+    school_id: str
+    user_name: str
+    user_role: str
+    mobile: str
+    email_id: str
+    feedback: Optional[str] = None
+    rating: int
+    created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
