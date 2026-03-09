@@ -38,4 +38,9 @@ def on_startup():
 
 @app.get("/")
 def root():
-    return {"message": "API Connect Successfully"}
+    return {
+        "message": "API Connect Successfully",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "openapi": "/openapi.json",
+    }

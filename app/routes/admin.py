@@ -470,6 +470,45 @@ def list_school_ratings(
     return pagination.format_response(items, total_count)
 
 
+@router.delete("/schools/{school_id}/ratings/{rating_id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_school_rating(
+    school_id: str,
+    rating_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a rating. Admin can delete any rating; school can delete only ratings for their own school.
+    """
+    rating = (
+        db.query(SchoolRating)
+        .filter(SchoolRating.id == rating_id, SchoolRating.school_id == school_id)
+        .first()
+    )
+    if not rating:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rating not found.",
+        )
+    if current_user.role == UserRole.ADMIN:
+        pass
+    elif current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or school.id != school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only delete ratings for your own school.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin or school can delete ratings.",
+        )
+    db.delete(rating)
+    db.commit()
+    return None
+
+
 @router.get("/schools/pending-approvals/")
 def get_pending_approvals(
     pagination: PaginationParams = Depends(),
