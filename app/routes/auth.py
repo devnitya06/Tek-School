@@ -34,60 +34,24 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     
-    # Check business account approval for SCHOOL role
+    # Check account approval for SCHOOL role
     if user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == user.id).first()
         if school:
-            # Get login_type from request (default is "business")
-            login_type = getattr(form_data, 'login_type', 'business')
-            if login_type is None:
-                login_type = 'business'
-            
-            # Normalize login_type to lowercase
-            login_type = str(login_type).lower() if login_type else 'business'
-            
-            # Validate login_type
-            if login_type not in ['listing', 'business']:
+            if not user.is_verified:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="login_type must be either 'listing' or 'business'"
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Please verify your account with OTP first."
                 )
-            
-            # If login_type is "business", check if business account is approved
-            if login_type == "business":
-                # Check if user is verified (OTP verified)
-                if not user.is_verified:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Please verify your account with OTP first."
-                    )
-                
-                # Check if business account is approved by admin
-                if school.account_type == SchoolAccountType.BUSINESS:
-                    if not school.is_business_approved:
-                        raise HTTPException(
-                            status_code=423,  # 423 Locked - Account pending admin verification
-                            detail="Your account is not verified yet by admin."
-                        )
-                # If listing account tries to login as business, also block
-                elif school.account_type == SchoolAccountType.LISTING:
-                    raise HTTPException(
-                        status_code=423,  # 423 Locked - Account pending admin verification
-                        detail="Your account is not verified yet by admin."
-                    )
-            
-            # If login_type is "listing", allow login if OTP is verified
-            # Business accounts can use listing features without business approval
-            # Listing accounts can always login with listing type
-            elif login_type == "listing":
-                # Check if user is verified (OTP verified)
-                if not user.is_verified:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Please verify your account with OTP first."
-                    )
-                # Allow login for listing type (no business approval needed)
-    
+            # Business accounts need admin approval to login
+            if school.account_type == SchoolAccountType.BUSINESS and not school.is_business_approved:
+                raise HTTPException(
+                    status_code=423,
+                    detail="Your account is not verified yet by admin."
+                )
+        response_role = "business_school" if (school and school.is_business_approved) else "listing_school"
+    else:
+        response_role = user.role.value
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id), "role": user.role},
@@ -115,7 +79,7 @@ async def login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "role": user.role,
+        "role": response_role,
         "id": user.id
     }
 

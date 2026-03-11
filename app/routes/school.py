@@ -142,7 +142,25 @@ async def update_school_profile(
             school.catalogue = data.catalogue
         if data.photo_gallery is not None:
             school.photo_gallery = data.photo_gallery
-
+        if data.school_logo is not None:
+            if data.school_logo.startswith("data:") or len(data.school_logo) > 500:
+                try:
+                    file_ext = "png"
+                    if "image/png" in (data.school_logo or ""):
+                        file_ext = "png"
+                    elif "image/jpeg" in (data.school_logo or "") or "image/jpg" in (data.school_logo or ""):
+                        file_ext = "jpg"
+                    elif "image/webp" in (data.school_logo or ""):
+                        file_ext = "webp"
+                    school.profile_pic_url = upload_base64_to_s3(
+                        data.school_logo,
+                        f"schools/{school.id}/logo",
+                        ext=file_ext,
+                    )
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"School logo upload failed: {str(e)}")
+            else:
+                school.profile_pic_url = data.school_logo
 
 
     try:
@@ -6525,8 +6543,8 @@ def get_team_member(
     return obj
 
 
-@router.put("/team-members/{id}/", response_model=SchoolTeamMemberResponse)
-@router.put("/team-members/{id}", response_model=SchoolTeamMemberResponse)
+@router.patch("/team-members/{id}/", response_model=SchoolTeamMemberResponse)
+@router.patch("/team-members/{id}", response_model=SchoolTeamMemberResponse)
 def update_team_member(
     id: int,
     name: Optional[str] = Form(None),
