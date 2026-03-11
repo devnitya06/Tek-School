@@ -706,6 +706,14 @@ class ExcellentStudentResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class BackupUserResponse(BaseModel):
+    user_id: str | int
+    name: str
+    role: str
+    enrolled_date: date | None
+    session: str | None
+    record_date: datetime | None
+    updated_by: str | None
 
 # SchoolRating: any user can submit rating/feedback for a listed school
 class SchoolRatingCreate(BaseModel):
