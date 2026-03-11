@@ -704,3 +704,14 @@ class ExcellentStudentResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+class BackupUserResponse(BaseModel):
+    user_id: str | int
+    name: str
+    role: str
+    enrolled_date: date | None
+    session: str | None
+    record_date: datetime | None
+    updated_by: str | None
+
+    model_config = {"from_attributes": True}

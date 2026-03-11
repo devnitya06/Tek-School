@@ -1566,8 +1566,15 @@ def get_chapter_details(
         raise HTTPException(status_code=404, detail="Chapter not found")
 
     # 3️⃣ Check student's class matches chapter
+    # 3️⃣ Check student's class matches chapter's subject
     class_subject = chapter.school_class_subject
-    if student.classes.name != class_subject.class_name:
+
+    is_allowed = db.query(class_subjects).filter(
+        class_subjects.c.class_id == student.class_id,
+        class_subjects.c.school_class_subject_id == class_subject.id
+    ).first()
+
+    if not is_allowed:
         raise HTTPException(
             status_code=403,
             detail="You are not allowed to view chapters from another class.",
