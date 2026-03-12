@@ -12,7 +12,7 @@ from app.schemas.school import *
 from app.schemas.teachers import EmployeePaymentListResponse, TeacherStaffPaymentTransactionResponse
 from app.models.admin import Chapter,SchoolClassSubject
 from sqlalchemy.orm import Session,joinedload
-from sqlalchemy import delete, insert,extract,case,cast,String
+from sqlalchemy import delete, exists, insert,extract,case,cast,String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles, require_roles_allow_listing_school, verify_school_business_access
@@ -3762,6 +3762,7 @@ def list_exams(
         query = query.filter(Exam.created_by_admin == True)
 
     elif current_user.role == UserRole.STUDENT:
+
         student = db.query(Student).filter(
             Student.user_id == current_user.id
         ).first()
@@ -3769,29 +3770,49 @@ def list_exams(
         if not student:
             raise HTTPException(status_code=404, detail="Student not found")
 
+        admin_exam_condition = exists().where(
+            and_(
+                class_subjects.c.school_class_subject_id == Exam.selected_class_id,
+                class_subjects.c.class_id == student.class_id
+            )
+        )
+
         query = query.filter(
             or_(
-                # Teacher exams: match class_id + section
+
+                # Teacher exams
                 and_(
                     Exam.created_by_admin == False,
                     Exam.class_id == student.class_id,
                     Exam.sections.any(Section.id == student.section_id)
                 ),
-                # Admin exams: match selected_class_id and active exams
+
+                # Admin exams (FIXED)
                 and_(
                     Exam.created_by_admin == True,
-                    Exam.selected_class_id == student.class_id
+                    admin_exam_condition
                 )
+
             ),
             Exam.status == ExamStatusEnum.ACTIVE
         )
 
-        # Evaluation scope logic
+        # Evaluation scope
         query = query.filter(
             or_(
-                and_(Exam.evaluation_scope == EvaluationScopeEnum.INTERNAL, Exam.school_id == student.school_id),
-                and_(Exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL, Exam.school_id != student.school_id),
-                Exam.evaluation_scope == EvaluationScopeEnum.BOTH
+
+                # ADMIN exams → skip evaluation scope
+                Exam.created_by_admin == True,
+
+                # TEACHER exams → apply evaluation scope
+                and_(
+                    Exam.created_by_admin == False,
+                    or_(
+                        and_(Exam.evaluation_scope == EvaluationScopeEnum.INTERNAL, Exam.school_id == student.school_id),
+                        and_(Exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL, Exam.school_id != student.school_id),
+                        Exam.evaluation_scope == EvaluationScopeEnum.BOTH
+                    )
+                )
             )
         )
 
@@ -7412,3 +7433,88 @@ def list_business_inquiry(
         )
         for r in rows
     ]
+@router.get("/backup-users", response_model=list[BackupUserResponse])
+def get_backup_users(
+    role: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school allowed")
+
+    school_id = current_user.school_profile.id
+    results = []
+
+    # -------------------------
+    # Students
+    # -------------------------
+    if role in [None, "Student"]:
+
+        students = db.query(Student).filter(
+            Student.school_id == school_id
+        ).all()
+
+        for s in students:
+            results.append({
+                "user_id": s.id,
+                "name": f"{s.first_name} {s.last_name}",
+                "role": "Student",
+                "enrolled_date": s.created_at.date() if s.created_at else None,
+                "session": None,
+                "record_date": s.created_at,
+                "updated_by": None
+            })
+
+    # -------------------------
+    # Teachers
+    # -------------------------
+    if role in [None, "Teacher"]:
+
+        teachers = db.query(Teacher).filter(
+            Teacher.school_id == school_id
+        ).all()
+
+        for t in teachers:
+            results.append({
+                "user_id": t.id,
+                "name": f"{t.first_name} {t.last_name}",
+                "role": "Teacher",
+                "enrolled_date": t.created_at.date() if t.created_at else None,
+                "session": None,
+                "record_date": t.created_at,
+                "updated_by": None
+            })
+
+    # -------------------------
+    # Staff
+    # -------------------------
+    if role in [None, "Staff"]:
+
+        staffs = db.query(Staff).filter(
+            Staff.school_id == school_id
+        ).all()
+
+        for st in staffs:
+            results.append({
+                "user_id": st.id,
+                "name": f"{st.first_name} {st.last_name}",
+                "role": "Staff",
+                "enrolled_date": st.created_at.date() if st.created_at else None,
+                "session": None,
+                "record_date": st.created_at,
+                "updated_by": None
+            })
+
+    # -------------------------
+    # Date Filters
+    # -------------------------
+    if from_date:
+        results = [r for r in results if r["record_date"] and r["record_date"].date() >= from_date]
+
+    if to_date:
+        results = [r for r in results if r["record_date"] and r["record_date"].date() <= to_date]
+
+    return results
