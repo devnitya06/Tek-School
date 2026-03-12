@@ -6288,7 +6288,7 @@ def update_school_info(
     return obj
 
 
-@router.delete("/school-info/{id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/school-info/{id}/", status_code=status.HTTP_200_OK)
 def delete_school_info(
     id: int,
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
@@ -6304,7 +6304,7 @@ def delete_school_info(
             raise HTTPException(status_code=403, detail="You can only delete your own school info.")
     db.delete(obj)
     db.commit()
-    return None
+    return {"detail": "School info deleted successfully."}
 
 
 # ==================== School Class Fees (class name, admission fee, course fee, transport fee) ====================
