@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON,TypeDecorator
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 import uuid
@@ -951,15 +952,15 @@ class BusinessInquiry(Base):
     __tablename__ = "business_inquiry"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_ids = Column(ARRAY(String), nullable=False)  # multiple school IDs
+    school_ids = Column(PG_ARRAY(String), nullable=False)  # multiple school IDs (PG_ARRAY for .contains() in queries)
     guardian_name = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=False)
     email = Column(String(255), nullable=False)
     location = Column(String(255), nullable=True)
     student_name = Column(String(255), nullable=True)
     standard_in_academic = Column(String(100), nullable=True)  # e.g. Class 10
-    inquiry_for_class = Column(ARRAY(String), nullable=True)  # multiple classes
-    desire_to_know = Column(ARRAY(String), nullable=True)  # list of strings
-    files = Column(ARRAY(String), nullable=True)  # uploaded file URLs
+    inquiry_for_class = Column(PG_ARRAY(String), nullable=True)  # multiple classes
+    desire_to_know = Column(PG_ARRAY(String), nullable=True)  # list of strings
+    files = Column(PG_ARRAY(String), nullable=True)  # uploaded file URLs
     message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
