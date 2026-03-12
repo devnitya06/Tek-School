@@ -175,6 +175,7 @@ class School(Base):
     team_members = relationship("SchoolTeamMember", back_populates="school", cascade="all, delete-orphan")
     excellent_students = relationship("ExcellentStudent", back_populates="school", cascade="all, delete-orphan")
     school_ratings = relationship("SchoolRating", back_populates="school", cascade="all, delete-orphan")
+    support_plus = relationship("SupportPlus", back_populates="school", cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -918,3 +919,47 @@ class SchoolRating(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     school = relationship("School", back_populates="school_ratings")
+
+
+class SupportPlusStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    CANCELLED = "cancelled"
+
+
+class SupportPlus(Base):
+    """Support Plus: schools create records; admin updates status."""
+    __tablename__ = "supportplus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    looking_for = Column(String(255), nullable=False)
+    whatsapp_number = Column(String(20), nullable=False)
+    discussion_datetime = Column(DateTime(timezone=True), nullable=False)
+    files = Column(ARRAY(String), nullable=True)  # list of file URLs (multiple files)
+    message = Column(Text, nullable=True)
+    status = Column(SQLEnum(SupportPlusStatus), default=SupportPlusStatus.PENDING, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="support_plus")
+
+
+class BusinessInquiry(Base):
+    """Business inquiry from visitors (non-authenticated). Multiple schools, files, lists."""
+    __tablename__ = "business_inquiry"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_ids = Column(ARRAY(String), nullable=False)  # multiple school IDs
+    guardian_name = Column(String(255), nullable=False)
+    phone = Column(String(20), nullable=False)
+    email = Column(String(255), nullable=False)
+    location = Column(String(255), nullable=True)
+    student_name = Column(String(255), nullable=True)
+    standard_in_academic = Column(String(100), nullable=True)  # e.g. Class 10
+    inquiry_for_class = Column(ARRAY(String), nullable=True)  # multiple classes
+    desire_to_know = Column(ARRAY(String), nullable=True)  # list of strings
+    files = Column(ARRAY(String), nullable=True)  # uploaded file URLs
+    message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

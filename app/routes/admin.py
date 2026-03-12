@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session,joinedload
 from app.db.session import get_db
 from app.models.admin import *
-from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment
+from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment,SupportPlus,SupportPlusStatus,BusinessInquiry
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
 from app.models.students import Student,StudentStatus,SelfSignedStudent
 from app.models.staff import Staff
 from app.schemas.admin import *
-from app.schemas.school import SchoolRatingCreate, SchoolRatingResponse
+from app.schemas.school import SchoolRatingCreate, SchoolRatingResponse, SupportPlusResponse, SupportPlusStatusUpdate, BusinessInquiryResponse
 from app.services.students import update_admin_exam_class_ranks
 from app.models.admin import *
 from app.models.school import *
@@ -3457,3 +3457,108 @@ def delete_faq(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete FAQ: {str(e)}"
         )
+
+
+# ---------- Support Plus (admin) ----------
+@router.get("/supportplus", response_model=List[SupportPlusResponse])
+def admin_list_supportplus(
+    school_id: Optional[str] = Query(None, description="Filter by school ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """List all Support Plus records. Optionally filter by school_id."""
+    q = db.query(SupportPlus).order_by(SupportPlus.created_at.desc())
+    if school_id:
+        q = q.filter(SupportPlus.school_id == school_id)
+    rows = q.all()
+    return [
+        SupportPlusResponse(
+            id=r.id,
+            school_id=r.school_id,
+            looking_for=r.looking_for,
+            whatsapp_number=r.whatsapp_number,
+            discussion_datetime=r.discussion_datetime,
+            files=r.files,
+            message=r.message,
+            status=r.status.value if hasattr(r.status, "value") else r.status,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+
+@router.patch("/supportplus/{record_id}", response_model=SupportPlusResponse)
+def admin_update_supportplus_status(
+    record_id: int,
+    data: SupportPlusStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Update status of a Support Plus record."""
+    record = db.query(SupportPlus).filter(SupportPlus.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found.")
+    status_map = {
+        "pending": SupportPlusStatus.PENDING,
+        "in_progress": SupportPlusStatus.IN_PROGRESS,
+        "resolved": SupportPlusStatus.RESOLVED,
+        "cancelled": SupportPlusStatus.CANCELLED,
+    }
+    record.status = status_map[data.status]
+    try:
+        db.commit()
+        db.refresh(record)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return SupportPlusResponse(
+        id=record.id,
+        school_id=record.school_id,
+        looking_for=record.looking_for,
+        whatsapp_number=record.whatsapp_number,
+        discussion_datetime=record.discussion_datetime,
+        files=record.files,
+        message=record.message,
+        status=record.status.value,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+# ---------- Business Inquiry (admin sees all) ----------
+@router.get("/business-inquiry", response_model=List[BusinessInquiryResponse])
+def admin_list_business_inquiry(
+    school_id: Optional[str] = Query(None, description="Filter by school ID (inquiries containing this school)"),
+    date_from: Optional[datetime] = Query(None, description="Filter from date (ISO)"),
+    date_to: Optional[datetime] = Query(None, description="Filter to date (ISO)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """List all business inquiries. Optionally filter by school_id or date range."""
+    q = db.query(BusinessInquiry).order_by(BusinessInquiry.created_at.desc())
+    if school_id:
+        q = q.filter(BusinessInquiry.school_ids.contains([school_id]))
+    if date_from is not None:
+        q = q.filter(BusinessInquiry.created_at >= date_from)
+    if date_to is not None:
+        q = q.filter(BusinessInquiry.created_at <= date_to)
+    rows = q.all()
+    return [
+        BusinessInquiryResponse(
+            id=r.id,
+            school_ids=r.school_ids,
+            guardian_name=r.guardian_name,
+            phone=r.phone,
+            email=r.email,
+            location=r.location,
+            student_name=r.student_name,
+            standard_in_academic=r.standard_in_academic,
+            inquiry_for_class=r.inquiry_for_class,
+            desire_to_know=r.desire_to_know,
+            files=r.files,
+            message=r.message,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]

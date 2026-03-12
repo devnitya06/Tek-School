@@ -7313,6 +7313,126 @@ def delete_listed_school_student(
     db.commit()
     return None
 
+
+# ---------- Support Plus ----------
+@router.post("/supportplus", status_code=status.HTTP_201_CREATED)
+async def create_support_plus(
+    looking_for: str = Form(..., max_length=255),
+    whatsapp_number: str = Form(..., max_length=20),
+    discussion_datetime: str = Form(..., description="ISO format datetime e.g. 2025-03-10T14:30:00"),
+    message: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+):
+    """School creates a Support Plus record. Optional multiple file uploads."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    try:
+        dt = datetime.fromisoformat(discussion_datetime.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid discussion_datetime; use ISO format e.g. 2025-03-10T14:30:00")
+
+    uploaded_urls = []
+    if files:
+        for f in files:
+            if f.filename:
+                try:
+                    url = upload_to_s3(f, f"schools/{school.id}/supportplus")
+                    uploaded_urls.append(url)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"File upload failed: {str(e)}")
+
+    record = SupportPlus(
+        school_id=school.id,
+        looking_for=looking_for,
+        whatsapp_number=whatsapp_number,
+        discussion_datetime=dt,
+        message=message or None,
+        files=uploaded_urls if uploaded_urls else None,
+    )
+    db.add(record)
+    try:
+        db.commit()
+        db.refresh(record)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return SupportPlusResponse(
+        id=record.id,
+        school_id=record.school_id,
+        looking_for=record.looking_for,
+        whatsapp_number=record.whatsapp_number,
+        discussion_datetime=record.discussion_datetime,
+        files=record.files,
+        message=record.message,
+        status=record.status.value if hasattr(record.status, "value") else record.status,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+@router.get("/supportplus", response_model=List[SupportPlusResponse])
+def list_support_plus(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+):
+    """List Support Plus records for the school. Admin can pass school_id to filter."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    rows = db.query(SupportPlus).filter(SupportPlus.school_id == school.id).order_by(SupportPlus.created_at.desc()).all()
+    return [
+        SupportPlusResponse(
+            id=r.id,
+            school_id=r.school_id,
+            looking_for=r.looking_for,
+            whatsapp_number=r.whatsapp_number,
+            discussion_datetime=r.discussion_datetime,
+            files=r.files,
+            message=r.message,
+            status=r.status.value if hasattr(r.status, "value") else r.status,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+
+# ---------- Business Inquiry (school sees inquiries where school is in school_ids) ----------
+@router.get("/business-inquiry", response_model=List[BusinessInquiryResponse])
+def list_business_inquiry(
+    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    date_from: Optional[datetime] = Query(None, description="Filter from date (ISO)"),
+    date_to: Optional[datetime] = Query(None, description="Filter to date (ISO)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+):
+    """List business inquiries for the school (inquiries where this school is in school_ids). Optional date filters."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    q = db.query(BusinessInquiry).filter(BusinessInquiry.school_ids.contains([school.id]))
+    if date_from is not None:
+        q = q.filter(BusinessInquiry.created_at >= date_from)
+    if date_to is not None:
+        q = q.filter(BusinessInquiry.created_at <= date_to)
+    rows = q.order_by(BusinessInquiry.created_at.desc()).all()
+    return [
+        BusinessInquiryResponse(
+            id=r.id,
+            school_ids=r.school_ids,
+            guardian_name=r.guardian_name,
+            phone=r.phone,
+            email=r.email,
+            location=r.location,
+            student_name=r.student_name,
+            standard_in_academic=r.standard_in_academic,
+            inquiry_for_class=r.inquiry_for_class,
+            desire_to_know=r.desire_to_know,
+            files=r.files,
+            message=r.message,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 @router.get("/backup-users", response_model=list[BackupUserResponse])
 def get_backup_users(
     role: str | None = None,

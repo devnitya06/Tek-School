@@ -740,3 +740,56 @@ class SchoolRatingResponse(BaseModel):
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+# Support Plus: school creates; admin updates status
+class SupportPlusCreate(BaseModel):
+    looking_for: str = Field(..., max_length=255)
+    whatsapp_number: str = Field(..., max_length=20)
+    discussion_datetime: datetime
+    message: Optional[str] = None
+
+
+class SupportPlusResponse(BaseModel):
+    id: int
+    school_id: str
+    looking_for: str
+    whatsapp_number: str
+    discussion_datetime: datetime
+    files: Optional[List[str]] = None
+    message: Optional[str] = None
+    status: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SupportPlusStatusUpdate(BaseModel):
+    status: Literal["pending", "in_progress", "resolved", "cancelled"]
+
+
+# Business Inquiry: visitor (non-authenticated) submits; school sees own; admin sees all
+class BusinessInquiryResponse(BaseModel):
+    id: int
+    school_ids: List[str]
+    guardian_name: str
+    phone: str
+    email: str
+    location: Optional[str] = None
+    student_name: Optional[str] = None
+    standard_in_academic: Optional[str] = None
+    inquiry_for_class: Optional[List[str]] = None
+    desire_to_know: Optional[List[str]] = None
+    files: Optional[List[str]] = None
+    message: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BusinessInquiryListFilter(BaseModel):
+    """Query filters for listing inquiries."""
+    school_id: Optional[str] = None  # filter by one school (admin) or scopes to that school (school)
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
