@@ -217,6 +217,17 @@ class SchoolClassSubject(Base):
         foreign_keys="[Exam.subject_id]",
         cascade="all, delete-orphan"
     )
+    question_banks_as_class = relationship(
+        "QuestionBank",
+        foreign_keys="[QuestionBank.school_class_subject_id]",
+        back_populates="school_class_subject"
+    )
+
+    question_banks_as_subject = relationship(
+        "QuestionBank",
+        foreign_keys="[QuestionBank.subject_id]",
+        back_populates="subject"
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -432,39 +443,38 @@ class QuestionBank(Base):
     __tablename__ = "question_banks"
 
     id = Column(Integer, primary_key=True, index=True)
-
-    school_class_subject_id = Column(
-        Integer,
-        ForeignKey("school_classes_subjects.id"),
-        nullable=False
-    )
-
-    chapter_id = Column(
-        Integer,
-        ForeignKey("chapters.id"),
-        nullable=False
-    )
-
-    mcq_marks = Column(Integer, default=2)
-    short_marks = Column(Integer, default=2)
-    long_marks = Column(Integer, default=10)
-
+    board = Column(SQLEnum(SchoolBoard), nullable=True)
+    medium = Column(SQLEnum(SchoolMedium), nullable=True)
+    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+    subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+    mcq_count = Column(Integer, default=0)
+    short_count = Column(Integer, default=0)
+    long_count = Column(Integer, default=0)
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    school_class_subject = relationship("SchoolClassSubject")
-    chapter = relationship("Chapter")
-
+    school_class_subject = relationship(
+        "SchoolClassSubject",
+        back_populates="question_banks_as_class",
+        foreign_keys=[school_class_subject_id]
+    )
+    subject = relationship(
+        "SchoolClassSubject",
+        back_populates="question_banks_as_subject",
+        foreign_keys=[subject_id]
+    )
     questions = relationship(
         "Question",
         back_populates="question_bank",
         cascade="all, delete-orphan"
     )
-
     __table_args__ = (
         UniqueConstraint(
-            "school_class_subject_id", "chapter_id",
-            name="uq_question_bank_per_chapter"
+            "board",
+            "medium",
+            "school_class_subject_id",
+            name="uq_question_bank"
         ),
     )
 
@@ -478,16 +488,17 @@ class Question(Base):
         ForeignKey("question_banks.id", ondelete="CASCADE"),
         nullable=False
     )
+    chapter_id = Column(Integer, ForeignKey("chapters.id"))
 
     question_type = Column(SQLEnum(QuestionType), nullable=False)
     marks = Column(Integer, nullable=False)
-
+    image = Column(String, nullable=True)
     question_text = Column(Text, nullable=False)
-
+    source =Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
     question_bank = relationship("QuestionBank", back_populates="questions")
-
+    chapter = relationship("Chapter")
     options = relationship(
         "QuestionOption",
         back_populates="question",
@@ -511,7 +522,7 @@ class QuestionOption(Base):
     __tablename__ = "question_options"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id"))
+    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"))
 
     option_text = Column(String(255), nullable=False)
     is_correct = Column(Boolean, default=False)
@@ -522,7 +533,7 @@ class QuestionAnswer(Base):
     __tablename__ = "question_answers"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id"), unique=True)
+    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"), unique=True)
 
     answer_text = Column(Text, nullable=False)
 
@@ -532,7 +543,7 @@ class AnswerKeyPoint(Base):
     __tablename__ = "answer_key_points"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id"))
+    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"))
 
     key_point = Column(String(255), nullable=False)
 
