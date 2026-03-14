@@ -276,9 +276,10 @@ class MarksConfig(BaseModel):
 
 
 class QuestionBankCreate(BaseModel):
+    board: SchoolBoard
+    medium: SchoolMedium
     school_class_subject_id: int
-    chapter_id: int
-    marks_config: MarksConfig
+    subject_id: int
 
 class OptionCreate(BaseModel):
     option_text: str
@@ -342,12 +343,60 @@ class KeyPointCreate(BaseModel):
 
 
 class QuestionCreate(BaseModel):
+    chapter_id: Optional[int] = None
     question_type: QuestionType
+    marks: int
     question_text: str
+    image: Optional[str] = None
+    source: Optional[str] = None
 
-    options: list[OptionCreate] | None = None
-    answer: AnswerCreate | None = None
-    key_points: list[KeyPointCreate] | None = None
+    options: Optional[List[OptionCreate]] = None
+    answer: Optional[AnswerCreate] = None
+    key_points: Optional[List[KeyPointCreate]] = None
 class QuestionBulkCreate(BaseModel):
     questions: list[QuestionCreate]
 
+
+class QuestionBankListResponse(BaseModel):
+    id: int
+    board: Optional[str]
+    medium: Optional[str]
+
+    class_name: Optional[str]
+    subject_name: Optional[str]
+
+    mcq_count: int
+    short_count: int
+    long_count: int
+    total_questions: int
+
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+class QuestionBankDetailResponse(BaseModel):
+    id: int
+    board: Optional[str]
+    medium: Optional[str]
+
+    class_name: Optional[str]
+    subject_name: Optional[str]
+
+    mcq_count: int
+    short_count: int
+    long_count: int
+    total_questions: int
+
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+class QuestionBankUpdate(BaseModel):
+    board: Optional[SchoolBoard] = None
+    medium: Optional[SchoolMedium] = None
+    school_class_subject_id: Optional[int] = None
+    subject_id: Optional[int] = None

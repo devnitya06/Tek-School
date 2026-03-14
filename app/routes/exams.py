@@ -32,24 +32,24 @@ def create_question_bank(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.ADMIN))
 ):
-    # 🔒 Check if bank already exists
+
     existing_bank = db.query(QuestionBank).filter(
-        QuestionBank.school_class_subject_id == data.school_class_subject_id,
-        QuestionBank.chapter_id == data.chapter_id
+        QuestionBank.board == data.board,
+        QuestionBank.medium == data.medium,
+        QuestionBank.school_class_subject_id == data.school_class_subject_id
     ).first()
 
     if existing_bank:
         raise HTTPException(
             status_code=400,
-            detail="Question bank already exists for this chapter"
+            detail="Question bank already exists for this class"
         )
 
     bank = QuestionBank(
+        board=data.board,
+        medium=data.medium,
         school_class_subject_id=data.school_class_subject_id,
-        chapter_id=data.chapter_id,
-        mcq_marks=data.marks_config.mcq,
-        short_marks=data.marks_config.short,
-        long_marks=data.marks_config.long,
+        subject_id=data.subject_id,
         created_by=current_user.id
     )
 
@@ -59,74 +59,182 @@ def create_question_bank(
 
     return {
         "message": "Question bank created successfully",
-        "question_bank_id": bank.id
+        "question_bank_id": bank.id,
+        "mcq": bank.mcq_count,
+        "short": bank.short_count,
+        "long": bank.long_count
     }
 
 @router.get(
     "/admin/question-banks",
-    response_model=dict
+    response_model=list[QuestionBankListResponse]
 )
 def list_question_banks(
-    school_board: SchoolBoard | None = None,
-    school_medium: SchoolMedium | None = None,
+    class_id: int | None = None,
     class_name: str | None = None,
-    subject: str | None = None,
+    board: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.ADMIN))
 ):
-    query = (
-        db.query(QuestionBank)
-        .join(SchoolClassSubject)
-        .join(Chapter)
-    )
 
-    # 🔍 Filters
-    if school_board:
-        query = query.filter(SchoolClassSubject.school_board == school_board)
-    if school_medium:
-        query = query.filter(SchoolClassSubject.school_medium == school_medium)
+    query = db.query(QuestionBank)
+
+    # Filter by board
+    if board:
+        query = query.filter(QuestionBank.board == board)
+
+    # Filter by class_id
+    if class_id:
+        query = query.filter(
+            QuestionBank.school_class_subject_id == class_id
+        )
+
+    # Filter by class_name
     if class_name:
-        query = query.filter(SchoolClassSubject.class_name == class_name)
-    if subject:
-        query = query.filter(SchoolClassSubject.subject == subject)
+        query = query.join(
+            SchoolClassSubject,
+            QuestionBank.school_class_subject_id == SchoolClassSubject.id
+        ).filter(
+            SchoolClassSubject.class_name.ilike(f"%{class_name}%")
+        )
 
-    banks = query.all()
+    banks = query.order_by(
+        QuestionBank.created_at.desc()
+    ).all()
 
-    results = []
+    result = []
 
     for bank in banks:
-        questions = bank.questions
 
-        counts = {
-            "total": len(questions),
-            "mcq": sum(q.question_type == QuestionType.mcq for q in questions),
-            "short": sum(q.question_type == QuestionType.short for q in questions),
-            "long": sum(q.question_type == QuestionType.long for q in questions),
-        }
+        class_name_value = None
+        subject_name = None
 
-        results.append({
+        if bank.school_class_subject:
+            class_name_value = bank.school_class_subject.class_name
+
+        if bank.subject:
+            subject_name = bank.subject.subject
+
+        total_questions = (
+            (bank.mcq_count or 0) +
+            (bank.short_count or 0) +
+            (bank.long_count or 0)
+        )
+
+        result.append({
             "id": bank.id,
-            "school_board": bank.school_class_subject.school_board,
-            "school_medium": bank.school_class_subject.school_medium,
-            "class_name": bank.school_class_subject.class_name,
-            "subject": bank.school_class_subject.subject,
-            "chapter": {
-                "id": bank.chapter.id,
-                "name": bank.chapter.title
-            },
-            "marks_config": {
-                "mcq": bank.mcq_marks,
-                "short": bank.short_marks,
-                "long": bank.long_marks
-            },
-            "question_counts": counts,
-            "created_at": bank.created_at
+            "board": bank.board,
+            "medium": bank.medium,
+            "class_name": class_name_value,
+            "subject_name": subject_name,
+            "mcq_count": bank.mcq_count,
+            "short_count": bank.short_count,
+            "long_count": bank.long_count,
+            "total_questions": total_questions,
+            "created_by": bank.created_by,
+            "created_at": bank.created_at,
+            "updated_at": bank.updated_at
         })
 
+    return result
+
+@router.get(
+    "/admin/question-banks/{question_bank_id}",
+    response_model=QuestionBankDetailResponse
+)
+def get_question_bank_detail(
+    question_bank_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    bank = db.query(QuestionBank).filter(
+        QuestionBank.id == question_bank_id
+    ).first()
+
+    if not bank:
+        raise HTTPException(404, "Question bank not found")
+
+    class_name = None
+    subject_name = None
+
+    if bank.school_class_subject:
+        class_name = bank.school_class_subject.class_name
+
+    if bank.subject:
+        subject_name = bank.subject.subject
+
+    total_questions = (
+        (bank.mcq_count or 0) +
+        (bank.short_count or 0) +
+        (bank.long_count or 0)
+    )
+
     return {
-        "total": len(results),
-        "results": results
+        "id": bank.id,
+        "board": bank.board,
+        "medium": bank.medium,
+        "class_name": class_name,
+        "subject_name": subject_name,
+        "mcq_count": bank.mcq_count,
+        "short_count": bank.short_count,
+        "long_count": bank.long_count,
+        "total_questions": total_questions,
+        "created_by": bank.created_by,
+        "created_at": bank.created_at,
+        "updated_at": bank.updated_at
     }
+
+@router.put("/admin/question-banks/{question_bank_id}")
+def update_question_bank(
+    question_bank_id: int,
+    data: QuestionBankUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    bank = db.query(QuestionBank).filter(
+        QuestionBank.id == question_bank_id
+    ).first()
+
+    if not bank:
+        raise HTTPException(404, "Question bank not found")
+
+    if data.board is not None:
+        bank.board = data.board
+
+    if data.medium is not None:
+        bank.medium = data.medium
+
+    if data.school_class_subject_id is not None:
+        bank.school_class_subject_id = data.school_class_subject_id
+
+    if data.subject_id is not None:
+        bank.subject_id = data.subject_id
+
+    db.commit()
+    db.refresh(bank)
+
+    return {"message": "Question bank updated successfully"}
+
+@router.delete("/admin/question-banks/{question_bank_id}")
+def delete_question_bank(
+    question_bank_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    bank = db.query(QuestionBank).filter(
+        QuestionBank.id == question_bank_id
+    ).first()
+
+    if not bank:
+        raise HTTPException(404, "Question bank not found")
+
+    db.delete(bank)
+    db.commit()
+
+    return {"message": "Question bank deleted successfully"}
 
 @router.post(
     "/admin/question-banks/{question_bank_id}/questions",
@@ -138,6 +246,7 @@ def add_questions_to_bank(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.ADMIN))
 ):
+
     question_bank = db.query(QuestionBank).filter(
         QuestionBank.id == question_bank_id
     ).first()
@@ -148,54 +257,72 @@ def add_questions_to_bank(
     created_questions = []
 
     for q in data.questions:
-        # assign marks
-        if q.question_type == QuestionType.mcq:
-            marks = question_bank.mcq_marks
-        elif q.question_type == QuestionType.short:
-            marks = question_bank.short_marks
-        else:
-            marks = question_bank.long_marks
 
         question = Question(
             question_bank_id=question_bank.id,
+            chapter_id=q.chapter_id,
             question_type=q.question_type,
-            marks=marks,
-            question_text=q.question_text
+            marks=q.marks,
+            question_text=q.question_text,
+            image=q.image,
+            source=q.source
         )
+
         db.add(question)
         db.flush()
 
-        # MCQ
+        # Update question bank counts
         if q.question_type == QuestionType.mcq:
+            question_bank.mcq_count += 1
+
+        elif q.question_type == QuestionType.short:
+            question_bank.short_count += 1
+
+        elif q.question_type == QuestionType.long:
+            question_bank.long_count += 1
+
+
+        # MCQ validation
+        if q.question_type == QuestionType.mcq:
+
             if not q.options or len(q.options) < 2:
                 raise HTTPException(400, "MCQ must have at least 2 options")
+
             if sum(o.is_correct for o in q.options) != 1:
                 raise HTTPException(400, "MCQ must have exactly one correct option")
 
             for opt in q.options:
-                db.add(QuestionOption(
-                    question_id=question.id,
-                    option_text=opt.option_text,
-                    is_correct=opt.is_correct
-                ))
+                db.add(
+                    QuestionOption(
+                        question_id=question.id,
+                        option_text=opt.option_text,
+                        is_correct=opt.is_correct
+                    )
+                )
 
-        # Answer
+        # Short / Long answers
         if q.question_type in [QuestionType.short, QuestionType.long]:
+
             if not q.answer:
                 raise HTTPException(400, "Answer required")
 
-            db.add(QuestionAnswer(
-                question_id=question.id,
-                answer_text=q.answer.answer_text
-            ))
-
-        # Key points
-        if q.question_type == QuestionType.long and q.key_points:
-            for kp in q.key_points:
-                db.add(AnswerKeyPoint(
+            db.add(
+                QuestionAnswer(
                     question_id=question.id,
-                    key_point=kp.key_point
-                ))
+                    answer_text=q.answer.answer_text
+                )
+            )
+
+        # Key points for long questions
+        if q.question_type == QuestionType.long and q.key_points:
+
+            for kp in q.key_points:
+                db.add(
+                    AnswerKeyPoint(
+                        question_id=question.id,
+                        key_point=kp.key_point
+                    )
+                )
 
         created_questions.append(question.id)
 
@@ -204,8 +331,130 @@ def add_questions_to_bank(
     return {
         "message": "Questions added successfully",
         "total_added": len(created_questions),
-        "question_ids": created_questions
+        "question_ids": created_questions,
+        "updated_counts": {
+            "mcq": question_bank.mcq_count,
+            "short": question_bank.short_count,
+            "long": question_bank.long_count
+        }
     }
+@router.put("/admin/questions/{question_id}")
+def update_question(
+    question_id: int,
+    data: QuestionCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    question = db.query(Question).filter(
+        Question.id == question_id
+    ).first()
+
+    if not question:
+        raise HTTPException(404, "Question not found")
+
+    # Update basic fields
+    question.chapter_id = data.chapter_id
+    question.question_type = data.question_type
+    question.marks = data.marks
+    question.question_text = data.question_text
+    question.image = data.image
+    question.source = data.source
+
+    # ======================
+    # MCQ Update
+    # ======================
+    if data.question_type == QuestionType.mcq:
+
+        db.query(QuestionOption).filter(
+            QuestionOption.question_id == question.id
+        ).delete()
+
+        if not data.options or len(data.options) < 2:
+            raise HTTPException(400, "MCQ must have at least 2 options")
+
+        if sum(o.is_correct for o in data.options) != 1:
+            raise HTTPException(400, "MCQ must have exactly one correct option")
+
+        for opt in data.options:
+            option = QuestionOption(
+                question_id=question.id,
+                option_text=opt.option_text,
+                is_correct=opt.is_correct
+            )
+            db.add(option)
+
+    # ======================
+    # Short / Long Answer
+    # ======================
+    if data.question_type in [QuestionType.short, QuestionType.long]:
+
+        db.query(QuestionAnswer).filter(
+            QuestionAnswer.question_id == question.id
+        ).delete()
+
+        if not data.answer:
+            raise HTTPException(400, "Answer required")
+
+        answer = QuestionAnswer(
+            question_id=question.id,
+            answer_text=data.answer.answer_text
+        )
+        db.add(answer)
+
+    # ======================
+    # Key Points for Long
+    # ======================
+    if data.question_type == QuestionType.long:
+
+        db.query(AnswerKeyPoint).filter(
+            AnswerKeyPoint.question_id == question.id
+        ).delete()
+
+        if data.key_points:
+            for kp in data.key_points:
+                keypoint = AnswerKeyPoint(
+                    question_id=question.id,
+                    key_point=kp.key_point
+                )
+                db.add(keypoint)
+
+    db.commit()
+
+    return {"message": "Question updated successfully"}
+
+@router.delete("/admin/questions/{question_id}")
+def delete_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+
+    question = db.query(Question).filter(
+        Question.id == question_id
+    ).first()
+
+    if not question:
+        raise HTTPException(404, "Question not found")
+
+    question_bank = db.query(QuestionBank).filter(
+        QuestionBank.id == question.question_bank_id
+    ).first()
+
+    # Decrease count
+    if question.question_type == QuestionType.mcq:
+        question_bank.mcq_count -= 1
+
+    elif question.question_type == QuestionType.short:
+        question_bank.short_count -= 1
+
+    elif question.question_type == QuestionType.long:
+        question_bank.long_count -= 1
+
+    db.delete(question)
+    db.commit()
+
+    return {"message": "Question deleted successfully"}
 
 @router.get("/admin/question-banks/{question_bank_id}")
 def get_question_bank_details(
@@ -329,6 +578,8 @@ def list_questions_with_answers(
             "question_type": q.question_type.value,
             "marks": q.marks,
             "question_text": q.question_text,
+            "source":q.source,
+            "image":q.image,
         }
 
         # ✅ MCQ
