@@ -289,19 +289,29 @@ def verify_school(
 @router.get("/schools/")
 def list_all_schools(
     pagination: PaginationParams = Depends(),
-    id: Optional[str] = Query(None, description="Filter by school ID (exact match)"),
+    school_id: Optional[str] = Query(None, description="Filter by school ID (exact match). No authentication required."),
+    id: Optional[str] = Query(None, description="Alias for school_id (exact match)"),
+    school_name: Optional[str] = Query(None, description="Filter by school name (partial match)"),
     account_type: Optional[str] = Query(None, description="Filter by type: 'business' or 'listing'"),
     is_business_approved: Optional[bool] = Query(None, description="Filter by is_business_approved (true/false)"),
     state: Optional[str] = Query(None, description="Filter by state (partial match)"),
-    district: Optional[str] = Query(None, description="Filter by district (partial match)"),
+    district: Optional[List[str]] = Query(None, description="Filter by district (multiple, exact match). Pass multiple: ?district=Khorda&district=Cuttack"),
+    school_board: Optional[List[str]] = Query(None, description="Filter by school board (multiple). Values: cbse, icse, stateboard, ib, other"),
+    school_medium: Optional[List[str]] = Query(None, description="Filter by school medium (multiple). Values: english, hindi, bilingual, other"),
+    due_installment_type: Optional[List[str]] = Query(None, description="Filter by due_installment_type (multiple, JSON field contains any value)"),
+    teaching_method: Optional[List[str]] = Query(None, description="Filter by teaching_method (multiple, JSON field contains any value)"),
+    transportation_facility: Optional[bool] = Query(None, description="Filter by transportation_facility (true/false)"),
     from_date: Optional[str] = Query(None, description="Filter by created_at from (YYYY-MM-DD)"),
     to_date: Optional[str] = Query(None, description="Filter by created_at to (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
 ):
-    """List all schools with filters. Public endpoint - no authentication required."""
+    """List all schools with filters. Public endpoint - no authentication required. Pass school_id to get a specific school."""
     query = db.query(School)
-    if id:
-        query = query.filter(School.id == id)
+    filter_id = school_id or id
+    if filter_id:
+        query = query.filter(School.id == filter_id)
+    if school_name:
+        query = query.filter(School.school_name.ilike(f"%{school_name}%"))
     if account_type:
         at = account_type.lower()
         if at == "business":
@@ -315,7 +325,31 @@ def list_all_schools(
     if state:
         query = query.filter(School.state.ilike(f"%{state}%"))
     if district:
-        query = query.filter(School.district.ilike(f"%{district}%"))
+        query = query.filter(School.district.in_([d.strip() for d in district if d and d.strip()]))
+    if school_board:
+        try:
+            boards = [SchoolBoard(v.strip().lower()) for v in school_board if v and v.strip()]
+            if boards:
+                query = query.filter(School.school_board.in_(boards))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid school_board. Use: cbse, icse, stateboard, ib, other. {e}")
+    if school_medium:
+        try:
+            mediums = [SchoolMedium(v.strip().lower()) for v in school_medium if v and v.strip()]
+            if mediums:
+                query = query.filter(School.school_medium.in_(mediums))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid school_medium. Use: english, hindi, bilingual, other. {e}")
+    if due_installment_type:
+        conds = [cast(School.due_installment_type, String).ilike(f"%{v.strip()}%") for v in due_installment_type if v and v.strip()]
+        if conds:
+            query = query.filter(or_(*conds))
+    if teaching_method:
+        conds = [cast(School.teaching_method, String).ilike(f"%{v.strip()}%") for v in teaching_method if v and v.strip()]
+        if conds:
+            query = query.filter(or_(*conds))
+    if transportation_facility is not None:
+        query = query.filter(School.transportation_facility == transportation_facility)
     if from_date:
         try:
             from_dt = datetime.strptime(from_date, "%Y-%m-%d")
@@ -355,19 +389,43 @@ def list_all_schools(
     items = [
         {
             "id": s.id,
+            "user_id": s.user_id,
             "school_name": s.school_name,
+            "school_type": s.school_type.value if hasattr(s.school_type, "value") else (s.school_type if s.school_type else None),
+            "school_medium": s.school_medium.value if hasattr(s.school_medium, "value") else (s.school_medium if s.school_medium else None),
+            "school_board": s.school_board.value if hasattr(s.school_board, "value") else (s.school_board if s.school_board else None),
+            "school_logo": s.profile_pic_url,
+            "school_banner": s.banner_pic_url,
+            "establishment_year": s.establishment_year,
+            "pin_code": s.pin_code,
+            "block_division": s.block_division,
+            "district": s.district,
+            "state": s.state,
+            "country": s.country,
             "school_email": s.school_email,
             "school_phone": s.school_phone,
+            "school_alt_phone": s.school_alt_phone,
+            "school_website": s.school_website,
+            "principal_name": s.principal_name,
+            "principal_designation": s.principal_designation,
+            "principal_email": s.principal_email,
+            "principal_phone": s.principal_phone,
             "account_type": s.account_type.value if hasattr(s.account_type, "value") else str(s.account_type),
             "is_business_approved": s.is_business_approved,
             "is_promotion_pending": s.is_promotion_pending,
-            "state": s.state,
-            "district": s.district,
-            "total_students": s.total_students if s.total_students else 0,
-            "total_teachers": s.total_teachers if s.total_teachers else 0,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "school_other_email": s.school_other_email,
+            "school_location": s.school_location,
+            "total_teachers": s.total_teachers if s.total_teachers is not None else 0,
+            "total_students": s.total_students if s.total_students is not None else 0,
+            "class_from": s.class_from,
+            "class_to": s.class_to,
+            "due_installment_type": s.due_installment_type,
+            "transportation_facility": s.transportation_facility if s.transportation_facility is not None else False,
+            "playground_facility": s.playground_facility if s.playground_facility is not None else False,
+            "teaching_method": s.teaching_method,
             "rating_count": rating_by_school.get(s.id, {}).get("rating_count", 0),
             "average_rating": rating_by_school.get(s.id, {}).get("average_rating"),
-            "created_at": s.created_at.isoformat() if s.created_at else None,
         }
         for s in schools
     ]

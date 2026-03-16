@@ -14,7 +14,7 @@ from app.models.admin import Chapter,SchoolClassSubject
 from sqlalchemy.orm import Session,joinedload
 from sqlalchemy import delete, exists, insert,extract,case,cast,String
 from app.db.session import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_current_user_optional
 from app.utils.permission import require_roles, require_roles_allow_listing_school, verify_school_business_access
 from typing import List,Optional
 from app.utils.s3 import upload_to_s3
@@ -58,6 +58,27 @@ def _get_school_for_admin_or_school(
         return school
     else:
         raise HTTPException(status_code=403, detail="Only school and admin users can access this resource.")
+
+
+def _get_school_public_or_auth(
+    current_user: Optional[User], db: Session, school_id: Optional[str] = None
+) -> School:
+    """
+    Get school for public (no auth) or authenticated access.
+    When current_user is None: school_id is required and school is loaded by id (public).
+    When current_user is set: uses _get_school_for_admin_or_school (school_id optional for admin).
+    """
+    if current_user is None:
+        if not school_id:
+            raise HTTPException(
+                status_code=400,
+                detail="school_id is required for public access. Pass school_id as query parameter.",
+            )
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+        return school
+    return _get_school_for_admin_or_school(current_user, db, school_id)
 
 
 @router.patch("/school-profile")
@@ -332,12 +353,12 @@ async def remove_catalogue_image(
 async def get_catalogue(
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
-    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access without auth)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get catalogue images for the school with pagination."""
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    """Get catalogue images for the school with pagination. Public: pass school_id; no auth required."""
+    school = _get_school_public_or_auth(current_user, db, school_id)
     
     catalogue_list = list(school.catalogue) if school.catalogue else []
     total_images = len(catalogue_list)
@@ -476,12 +497,12 @@ async def remove_photo_gallery_image(
 async def get_photo_gallery(
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of images per page (max 100)"),
-    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access without auth)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get photo gallery images for the school with pagination."""
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    """Get photo gallery images for the school with pagination. Public: pass school_id; no auth required."""
+    school = _get_school_public_or_auth(current_user, db, school_id)
     
     gallery_list = list(school.photo_gallery) if school.photo_gallery else []
     total_images = len(gallery_list)
@@ -509,11 +530,12 @@ async def get_photo_gallery(
 
 @router.get("/school")
 async def get_school_profile(
-    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access without auth)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    """Get school profile. Public: pass school_id. Authenticated: school gets own; admin can pass school_id."""
+    school = _get_school_public_or_auth(current_user, db, school_id)
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -6214,11 +6236,15 @@ def create_school_info(
 
 @router.get("/school-info/", response_model=List[SchoolInfoResponse])
 def list_school_info(
-    school_id: Optional[str] = Query(None, description="Filter by school (required for admin when listing one)"),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access; for admin filter)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List school info. School users get their own; admin/super admin get all or filter by school_id."""
+    """List school info. Public: pass school_id (no auth). School users get own; admin/super admin get all or filter by school_id."""
+    if current_user is None:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required for public access.")
+        return db.query(SchoolInfo).filter(SchoolInfo.school_id == school_id).all()
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if school_id:
             q = db.query(SchoolInfo).filter(SchoolInfo.school_id == school_id)
@@ -6234,11 +6260,11 @@ def list_school_info(
 @router.get("/school-info/by-school/{school_id}/", response_model=SchoolInfoResponse)
 def get_school_info_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Get school info by school_id. School users can only get their own."""
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    """Get school info by school_id. Public (no auth). Authenticated school users can only get their own."""
+    if current_user is not None and current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or school.id != school_id:
             raise HTTPException(status_code=404, detail="School info not found or access denied.")
@@ -6350,11 +6376,15 @@ def create_school_class_fee(
 
 @router.get("/class-fees/", response_model=List[SchoolClassFeeResponse])
 def list_school_class_fees(
-    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access; for admin filter)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List class fees. School users get their own; admin/super admin get all or filter by school_id."""
+    """List class fees. Public: pass school_id (no auth). School users get own; admin/super admin get all or filter by school_id."""
+    if current_user is None:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required for public access.")
+        return db.query(SchoolClassFee).filter(SchoolClassFee.school_id == school_id).order_by(SchoolClassFee.class_name).all()
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if school_id:
             q = db.query(SchoolClassFee).filter(SchoolClassFee.school_id == school_id)
@@ -6370,11 +6400,11 @@ def list_school_class_fees(
 @router.get("/class-fees/by-school/{school_id}/", response_model=List[SchoolClassFeeResponse])
 def get_class_fees_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Get all class fees for a school. School users can only get their own."""
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    """Get all class fees for a school. Public (no auth). Authenticated school users can only get their own."""
+    if current_user is not None and current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or school.id != school_id:
             raise HTTPException(status_code=404, detail="Class fees not found or access denied.")
@@ -6494,11 +6524,15 @@ def create_team_member(
 
 @router.get("/team-members/", response_model=List[SchoolTeamMemberResponse])
 def list_team_members(
-    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access; for admin filter)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List team members. School users get their own; admin/super admin get all or filter by school_id."""
+    """List team members. Public: pass school_id (no auth). School users get own; admin/super admin get all or filter by school_id."""
+    if current_user is None:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required for public access.")
+        return db.query(SchoolTeamMember).filter(SchoolTeamMember.school_id == school_id).order_by(SchoolTeamMember.name).all()
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if school_id:
             q = db.query(SchoolTeamMember).filter(SchoolTeamMember.school_id == school_id)
@@ -6514,11 +6548,11 @@ def list_team_members(
 @router.get("/team-members/by-school/{school_id}/", response_model=List[SchoolTeamMemberResponse])
 def get_team_members_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Get all team members for a school. School users can only get their own."""
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    """Get all team members for a school. Public (no auth). Authenticated school users can only get their own."""
+    if current_user is not None and current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or school.id != school_id:
             raise HTTPException(status_code=404, detail="Team members not found or access denied.")
@@ -6652,12 +6686,16 @@ def create_excellent_student(
 
 @router.get("/excellent-students/", response_model=List[ExcellentStudentResponse])
 def list_excellent_students(
-    school_id: Optional[str] = Query(None, description="Filter by school (for admin)"),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access; for admin filter)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List excellent students. School: own only; Admin: all or filter by school_id."""
-    if current_user.role == UserRole.ADMIN:
+    """List excellent students. Public: pass school_id (no auth). School: own only; Admin: all or filter by school_id."""
+    if current_user is None:
+        if not school_id:
+            raise HTTPException(status_code=400, detail="school_id is required for public access.")
+        return db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id).order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc()).all()
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if school_id:
             q = db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id)
         else:
@@ -6672,11 +6710,11 @@ def list_excellent_students(
 @router.get("/excellent-students/by-school/{school_id}/", response_model=List[ExcellentStudentResponse])
 def get_excellent_students_by_school(
     school_id: str,
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Get all excellent students for a school. School can only get own."""
-    if current_user.role != UserRole.ADMIN:
+    """Get all excellent students for a school. Public (no auth). Authenticated school can only get own."""
+    if current_user is not None and current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or school.id != school_id:
             raise HTTPException(status_code=404, detail="Not found or access denied.")
@@ -7401,14 +7439,14 @@ def list_support_plus(
 # ---------- Business Inquiry (school sees inquiries where school is in school_ids) ----------
 @router.get("/business-inquiry", response_model=List[BusinessInquiryResponse])
 def list_business_inquiry(
-    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    school_id: Optional[str] = Query(None, description="School ID (required for public access; for admin/school filter)"),
     date_from: Optional[datetime] = Query(None, description="Filter from date (ISO)"),
     date_to: Optional[datetime] = Query(None, description="Filter to date (ISO)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """List business inquiries for the school (inquiries where this school is in school_ids). Optional date filters."""
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    """List business inquiries for the school. Public: pass school_id (no auth). Auth: school gets own; admin can pass school_id."""
+    school = _get_school_public_or_auth(current_user, db, school_id)
     q = db.query(BusinessInquiry).filter(BusinessInquiry.school_ids.contains([school.id]))
     if date_from is not None:
         q = q.filter(BusinessInquiry.created_at >= date_from)

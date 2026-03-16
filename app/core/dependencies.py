@@ -10,6 +10,29 @@ from typing import Optional
 from app.utils.s3 import upload_to_s3
 
 security = HTTPBearer()
+security_optional = HTTPBearer(auto_error=False)
+
+
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Get current user from JWT if present; otherwise return None (public access).
+    Use for endpoints that allow both authenticated and anonymous access (e.g. public catalogue by school_id).
+    """
+    if not credentials:
+        return None
+    token = credentials.credentials
+    payload = decode_token(token)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    return user
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
