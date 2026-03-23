@@ -1071,6 +1071,16 @@ def get_school_details(
             earned_credit = credits.used_credit if credits else 0   
         teacher_count = db.query(func.count()).select_from(Teacher).filter(Teacher.school_id == school.id).scalar()
         student_count = db.query(func.count()).select_from(Student).filter(Student.school_id == school.id).scalar()
+        rating_stats = (
+            db.query(
+                func.count(SchoolRating.id).label("rating_count"),
+                func.avg(SchoolRating.rating).label("average_rating"),
+            )
+            .filter(SchoolRating.school_id == school.id)
+            .first()
+        )
+        rating_count = int(rating_stats.rating_count or 0)
+        average_rating = float(rating_stats.average_rating) if rating_stats and rating_stats.average_rating is not None else None
 
         return {
             "school_id": school.id,
@@ -1099,6 +1109,8 @@ def get_school_details(
             "principal_email": school.principal_email,
             "teacher_count": teacher_count,
             "student_count": student_count,
+            "rating_count": rating_count,
+            "average_rating": average_rating,
             "available_credit": available_credit,
             "earned_credit": earned_credit,
         }
