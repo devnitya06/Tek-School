@@ -536,6 +536,20 @@ async def get_school_profile(
 ):
     """Get school profile. Public: pass school_id. Authenticated: school gets own; admin can pass school_id."""
     school = _get_school_public_or_auth(current_user, db, school_id)
+    rating_stats = (
+        db.query(
+            func.count(SchoolRating.id).label("rating_count"),
+            func.avg(SchoolRating.rating).label("average_rating"),
+        )
+        .filter(SchoolRating.school_id == school.id)
+        .first()
+    )
+    rating_count = int(rating_stats.rating_count or 0)
+    average_rating = (
+        float(rating_stats.average_rating)
+        if rating_stats and rating_stats.average_rating is not None
+        else None
+    )
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -579,6 +593,8 @@ async def get_school_profile(
         "transportation_facility": school.transportation_facility,
         "playground_facility": school.playground_facility,
         "teaching_method": school.teaching_method,
+        "rating_count": rating_count,
+        "average_rating": average_rating,
     }
 
 # @router.post("/create-class-with-subjects/")
