@@ -108,12 +108,16 @@ def list_question_banks(
 
         class_name_value = None
         subject_name = None
+        class_id_value = None
+        subject_id_value = None
 
         if bank.school_class_subject:
             class_name_value = bank.school_class_subject.class_name
+            class_id_value = bank.school_class_subject.id
 
         if bank.subject:
             subject_name = bank.subject.subject
+            subject_id_value = bank.subject.id 
 
         total_questions = (
             (bank.mcq_count or 0) +
@@ -127,6 +131,8 @@ def list_question_banks(
             "medium": bank.medium,
             "class_name": class_name_value,
             "subject_name": subject_name,
+            "class_id": class_id_value,
+            "subject_id": subject_id_value,
             "mcq_count": bank.mcq_count,
             "short_count": bank.short_count,
             "long_count": bank.long_count,

@@ -414,6 +414,7 @@ class ExamFilterParams(BaseModel):
     teacher_name: Optional[str] = None
     from_date: Optional[datetime] = None
     to_date: Optional[datetime] = None
+    class_name: Optional[str] = None
 
 # class McqCreate(BaseModel):
 #     question: str
