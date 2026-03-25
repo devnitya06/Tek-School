@@ -363,8 +363,9 @@ class QuestionBankListResponse(BaseModel):
     medium: Optional[str]
 
     class_name: Optional[str]
+    class_id: Optional[int]
     subject_name: Optional[str]
-
+    subject_id: Optional[int]
     mcq_count: int
     short_count: int
     long_count: int

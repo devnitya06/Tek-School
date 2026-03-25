@@ -3904,6 +3904,28 @@ def list_exams(
     if filters.subject_id:
         query = query.filter(Exam.subject_id == filters.subject_id)
 
+    # Class name filter
+    if filters.class_name:
+        search = f"%{filters.class_name.strip()}%"
+        query = query.join(Exam.class_obj, isouter=True)\
+                     .join(Exam.subject, isouter=True)\
+                     .filter(
+            or_(
+                Class.name.ilike(search)
+            )
+        )
+
+    # Teacher name filter
+    if filters.teacher_name:
+        search = f"%{filters.teacher_name.strip()}%"
+        query = query.join(Exam.teacher, isouter=True).filter(
+            or_(
+                Teacher.first_name.ilike(search),
+                Teacher.last_name.ilike(search),
+                (Teacher.first_name + " " + Teacher.last_name).ilike(search)
+            )
+        )
+
     # ==================================================
     # PAGINATION
     # ==================================================
