@@ -113,6 +113,58 @@ def get_single_account_configuration(
 
     return config
 
+
+@router.get("/dashboard/counts/")
+def get_dashboard_counts(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN))
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin account is allowed to view dashboard counts."
+        )
+
+    try:
+        total_students = db.query(func.count(Student.id)).scalar() or 0
+        total_staff = db.query(func.count(Staff.id)).scalar() or 0
+        total_present_students = (
+            db.query(func.count(func.distinct(Attendance.student_id)))
+            .filter(
+                Attendance.student_id.isnot(None),
+                Attendance.date == func.current_date(),
+                func.upper(Attendance.status) == "P",
+            )
+            .scalar()
+            or 0
+        )
+        pending_payments_count = (
+            db.query(func.count(PaymentRecord.id))
+            .filter(func.lower(func.trim(PaymentRecord.status)) == "pending")
+            .scalar()
+            or 0
+        )
+        paid_payments_count = (
+            db.query(func.count(PaymentRecord.id))
+            .filter(func.lower(func.trim(PaymentRecord.status)) == "paid")
+            .scalar()
+            or 0
+        )
+
+        return {
+            "total_students": total_students,
+            "total_present_students": total_present_students,
+            "total_staff": total_staff,
+            "pending_payments_count": pending_payments_count,
+            "paid_payments_count": paid_payments_count,
+        }
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}"
+        )
+
+
 @router.put("/account-configurations/{config_id}")
 def update_account_configuration(
     config_id: int,
