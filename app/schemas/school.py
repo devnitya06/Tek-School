@@ -181,13 +181,55 @@ class AttendanceCreate(BaseModel):
     teachers_id: Optional[str]=None
     staff_id: Optional[str]=None
     date: date
-    status: str = Field(..., max_length=1)
+    status: Optional[str] = Field(
+        None,
+        max_length=1,
+        description="Required for student/staff single-shot attendance; for teachers, required unless using mark_in/mark_out.",
+    )
+    action: Optional[Literal["mark_in", "mark_out"]] = Field(
+        None,
+        description="Teacher/staff attendance only: mark_in (present) / optional mark_out. Ignored for students.",
+    )
+    mark_in_at: Optional[datetime] = None
+    mark_out_at: Optional[datetime] = None
     is_verified:bool =Field(default=True)
     is_today_present: bool=Field(default=False)
     model_config = {
         "from_attributes": True
-    } 
-    
+    }
+
+
+class TeacherAttendanceVerifyBody(BaseModel):
+    """Optional times the school accepts when verifying teacher attendance."""
+
+    mark_in_at: Optional[datetime] = None
+    mark_out_at: Optional[datetime] = None
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class AttendanceBulkApproveRequest(BaseModel):
+    attendance_ids: List[int] = Field(
+        ...,
+        min_length=1,
+        description="Attendance record IDs to approve in bulk.",
+    )
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class AttendanceQRCheckinRequest(BaseModel):
+    token: str = Field(..., min_length=8)
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
 class WeekDay(str,Enum):
     MONDAY = "MONDAY"
     TUESDAY = "TUESDAY"

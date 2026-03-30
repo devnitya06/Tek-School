@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers, exams, business_inquiry
 from app.core.config import settings
-from app.db.session import create_tables, add_missing_columns
+from app.db.session import create_tables, add_missing_columns, ensure_attendance_mark_columns
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -29,6 +29,13 @@ app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business I
 
 @app.on_event("startup")
 def on_startup():
+    # Always ensure attendance mark-in/out columns exist.
+    # Prevents runtime failures when code is updated before a manual migration.
+    try:
+        ensure_attendance_mark_columns()
+    except Exception as e:
+        print(f"Error ensuring attendance mark columns: {str(e)}")
+
     run_schema_sync = os.getenv("RUN_SCHEMA_SYNC", "false").lower() == "true"
     if run_schema_sync:
         try:

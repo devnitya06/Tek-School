@@ -83,6 +83,30 @@ def drop_extra_columns():
                     conn.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN "{column}"'))
 
 
+def ensure_attendance_mark_columns():
+    """
+    Ensure attendance mark-in/out columns exist for runtime compatibility.
+    This is a targeted, safe patch for existing databases.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE attendances
+                ADD COLUMN IF NOT EXISTS mark_in_at TIMESTAMP NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE attendances
+                ADD COLUMN IF NOT EXISTS mark_out_at TIMESTAMP NULL
+                """
+            )
+        )
+
+
 # Dependency to get DB session
 def get_db():
     db = SessionLocal()

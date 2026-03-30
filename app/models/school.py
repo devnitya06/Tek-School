@@ -330,6 +330,8 @@ class Attendance(Base):
     teacher = relationship("Teacher", back_populates="attendances")
     staff = relationship("Staff", back_populates="attendances")
     is_today_present = Column(Boolean, default=True, nullable=False)
+    mark_in_at = Column(DateTime, nullable=True)
+    mark_out_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('student_id','date', name='uq_student_attendance'),

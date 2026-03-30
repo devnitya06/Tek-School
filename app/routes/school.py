@@ -1,5 +1,5 @@
-from datetime import datetime,date
-from fastapi import APIRouter, Depends, HTTPException,status,UploadFile,File,Query,Form,Request,Body
+from datetime import datetime, date
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form, Request, Body
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
 from app.models.students import Student,SelfSignedStudent
@@ -16,7 +16,7 @@ from sqlalchemy import delete, exists, insert,extract,case,cast,String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.utils.permission import require_roles, require_roles_allow_listing_school, verify_school_business_access
-from typing import List,Optional
+from typing import List, Optional, Literal
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
 from sqlalchemy import func,and_,or_
@@ -35,6 +35,7 @@ from app.utils.s3 import upload_base64_to_s3
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 router = APIRouter()
+attendance_qr_tokens_by_school = {}
 
 def timer():
     return time.perf_counter()
@@ -2306,16 +2307,6 @@ def create_attendance(
                         detail="Teachers can only mark their own attendance."
                     )
 
-            existing = db.query(Attendance).filter_by(
-                teachers_id=data.teachers_id,
-                date=data.date
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Attendance already recorded for this teacher on this date."
-                )
-
             is_verified = False  # Teacher attendance must be verified later by school
 
         # ✅ Handle Staff Attendance
@@ -2344,16 +2335,6 @@ def create_attendance(
                         detail="Staff can only mark their own attendance."
                     )
 
-            existing = db.query(Attendance).filter_by(
-                staff_id=data.staff_id,
-                date=data.date
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Attendance already recorded for this staff on this date."
-                )
-
             is_verified = False  # Staff attendance must be verified later by school
 
         # ✅ Handle Student Attendance
@@ -2378,46 +2359,135 @@ def create_attendance(
                     detail="Student not found or not in your school."
                 )
 
-            existing = db.query(Attendance).filter_by(
-                student_id=data.student_id,
-                date=data.date
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Attendance already recorded for this student on this date."
-                )
-
         else:
             raise HTTPException(
                 status_code=400,
                 detail="Either student_id, teachers_id, or staff_id is required."
             )
 
-        # ✅ Determine if today’s attendance
+        if data.action == "mark_out" and data.mark_in_at is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="mark_in_at cannot be used with mark_out action.",
+            )
+
+        uses_mark_flow = (
+            data.action is not None
+            or data.mark_in_at is not None
+            or data.mark_out_at is not None
+        )
+        if data.student_id and uses_mark_flow:
+            raise HTTPException(
+                status_code=400,
+                detail="Mark in and mark out are only for teacher/staff attendance; use status for students.",
+            )
+
+        if data.teachers_id:
+            attendance_filters = {"teachers_id": data.teachers_id, "date": data.date}
+        elif data.staff_id:
+            attendance_filters = {"staff_id": data.staff_id, "date": data.date}
+        else:
+            attendance_filters = {"student_id": data.student_id, "date": data.date}
+
+        existing = db.query(Attendance).filter_by(**attendance_filters).first()
+        now_ts = datetime.utcnow()
+
+        def _submission_mode() -> str:
+            if data.action == "mark_out":
+                return "mark_out"
+            if data.action == "mark_in" or data.mark_in_at is not None:
+                return "mark_in"
+            if data.mark_out_at is not None:
+                return "mark_out"
+            return "legacy"
+
+        mode = _submission_mode()
         is_today_present = data.date == date.today()
 
-        # ✅ Create Attendance Record
-        attendance = Attendance(
-            student_id=data.student_id,
-            teachers_id=data.teachers_id,
-            staff_id=data.staff_id,
-            date=data.date,
-            status=data.status,
-            is_verified=is_verified,
-            is_today_present=is_today_present,
-        )
+        if mode == "legacy":
+            if not data.status:
+                raise HTTPException(
+                    status_code=400,
+                    detail="status is required when not using mark_in or mark_out.",
+                )
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Attendance already recorded for this date.",
+                )
+            attendance = Attendance(
+                student_id=data.student_id,
+                teachers_id=data.teachers_id,
+                staff_id=data.staff_id,
+                date=data.date,
+                status=data.status,
+                is_verified=is_verified,
+                is_today_present=is_today_present,
+                mark_in_at=None,
+                mark_out_at=None,
+            )
+            db.add(attendance)
+            db.commit()
+            db.refresh(attendance)
 
-        db.add(attendance)
-        db.commit()
-        db.refresh(attendance)
+        elif mode == "mark_in":
+            mark_in_ts = data.mark_in_at or now_ts
+            mark_out_ts = data.mark_out_at
+            if existing and existing.mark_in_at is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Mark in already recorded for this date.",
+                )
+            if existing:
+                existing.mark_in_at = mark_in_ts
+                existing.status = "P"
+                existing.is_verified = is_verified
+                existing.is_today_present = is_today_present
+                if mark_out_ts is not None:
+                    existing.mark_out_at = mark_out_ts
+                db.commit()
+                db.refresh(existing)
+                attendance = existing
+            else:
+                attendance = Attendance(
+                    student_id=data.student_id,
+                    teachers_id=data.teachers_id,
+                    staff_id=data.staff_id,
+                    date=data.date,
+                    status="P",
+                    is_verified=is_verified,
+                    is_today_present=is_today_present,
+                    mark_in_at=mark_in_ts,
+                    mark_out_at=mark_out_ts,
+                )
+                db.add(attendance)
+                db.commit()
+                db.refresh(attendance)
+
+        else:  # mark_out
+            if not existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Mark in is required first; no attendance record for this date.",
+                )
+            if existing.mark_out_at is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Mark out already recorded for this date.",
+                )
+            existing.mark_out_at = data.mark_out_at or now_ts
+            db.commit()
+            db.refresh(existing)
+            attendance = existing
 
         end = timer()
         return {
             "detail": "Attendance recorded successfully.",
             "id": attendance.id,
             "is_today_present": attendance.is_today_present,
-            "time_taken": round(end - start, 4)
+            "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
+            "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+            "time_taken": round(end - start, 4),
         }
 
     except HTTPException:
@@ -2428,29 +2498,266 @@ def create_attendance(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+@router.post("/attendance/qr-link")
+def create_attendance_qr_link(
+    request: Request,
+    mode: Literal["mark_in", "mark_out"] = Query(
+        "mark_in",
+        description="QR action mode.",
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    Generate a new active QR link for attendance.
+    Requirement: no expiry; re-generating creates a new token.
+    """
+    verify_school_business_access(current_user, db)
+    school_id = current_user.school_profile.id
+
+    token = str(uuid.uuid4())
+    school_qr_data = attendance_qr_tokens_by_school.get(school_id, {})
+    school_qr_data[mode] = token
+    attendance_qr_tokens_by_school[school_id] = school_qr_data
+
+    base_url = str(request.base_url).rstrip("/")
+    qr_url = f"{base_url}/school/attendance/qr-checkin?token={token}"
+    return {
+        "detail": "QR attendance link generated successfully.",
+        "school_id": school_id,
+        "mode": mode,
+        "token": token,
+        "qr_url": qr_url,
+    }
+
+
+@router.get("/attendance/qr-link")
+def get_attendance_qr_link(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    Return current active QR link for attendance.
+    Frontend can call this to fetch URL and generate QR code.
+    """
+    verify_school_business_access(current_user, db)
+    school_id = current_user.school_profile.id
+    qr_data = attendance_qr_tokens_by_school.get(school_id, {})
+    mark_in_token = qr_data.get("mark_in")
+    mark_out_token = qr_data.get("mark_out")
+    if not mark_in_token and not mark_out_token:
+        raise HTTPException(
+            status_code=404,
+            detail="No active QR attendance link found. Please generate one first.",
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    mark_in_qr_url = (
+        f"{base_url}/school/attendance/qr-checkin?token={mark_in_token}"
+        if mark_in_token
+        else None
+    )
+    mark_out_qr_url = (
+        f"{base_url}/school/attendance/qr-checkin?token={mark_out_token}"
+        if mark_out_token
+        else None
+    )
+    return {
+        "detail": "Active QR attendance link fetched successfully.",
+        "school_id": school_id,
+        "mark_in": {
+            "token": mark_in_token,
+            "qr_url": mark_in_qr_url,
+        },
+        "mark_out": {
+            "token": mark_out_token,
+            "qr_url": mark_out_qr_url,
+        },
+    }
+
+
+@router.post("/attendance/qr-checkin")
+def qr_attendance_checkin(
+    data: AttendanceQRCheckinRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.TEACHER, UserRole.STAFF)),
+):
+    """
+    Teacher/staff scans QR and marks attendance IN automatically.
+    """
+    if current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        school_id = teacher.school_id
+        person_filters = {"teachers_id": teacher.id}
+        role_label = "teacher"
+        person_id = teacher.id
+    else:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        school_id = staff.school_id
+        person_filters = {"staff_id": staff.id}
+        role_label = "staff"
+        person_id = staff.id
+
+    qr_data = attendance_qr_tokens_by_school.get(school_id, {})
+    mark_in_token = qr_data.get("mark_in")
+    mark_out_token = qr_data.get("mark_out")
+    if not mark_in_token and not mark_out_token:
+        raise HTTPException(
+            status_code=400,
+            detail="No active attendance QR link for this school. Please ask school to generate a new link.",
+        )
+    if data.token == mark_in_token:
+        qr_mode = "mark_in"
+    elif data.token == mark_out_token:
+        qr_mode = "mark_out"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid QR link.")
+
+    today = date.today()
+    existing = db.query(Attendance).filter_by(date=today, **person_filters).first()
+    now_ts = datetime.utcnow()
+
+    if qr_mode == "mark_in":
+        if existing and existing.mark_in_at is not None:
+            return {
+                "detail": "Mark in already recorded for today.",
+                "mode": "mark_in",
+                "id": existing.id,
+                "role": role_label,
+                "person_id": person_id,
+                "date": today.isoformat(),
+                "mark_in_at": existing.mark_in_at.isoformat() if existing.mark_in_at else None,
+                "mark_out_at": existing.mark_out_at.isoformat() if existing.mark_out_at else None,
+            }
+
+        if existing:
+            existing.mark_in_at = now_ts
+            existing.status = "P"
+            existing.is_today_present = True
+            existing.is_verified = False
+            db.commit()
+            db.refresh(existing)
+            attendance = existing
+        else:
+            attendance = Attendance(
+                student_id=None,
+                teachers_id=person_id if role_label == "teacher" else None,
+                staff_id=person_id if role_label == "staff" else None,
+                date=today,
+                status="P",
+                is_verified=False,
+                is_today_present=True,
+                mark_in_at=now_ts,
+                mark_out_at=None,
+            )
+            db.add(attendance)
+            db.commit()
+            db.refresh(attendance)
+
+        success_detail = "Mark in recorded successfully via QR."
+    else:
+        if not existing or existing.mark_in_at is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Mark in is required first; cannot mark out via QR.",
+            )
+        if existing.mark_out_at is not None:
+            return {
+                "detail": "Mark out already recorded for today.",
+                "mode": "mark_out",
+                "id": existing.id,
+                "role": role_label,
+                "person_id": person_id,
+                "date": today.isoformat(),
+                "mark_in_at": existing.mark_in_at.isoformat() if existing.mark_in_at else None,
+                "mark_out_at": existing.mark_out_at.isoformat() if existing.mark_out_at else None,
+            }
+
+        existing.mark_out_at = now_ts
+        existing.is_verified = False
+        db.commit()
+        db.refresh(existing)
+        attendance = existing
+        success_detail = "Mark out recorded successfully via QR."
+
+    return {
+        "detail": success_detail,
+        "mode": qr_mode,
+        "id": attendance.id,
+        "role": role_label,
+        "person_id": person_id,
+        "date": attendance.date.isoformat(),
+        "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
+        "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+    }
+
+
+@router.get("/attendance/qr-checkin")
+def qr_attendance_checkin_get(
+    token: str = Query(..., min_length=8),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.TEACHER, UserRole.STAFF)),
+):
+    """
+    Same as POST /attendance/qr-checkin, but allows token in query string.
+    Useful when QR directly opens a URL from scanner.
+    """
+    return qr_attendance_checkin(
+        data=AttendanceQRCheckinRequest(token=token),
+        db=db,
+        current_user=current_user,
+    )
     
 @router.post("/attendance/teacher-attendance/verify/{attendance_id}") 
 def verify_teacher_attendance(
     attendance_id: int,
+    body: TeacherAttendanceVerifyBody = Body(default_factory=TeacherAttendanceVerifyBody),
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.SCHOOL)),
 ):
+    verify_school_business_access(current_user, db)
+
     attendance = db.query(Attendance).filter(
         Attendance.id == attendance_id,
-        Attendance.teachers_id.isnot(None)
+        Attendance.teachers_id.isnot(None),
     ).first()
 
     if not attendance:
         raise HTTPException(status_code=404, detail="Teacher attendance not found.")
 
+    teacher = db.query(Teacher).filter(Teacher.id == attendance.teachers_id).first()
+    if not teacher or teacher.school_id != current_user.school_profile.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only verify attendance for teachers in your school.",
+        )
+
     if attendance.is_verified:
         raise HTTPException(status_code=400, detail="Attendance already verified.")
+
+    if body.mark_in_at is not None:
+        attendance.mark_in_at = body.mark_in_at
+    if body.mark_out_at is not None:
+        attendance.mark_out_at = body.mark_out_at
 
     attendance.is_verified = True
     db.commit()
     db.refresh(attendance)
 
-    return {"detail": "Teacher attendance verified successfully."}
+    return {
+        "detail": "Teacher attendance verified successfully.",
+        "id": attendance.id,
+        "is_verified": attendance.is_verified,
+        "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
+        "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+    }
 
 
 @router.post("/attendance/staff-attendance/verify/{attendance_id}") 
@@ -2490,6 +2797,264 @@ def verify_staff_attendance(
     db.refresh(attendance)
 
     return {"detail": "Staff attendance verified successfully."}
+
+
+@router.get("/attendance/teachers/mark-times/")
+def list_teacher_mark_in_out(
+    from_date: Optional[date] = Query(
+        None,
+        description="Inclusive start date. With to_date defaults to a range; if both omitted, today only.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        description="Inclusive end date.",
+    ),
+    teachers_id: Optional[str] = Query(
+        None,
+        description="Filter by a single teacher id (e.g. TCH-123456).",
+    ),
+    is_verified: Optional[bool] = Query(
+        None,
+        description="If true, only verified rows; if false, only not verified; if omitted, all.",
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    List teacher attendance with mark-in / mark-out times for the school.
+    School can use this to review timings before calling teacher-attendance verify.
+    """
+    verify_school_business_access(current_user, db)
+    school_id = current_user.school_profile.id
+
+    today = date.today()
+    fd = from_date if from_date is not None else (to_date if to_date is not None else today)
+    td = to_date if to_date is not None else (from_date if from_date is not None else today)
+    if fd > td:
+        raise HTTPException(
+            status_code=400,
+            detail="from_date must be on or before to_date.",
+        )
+
+    q = (
+        db.query(Attendance, Teacher)
+        .join(Teacher, Teacher.id == Attendance.teachers_id)
+        .filter(
+            Teacher.school_id == school_id,
+            Attendance.teachers_id.isnot(None),
+            Attendance.date.between(fd, td),
+        )
+    )
+    if teachers_id:
+        q = q.filter(Attendance.teachers_id == teachers_id)
+    if is_verified is not None:
+        if is_verified:
+            q = q.filter(Attendance.is_verified.is_(True))
+        else:
+            q = q.filter(
+                or_(
+                    Attendance.is_verified.is_(False),
+                    Attendance.is_verified.is_(None),
+                )
+            )
+
+    rows = q.order_by(Attendance.date.desc(), Teacher.first_name, Teacher.last_name).all()
+
+    items = []
+    for att, teacher in rows:
+        items.append(
+            {
+                "attendance_id": att.id,
+                "teachers_id": att.teachers_id,
+                "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip(),
+                "date": att.date.isoformat(),
+                "status": att.status,
+                "mark_in_at": att.mark_in_at.isoformat() if att.mark_in_at else None,
+                "mark_out_at": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
+            }
+        )
+
+    return {
+        "from_date": fd.isoformat(),
+        "to_date": td.isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/attendance/mark-list/")
+def list_staff_teacher_marks(
+    from_date: Optional[date] = Query(
+        None,
+        description="Inclusive start date. If omitted with to_date, uses to_date; if both omitted, today.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        description="Inclusive end date.",
+    ),
+    role: Optional[Literal["teacher", "staff"]] = Query(
+        None,
+        description="Filter by role. Omit to include both teacher and staff.",
+    ),
+    is_verified: Optional[bool] = Query(
+        None,
+        description="Filter approval status. true=approved only, false=pending only.",
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    School can view teacher/staff mark-in and mark-out list.
+    """
+    verify_school_business_access(current_user, db)
+    school_id = current_user.school_profile.id
+
+    today = date.today()
+    fd = from_date if from_date is not None else (to_date if to_date is not None else today)
+    td = to_date if to_date is not None else (from_date if from_date is not None else today)
+    if fd > td:
+        raise HTTPException(status_code=400, detail="from_date must be on or before to_date.")
+
+    items = []
+
+    if role in (None, "teacher"):
+        teacher_q = (
+            db.query(Attendance, Teacher)
+            .join(Teacher, Teacher.id == Attendance.teachers_id)
+            .filter(
+                Teacher.school_id == school_id,
+                Attendance.teachers_id.isnot(None),
+                Attendance.date.between(fd, td),
+            )
+        )
+        if is_verified is not None:
+            if is_verified:
+                teacher_q = teacher_q.filter(Attendance.is_verified.is_(True))
+            else:
+                teacher_q = teacher_q.filter(
+                    or_(Attendance.is_verified.is_(False), Attendance.is_verified.is_(None))
+                )
+
+        for att, teacher in teacher_q.all():
+            items.append(
+                {
+                    "attendance_id": att.id,
+                    "id": teacher.id,
+                    "name": f"{teacher.first_name} {teacher.last_name}".strip(),
+                    "role": "teacher",
+                    "mark_in": att.mark_in_at.isoformat() if att.mark_in_at else None,
+                    "mark_out": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                    "date": att.date.isoformat(),
+                    "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
+                }
+            )
+
+    if role in (None, "staff"):
+        staff_q = (
+            db.query(Attendance, Staff)
+            .join(Staff, Staff.id == Attendance.staff_id)
+            .filter(
+                Staff.school_id == school_id,
+                Attendance.staff_id.isnot(None),
+                Attendance.date.between(fd, td),
+            )
+        )
+        if is_verified is not None:
+            if is_verified:
+                staff_q = staff_q.filter(Attendance.is_verified.is_(True))
+            else:
+                staff_q = staff_q.filter(
+                    or_(Attendance.is_verified.is_(False), Attendance.is_verified.is_(None))
+                )
+
+        for att, staff in staff_q.all():
+            items.append(
+                {
+                    "attendance_id": att.id,
+                    "id": staff.id,
+                    "name": f"{staff.first_name} {staff.last_name}".strip(),
+                    "role": "staff",
+                    "mark_in": att.mark_in_at.isoformat() if att.mark_in_at else None,
+                    "mark_out": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                    "date": att.date.isoformat(),
+                    "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
+                }
+            )
+
+    items.sort(key=lambda x: (x["date"], x["role"], x["name"]), reverse=True)
+    return {
+        "from_date": fd.isoformat(),
+        "to_date": td.isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.post("/attendance/mark-list/approve")
+def bulk_approve_staff_teacher_marks(
+    data: AttendanceBulkApproveRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    School can approve multiple teacher/staff attendance mark records at once.
+    """
+    verify_school_business_access(current_user, db)
+    school_id = current_user.school_profile.id
+
+    attendance_rows = (
+        db.query(Attendance)
+        .filter(Attendance.id.in_(data.attendance_ids))
+        .all()
+    )
+    found_ids = {row.id for row in attendance_rows}
+    missing_ids = sorted(set(data.attendance_ids) - found_ids)
+
+    if not attendance_rows:
+        raise HTTPException(status_code=404, detail="No attendance records found for given IDs.")
+
+    # Enforce school ownership and only teacher/staff attendance.
+    for row in attendance_rows:
+        if row.teachers_id:
+            teacher = db.query(Teacher).filter(Teacher.id == row.teachers_id).first()
+            if not teacher or teacher.school_id != school_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Attendance id {row.id} does not belong to a teacher in your school.",
+                )
+        elif row.staff_id:
+            staff = db.query(Staff).filter(Staff.id == row.staff_id).first()
+            if not staff or staff.school_id != school_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Attendance id {row.id} does not belong to a staff member in your school.",
+                )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Attendance id {row.id} is not a teacher/staff attendance record.",
+            )
+
+    approved_count = 0
+    already_approved_ids = []
+    for row in attendance_rows:
+        if row.is_verified:
+            already_approved_ids.append(row.id)
+            continue
+        row.is_verified = True
+        approved_count += 1
+
+    db.commit()
+
+    return {
+        "detail": "Attendance records processed successfully.",
+        "requested_count": len(data.attendance_ids),
+        "found_count": len(attendance_rows),
+        "approved_count": approved_count,
+        "already_approved_ids": sorted(already_approved_ids),
+        "missing_ids": missing_ids,
+    }
 
 
 @router.get("/student/{student_id}/month/{year}/{month}")
