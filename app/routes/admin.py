@@ -117,21 +117,40 @@ def get_single_account_configuration(
 @router.get("/dashboard/counts/")
 def get_dashboard_counts(
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN))
+    current_user=Depends(require_roles(UserRole.SCHOOL))
 ):
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role != UserRole.SCHOOL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to view dashboard counts."
+            detail="Only school account is allowed to view dashboard counts."
         )
 
     try:
-        total_students = db.query(func.count(Student.id)).scalar() or 0
-        total_staff = db.query(func.count(Staff.id)).scalar() or 0
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School profile not found."
+            )
+
+        total_students = (
+            db.query(func.count(Student.id))
+            .filter(Student.school_id == school.id)
+            .scalar()
+            or 0
+        )
+        total_staff = (
+            db.query(func.count(Staff.id))
+            .filter(Staff.school_id == school.id)
+            .scalar()
+            or 0
+        )
         total_present_students = (
             db.query(func.count(func.distinct(Attendance.student_id)))
+            .join(Student, Student.id == Attendance.student_id)
             .filter(
                 Attendance.student_id.isnot(None),
+                Student.school_id == school.id,
                 Attendance.date == func.current_date(),
                 func.upper(Attendance.status) == "P",
             )
@@ -140,13 +159,21 @@ def get_dashboard_counts(
         )
         pending_payments_count = (
             db.query(func.count(PaymentRecord.id))
-            .filter(func.lower(func.trim(PaymentRecord.status)) == "pending")
+            .join(Worker, Worker.id == PaymentRecord.worker_id)
+            .filter(
+                Worker.school_id == school.id,
+                func.lower(func.trim(PaymentRecord.status)) == "pending"
+            )
             .scalar()
             or 0
         )
         paid_payments_count = (
             db.query(func.count(PaymentRecord.id))
-            .filter(func.lower(func.trim(PaymentRecord.status)) == "paid")
+            .join(Worker, Worker.id == PaymentRecord.worker_id)
+            .filter(
+                Worker.school_id == school.id,
+                func.lower(func.trim(PaymentRecord.status)) == "paid"
+            )
             .scalar()
             or 0
         )
