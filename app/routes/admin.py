@@ -5,7 +5,7 @@ from app.models.admin import *
 from app.models.school import School,StudentExamData,SchoolBoard,SchoolMedium,SchoolType,HomeAssignment,SupportPlus,SupportPlusStatus,BusinessInquiry
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject
-from app.models.students import Student,StudentStatus,SelfSignedStudent
+from app.models.students import Student, StudentStatus, SelfSignedStudent
 from app.models.staff import Staff
 from app.schemas.admin import *
 from app.schemas.school import SchoolRatingCreate, SchoolRatingResponse, SupportPlusResponse, SupportPlusStatusUpdate, BusinessInquiryResponse
@@ -16,14 +16,14 @@ from app.models.teachers import *
 from sqlalchemy.exc import SQLAlchemyError
 from app.utils.permission import require_roles
 from app.schemas.users import UserRole
-from sqlalchemy import func,cast, String,case,or_,and_
+from sqlalchemy import func, cast, String, case, or_, and_
 from collections import defaultdict
+from calendar import monthrange
 from app.core.dependencies import get_current_user
 from typing import Optional, List
 from app.services.pagination import PaginationParams
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date, timezone
 from app.utils.services import get_validity_days
-from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
 router = APIRouter()
 @router.post("/account-credit/configuration/")
@@ -112,84 +112,6 @@ def get_single_account_configuration(
         raise HTTPException(status_code=404, detail="Configuration not found")
 
     return config
-
-
-@router.get("/dashboard/counts/")
-def get_dashboard_counts(
-    db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.SCHOOL))
-):
-    if current_user.role != UserRole.SCHOOL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school account is allowed to view dashboard counts."
-        )
-
-    try:
-        school = db.query(School).filter(School.user_id == current_user.id).first()
-        if not school:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="School profile not found."
-            )
-
-        total_students = (
-            db.query(func.count(Student.id))
-            .filter(Student.school_id == school.id)
-            .scalar()
-            or 0
-        )
-        total_staff = (
-            db.query(func.count(Staff.id))
-            .filter(Staff.school_id == school.id)
-            .scalar()
-            or 0
-        )
-        total_present_students = (
-            db.query(func.count(func.distinct(Attendance.student_id)))
-            .join(Student, Student.id == Attendance.student_id)
-            .filter(
-                Attendance.student_id.isnot(None),
-                Student.school_id == school.id,
-                Attendance.date == func.current_date(),
-                func.upper(Attendance.status) == "P",
-            )
-            .scalar()
-            or 0
-        )
-        pending_payments_count = (
-            db.query(func.count(PaymentRecord.id))
-            .join(Worker, Worker.id == PaymentRecord.worker_id)
-            .filter(
-                Worker.school_id == school.id,
-                func.lower(func.trim(PaymentRecord.status)) == "pending"
-            )
-            .scalar()
-            or 0
-        )
-        paid_payments_count = (
-            db.query(func.count(PaymentRecord.id))
-            .join(Worker, Worker.id == PaymentRecord.worker_id)
-            .filter(
-                Worker.school_id == school.id,
-                func.lower(func.trim(PaymentRecord.status)) == "paid"
-            )
-            .scalar()
-            or 0
-        )
-
-        return {
-            "total_students": total_students,
-            "total_present_students": total_present_students,
-            "total_staff": total_staff,
-            "pending_payments_count": pending_payments_count,
-            "paid_payments_count": paid_payments_count,
-        }
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error occurred: {str(e)}"
-        )
 
 
 @router.put("/account-configurations/{config_id}")
@@ -363,6 +285,72 @@ def verify_school(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error occurred: {str(e)}"
         )
+
+
+@router.get("/platform-summary/")
+def get_admin_platform_summary(
+    month: int = Query(..., ge=1, le=12, description="Calendar month (1-12)"),
+    year: int = Query(..., ge=2000, le=2100, description="Four-digit year"),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN)),
+):
+    period_start_date = date(year, month, 1)
+    period_end_date = date(year, month, monthrange(year, month)[1])
+    range_start = datetime(year, month, 1)
+    range_end_exclusive = (
+        datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+    )
+
+    def in_created_month(column):
+        return and_(column >= range_start, column < range_end_exclusive)
+
+    total_business_school_count = (
+        db.query(func.count(School.id))
+        .filter(
+            School.account_type == SchoolAccountType.BUSINESS,
+            in_created_month(School.created_at),
+        )
+        .scalar()
+    ) or 0
+
+    total_listing_school_count = (
+        db.query(func.count(School.id))
+        .filter(
+            School.account_type == SchoolAccountType.LISTING,
+            in_created_month(School.created_at),
+        )
+        .scalar()
+    ) or 0
+
+    total_teachers = (
+        db.query(func.count(Teacher.id))
+        .filter(in_created_month(Teacher.created_at))
+        .scalar()
+    ) or 0
+
+    total_students = (
+        db.query(func.count(Student.id))
+        .filter(in_created_month(Student.created_at))
+        .scalar()
+    ) or 0
+
+    total_self_signup_students = (
+        db.query(func.count(SelfSignedStudent.id))
+        .filter(in_created_month(SelfSignedStudent.created_at))
+        .scalar()
+    ) or 0
+
+    return {
+        "month": month,
+        "year": year,
+        "period_start": period_start_date.isoformat(),
+        "period_end": period_end_date.isoformat(),
+        "total_business_school_count": total_business_school_count,
+        "total_listing_school_count": total_listing_school_count,
+        "total_teachers": total_teachers,
+        "total_students": total_students,
+        "total_self_signup_students": total_self_signup_students,
+    }
 
 
 @router.get("/schools/")

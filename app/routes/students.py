@@ -1,22 +1,36 @@
 from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
 from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction,PaymentTransactionStatus
-from app.models.school import School,Class,Section,Attendance,Transport,StudentExamData,BankAccount,Exam,ExamTypeEnum,class_subjects
+from app.models.school import (
+    School,
+    Class,
+    Section,
+    Attendance,
+    Transport,
+    StudentExamData,
+    BankAccount,
+    Exam,
+    ExamTypeEnum,
+    ExamStatusEnum,
+    EvaluationScopeEnum,
+    class_subjects,
+)
 from app.models.staff import Staff
 from app.models.teachers import TeacherClassSectionSubject
 from app.schemas.users import UserRole
 from app.schemas.students import *
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, exists
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles, verify_school_business_access
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
-from datetime import datetime, timedelta,date
+from datetime import datetime, timedelta, date
 from typing import List, Optional
+from calendar import monthrange
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
@@ -26,6 +40,44 @@ from app.utils.payment_calculations import calculate_installment_pending_amount,
 import asyncio
 from starlette.concurrency import run_in_threadpool
 router = APIRouter()
+
+
+def _student_visible_active_exams_query(db: Session, student: Student):
+    """Same visibility rules as GET /school/exams/ for STUDENT role."""
+    admin_exam_condition = exists().where(
+        and_(
+            class_subjects.c.school_class_subject_id == Exam.selected_class_id,
+            class_subjects.c.class_id == student.class_id,
+        )
+    )
+    return db.query(Exam).filter(
+        or_(
+            and_(
+                Exam.created_by_admin == False,
+                Exam.class_id == student.class_id,
+                Exam.sections.any(Section.id == student.section_id),
+            ),
+            and_(Exam.created_by_admin == True, admin_exam_condition),
+        ),
+        Exam.status == ExamStatusEnum.ACTIVE,
+        or_(
+            Exam.created_by_admin == True,
+            and_(
+                Exam.created_by_admin == False,
+                or_(
+                    and_(
+                        Exam.evaluation_scope == EvaluationScopeEnum.INTERNAL,
+                        Exam.school_id == student.school_id,
+                    ),
+                    and_(
+                        Exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL,
+                        Exam.school_id != student.school_id,
+                    ),
+                    Exam.evaluation_scope == EvaluationScopeEnum.BOTH,
+                ),
+            ),
+        ),
+    )
 @router.post("/students/create")
 def create_student(
     data: StudentCreateRequest,
@@ -1446,6 +1498,134 @@ def get_own_student_profile(
             "floor_name": student.permanent_address.floor_name
         } if student.permanent_address else None
     }
+
+
+@router.get("/students/me/dashboard-summary/")
+def get_student_dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.STUDENT)),
+):
+    student = (
+        db.query(Student)
+        .filter(Student.user_id == current_user.id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    visible_exams = _student_visible_active_exams_query(db, student)
+    total_mock_test = visible_exams.filter(Exam.exam_type == ExamTypeEnum.MOCK).count()
+    rank_test_total = visible_exams.filter(Exam.exam_type == ExamTypeEnum.RANK).count()
+
+    attend_mock_test = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.MOCK,
+            StudentExamData.is_submitted == True,
+        )
+        .scalar()
+    ) or 0
+
+    rank_test_attend = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.RANK,
+            StudentExamData.is_submitted == True,
+        )
+        .scalar()
+    ) or 0
+
+    attendance_present = (
+        db.query(func.count(Attendance.id))
+        .filter(
+            Attendance.student_id == student.id,
+            func.upper(Attendance.status) == "P",
+        )
+        .scalar()
+    ) or 0
+
+    attendance_absent = (
+        db.query(func.count(Attendance.id))
+        .filter(
+            Attendance.student_id == student.id,
+            func.upper(Attendance.status) == "A",
+        )
+        .scalar()
+    ) or 0
+
+    return {
+        "attendance_present": attendance_present,
+        "attendance_absent": attendance_absent,
+        "total_mock_test": total_mock_test,
+        "attend_mock_test": attend_mock_test,
+        "rank_test_total": rank_test_total,
+        "rank_test_attend": rank_test_attend,
+    }
+
+
+@router.get("/students/me/attendance-percentage/")
+def get_student_attendance_percentage(
+    month: int = Query(..., ge=1, le=12, description="Calendar month (1-12)"),
+    year: int = Query(..., ge=2000, le=2100, description="Four-digit year"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.STUDENT)),
+):
+    student = (
+        db.query(Student)
+        .filter(Student.user_id == current_user.id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    period_start = date(year, month, 1)
+    period_end = date(year, month, monthrange(year, month)[1])
+
+    present_count = (
+        db.query(func.count(Attendance.id))
+        .filter(
+            Attendance.student_id == student.id,
+            Attendance.date >= period_start,
+            Attendance.date <= period_end,
+            func.upper(Attendance.status) == "P",
+        )
+        .scalar()
+    ) or 0
+
+    absent_count = (
+        db.query(func.count(Attendance.id))
+        .filter(
+            Attendance.student_id == student.id,
+            Attendance.date >= period_start,
+            Attendance.date <= period_end,
+            func.upper(Attendance.status) == "A",
+        )
+        .scalar()
+    ) or 0
+
+    total_marked = present_count + absent_count
+    if total_marked == 0:
+        present_pct = 0.0
+        absent_pct = 0.0
+    else:
+        present_pct = round(100.0 * present_count / total_marked, 2)
+        absent_pct = round(100.0 * absent_count / total_marked, 2)
+
+    return {
+        "month": month,
+        "year": year,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "present_count": present_count,
+        "absent_count": absent_count,
+        "attendance_present_percentage": present_pct,
+        "attendance_absent_percentage": absent_pct,
+    }
+
 
 @router.get("/e-books/subjects/")
 def get_student_subjects(

@@ -1,8 +1,16 @@
+import calendar
 from datetime import datetime, date
+from datetime import time as dt_time
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form, Request, Body
 from app.models.users import User
 from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPaymentTransaction
-from app.models.students import Student,SelfSignedStudent
+from app.models.students import (
+    Student,
+    SelfSignedStudent,
+    StudentPayment,
+    StudentPaymentTransaction,
+    PaymentTransactionStatus,
+)
 from app.models.staff import Staff
 from app.models.school import *
 from app.models.admin import FAQ, school_faqs
@@ -26,7 +34,8 @@ import hmac
 import hashlib
 import uuid
 import time
-from app.utils.services import is_time_overlap    
+from app.utils.services import is_time_overlap
+from app.utils.payment_calculations import calculate_installment_pending_amount
 from app.core.config import settings
 from app.services.students import update_class_ranks
 from app.services.pagination import PaginationParams
@@ -2277,7 +2286,657 @@ def get_school_dashboard(
         "exam_count": exam_count,
         "transport_count": transport_count,
     }
-    
+
+
+@router.get("/dashboard/d1/counts/")
+def get_dashboard_counts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    role_display = getattr(current_user.role, "value", current_user.role)
+
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Only school account can access this endpoint. Your role is: {role_display}.",
+        )
+
+    try:
+        verify_school_business_access(current_user, db)
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School profile not found.",
+            )
+
+        today = date.today()
+
+        total_students = (
+            db.query(func.count(Student.id))
+            .filter(Student.school_id == school.id)
+            .scalar()
+            or 0
+        )
+        today_present_students = (
+            db.query(func.count(func.distinct(Attendance.student_id)))
+            .join(Student, Student.id == Attendance.student_id)
+            .filter(
+                Attendance.student_id.isnot(None),
+                Student.school_id == school.id,
+                Attendance.date == func.current_date(),
+                func.upper(Attendance.status) == "P",
+            )
+            .scalar()
+            or 0
+        )
+
+        total_teachers = (
+            db.query(func.count(Teacher.id))
+            .filter(Teacher.school_id == school.id)
+            .scalar()
+            or 0
+        )
+        today_present_teachers = (
+            db.query(func.count(func.distinct(Attendance.teachers_id)))
+            .join(Teacher, Teacher.id == Attendance.teachers_id)
+            .filter(
+                Attendance.teachers_id.isnot(None),
+                Teacher.school_id == school.id,
+                Attendance.date == func.current_date(),
+                func.upper(Attendance.status) == "P",
+            )
+            .scalar()
+            or 0
+        )
+
+        total_staff = (
+            db.query(func.count(Staff.id))
+            .filter(Staff.school_id == school.id)
+            .scalar()
+            or 0
+        )
+        today_present_staff = (
+            db.query(func.count(func.distinct(Attendance.staff_id)))
+            .join(Staff, Staff.id == Attendance.staff_id)
+            .filter(
+                Attendance.staff_id.isnot(None),
+                Staff.school_id == school.id,
+                Attendance.date == func.current_date(),
+                func.upper(Attendance.status) == "P",
+            )
+            .scalar()
+            or 0
+        )
+
+        unpaid_student_ids = set()
+        payment_rows = (
+            db.query(StudentPayment, Class)
+            .join(Student, Student.id == StudentPayment.student_id)
+            .join(Class, Class.id == StudentPayment.class_id)
+            .filter(Student.school_id == school.id)
+            .all()
+        )
+        for sp, class_ in payment_rows:
+            pending = calculate_installment_pending_amount(
+                sp.course_fee,
+                sp.course_fee_paid,
+                sp.transport_fee,
+                sp.transport_fee_paid,
+                sp.tek_school_fee,
+                sp.tek_school_fee_paid,
+                sp.installment_type,
+                class_.class_start_date,
+                class_.class_end_date,
+            )
+            if pending > 0.009:
+                unpaid_student_ids.add(sp.student_id)
+        unpaid_current_month_students = len(unpaid_student_ids)
+
+        total_worker_payment_amount = (
+            db.query(func.coalesce(func.sum(PaymentRecord.amount), 0.0))
+            .join(Worker, Worker.id == PaymentRecord.worker_id)
+            .filter(Worker.school_id == school.id)
+            .scalar()
+        )
+        total_worker_payment_amount = float(total_worker_payment_amount or 0.0)
+
+        current_month_worker_payment_amount = (
+            db.query(func.coalesce(func.sum(PaymentRecord.amount), 0.0))
+            .join(Worker, Worker.id == PaymentRecord.worker_id)
+            .filter(
+                Worker.school_id == school.id,
+                extract("month", PaymentRecord.payment_date) == today.month,
+                extract("year", PaymentRecord.payment_date) == today.year,
+            )
+            .scalar()
+        )
+        current_month_worker_payment_amount = float(current_month_worker_payment_amount or 0.0)
+
+        total_exams = (
+            db.query(func.count(Exam.id))
+            .filter(Exam.school_id == school.id)
+            .scalar()
+            or 0
+        )
+        current_month_exams = (
+            db.query(func.count(Exam.id))
+            .filter(
+                Exam.school_id == school.id,
+                extract("month", Exam.created_at) == today.month,
+                extract("year", Exam.created_at) == today.year,
+            )
+            .scalar()
+            or 0
+        )
+
+        return {
+            "total_students": total_students,
+            "today_present_students": today_present_students,
+            "total_teachers": total_teachers,
+            "today_present_teachers": today_present_teachers,
+            "total_staff": total_staff,
+            "today_present_staff": today_present_staff,
+            "unpaid_current_month_students": unpaid_current_month_students,
+            "total_worker_payment_amount": round(total_worker_payment_amount, 2),
+            "current_month_worker_payment_amount": round(current_month_worker_payment_amount, 2),
+            "total_exams": total_exams,
+            "current_month_exams": current_month_exams,
+        }
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error occurred: {str(e)}",
+        )
+
+
+def _resolve_school_finance_period(
+    year: Optional[int],
+    month: Optional[int],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> tuple[date, date, datetime, datetime]:
+    """
+    Returns (start_date, end_date, start_datetime, end_datetime) inclusive.
+    Priority: year+month > start_date+end_date > current calendar month.
+    """
+    if year is not None or month is not None:
+        if year is None or month is None:
+            raise HTTPException(
+                status_code=400,
+                detail="For a calendar month filter, pass both year and month (e.g. year=2026&month=1).",
+            )
+        if month < 1 or month > 12:
+            raise HTTPException(status_code=400, detail="month must be 1–12.")
+        start_d = date(year, month, 1)
+        last = calendar.monthrange(year, month)[1]
+        end_d = date(year, month, last)
+    elif start_date is not None or end_date is not None:
+        if start_date is None or end_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Pass both start_date and end_date, or use year+month, or omit all for the current month.",
+            )
+        if start_date > end_date:
+            raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+        start_d, end_d = start_date, end_date
+    else:
+        today_ = date.today()
+        start_d = date(today_.year, today_.month, 1)
+        last = calendar.monthrange(today_.year, today_.month)[1]
+        end_d = date(today_.year, today_.month, last)
+
+    start_dt = datetime.combine(start_d, dt_time.min)
+    end_dt = datetime.combine(end_d, dt_time.max)
+    return start_d, end_d, start_dt, end_dt
+
+
+@router.get("/dashboard/d1/finance-summary/")
+def get_school_finance_summary(
+    year: Optional[int] = Query(None, ge=2000, le=2100, description="Calendar year, use with month"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Calendar month 1–12, use with year"),
+    start_date: Optional[date] = Query(None, description="Inclusive range start (use with end_date)"),
+    end_date: Optional[date] = Query(None, description="Inclusive range end (use with end_date)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    School financial totals for a period: student fees received, teacher/staff payouts,
+    installment-based unpaid student balance (as of period end), and worker payments marked paid.
+    """
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    start_d, end_d, start_dt, end_dt = _resolve_school_finance_period(
+        year, month, start_date, end_date
+    )
+
+    paid_statuses = (
+        PaymentTransactionStatus.DONE.value,
+        PaymentTransactionStatus.VERIFIED.value,
+    )
+
+    student_paid_amount = (
+        db.query(func.coalesce(func.sum(StudentPaymentTransaction.amount), 0.0))
+        .join(StudentPayment, StudentPayment.id == StudentPaymentTransaction.student_payment_id)
+        .join(Student, Student.id == StudentPayment.student_id)
+        .filter(
+            Student.school_id == school.id,
+            StudentPaymentTransaction.transaction_date >= start_dt,
+            StudentPaymentTransaction.transaction_date <= end_dt,
+            StudentPaymentTransaction.status.in_(paid_statuses),
+        )
+        .scalar()
+    )
+    student_paid_amount = float(student_paid_amount or 0.0)
+
+    teacher_receive_amount = (
+        db.query(func.coalesce(func.sum(TeacherStaffPaymentTransaction.total_amount), 0.0))
+        .join(Teacher, Teacher.id == TeacherStaffPaymentTransaction.teacher_id)
+        .filter(
+            Teacher.school_id == school.id,
+            TeacherStaffPaymentTransaction.teacher_id.isnot(None),
+            TeacherStaffPaymentTransaction.release_date >= start_dt,
+            TeacherStaffPaymentTransaction.release_date <= end_dt,
+        )
+        .scalar()
+    )
+    teacher_receive_amount = float(teacher_receive_amount or 0.0)
+
+    staff_receive_amount = (
+        db.query(func.coalesce(func.sum(TeacherStaffPaymentTransaction.total_amount), 0.0))
+        .join(Staff, Staff.id == TeacherStaffPaymentTransaction.staff_id)
+        .filter(
+            Staff.school_id == school.id,
+            TeacherStaffPaymentTransaction.staff_id.isnot(None),
+            TeacherStaffPaymentTransaction.release_date >= start_dt,
+            TeacherStaffPaymentTransaction.release_date <= end_dt,
+        )
+        .scalar()
+    )
+    staff_receive_amount = float(staff_receive_amount or 0.0)
+
+    other_payment_done = (
+        db.query(func.coalesce(func.sum(PaymentRecord.amount), 0.0))
+        .join(Worker, Worker.id == PaymentRecord.worker_id)
+        .filter(
+            Worker.school_id == school.id,
+            func.lower(func.trim(PaymentRecord.status)) == "paid",
+            PaymentRecord.payment_date >= start_dt,
+            PaymentRecord.payment_date <= end_dt,
+        )
+        .scalar()
+    )
+    other_payment_done = float(other_payment_done or 0.0)
+
+    unpaid_student_amount = 0.0
+    payment_rows = (
+        db.query(StudentPayment, Class)
+        .join(Student, Student.id == StudentPayment.student_id)
+        .join(Class, Class.id == StudentPayment.class_id)
+        .filter(Student.school_id == school.id)
+        .all()
+    )
+    for sp, class_ in payment_rows:
+        unpaid_student_amount += calculate_installment_pending_amount(
+            sp.course_fee,
+            sp.course_fee_paid,
+            sp.transport_fee,
+            sp.transport_fee_paid,
+            sp.tek_school_fee,
+            sp.tek_school_fee_paid,
+            sp.installment_type,
+            class_.class_start_date,
+            class_.class_end_date,
+            as_of=end_d,
+        )
+
+    return {
+        "period_start": start_d.isoformat(),
+        "period_end": end_d.isoformat(),
+        "student_paid_amount": round(student_paid_amount, 2),
+        "teacher_receive_amount": round(teacher_receive_amount, 2),
+        "staff_receive_amount": round(staff_receive_amount, 2),
+        "unpaid_student_amount": round(unpaid_student_amount, 2),
+        "other_payment_done": round(other_payment_done, 2),
+    }
+
+
+@router.get("/students/unpaid-list/")
+def list_unpaid_students(
+    as_of: Optional[date] = Query(
+        None,
+        description="Date used for installment pending (default: today).",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    Students in this school with installment-based pending fees > 0.
+    """
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    ref_date = as_of if as_of is not None else date.today()
+
+    paid_statuses = (
+        PaymentTransactionStatus.DONE.value,
+        PaymentTransactionStatus.VERIFIED.value,
+    )
+
+    students_by_id = {
+        s.id: s
+        for s in db.query(Student)
+        .options(joinedload(Student.classes), joinedload(Student.user))
+        .filter(Student.school_id == school.id)
+        .all()
+    }
+
+    payment_rows_by_student: dict = {}
+    pr_rows = (
+        db.query(StudentPayment, Class)
+        .join(Student, Student.id == StudentPayment.student_id)
+        .join(Class, Class.id == StudentPayment.class_id)
+        .filter(Student.school_id == school.id)
+        .all()
+    )
+    for sp, class_ in pr_rows:
+        payment_rows_by_student.setdefault(sp.student_id, []).append((sp, class_))
+
+    tx_rows = (
+        db.query(StudentPaymentTransaction, StudentPayment.student_id)
+        .join(StudentPayment, StudentPayment.id == StudentPaymentTransaction.student_payment_id)
+        .join(Student, Student.id == StudentPayment.student_id)
+        .filter(
+            Student.school_id == school.id,
+            StudentPaymentTransaction.status.in_(paid_statuses),
+        )
+        .order_by(StudentPaymentTransaction.transaction_date.desc())
+        .all()
+    )
+    last_tx_by_student: dict = {}
+    for tx, sid in tx_rows:
+        if sid not in last_tx_by_student:
+            last_tx_by_student[sid] = tx
+
+    items = []
+    for student_id, prow in payment_rows_by_student.items():
+        student = students_by_id.get(student_id)
+        if not student:
+            continue
+
+        pending_sum = 0.0
+        total_fees = 0.0
+        for sp, class_ in prow:
+            pending_sum += calculate_installment_pending_amount(
+                sp.course_fee,
+                sp.course_fee_paid,
+                sp.transport_fee,
+                sp.transport_fee_paid,
+                sp.tek_school_fee,
+                sp.tek_school_fee_paid,
+                sp.installment_type,
+                class_.class_start_date,
+                class_.class_end_date,
+                as_of=ref_date,
+            )
+            total_fees += (
+                float(sp.course_fee or 0)
+                + float(sp.transport_fee or 0)
+                + float(sp.tek_school_fee or 0)
+            )
+
+        if pending_sum <= 0.009:
+            continue
+
+        if total_fees > 0:
+            payment_unpaid_ratio = round(
+                min(100.0, (pending_sum / total_fees) * 100.0),
+                2,
+            )
+        else:
+            payment_unpaid_ratio = 0.0
+
+        class_name = student.classes.name if student.classes else None
+        last_tx = last_tx_by_student.get(student_id)
+        last_payment = None
+        if last_tx is not None:
+            last_payment = {
+                "amount": round(float(last_tx.amount), 2),
+                "transaction_date": last_tx.transaction_date.isoformat()
+                if last_tx.transaction_date
+                else None,
+                "status": last_tx.status,
+            }
+
+        user_is_active = None
+        if student.user is not None:
+            user_is_active = bool(student.user.is_active)
+
+        items.append(
+            {
+                "student_id": student.id,
+                "student_name": f"{student.first_name} {student.last_name}".strip(),
+                "class": class_name,
+                "roll_no": student.roll_no,
+                "payment_unpaid_ratio": payment_unpaid_ratio,
+                "last_payment": last_payment,
+                "user_is_active": user_is_active,
+            }
+        )
+
+    items.sort(key=lambda x: (-x["payment_unpaid_ratio"], x["student_name"]))
+
+    return {
+        "as_of": ref_date.isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/teachers-staff/absent-leave/")
+def list_teachers_staff_absent_or_leave(
+    on_date: date = Query(..., description="Calendar date to evaluate attendance and leave overlap."),
+    year: int = Query(..., ge=2000, le=2100, description="Calendar year for counting pending leave requests."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    Teachers and staff who are absent on `on_date` and/or have approved/pending leave covering that date.
+    """
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    teachers = (
+        db.query(Teacher)
+        .filter(Teacher.school_id == school.id, Teacher.is_active.is_(True))
+        .all()
+    )
+    staff_list = (
+        db.query(Staff)
+        .filter(Staff.school_id == school.id, Staff.is_active.is_(True))
+        .all()
+    )
+
+    teacher_ids = [t.id for t in teachers]
+    staff_ids = [s.id for s in staff_list]
+
+    teacher_att: dict = {}
+    if teacher_ids:
+        for row in (
+            db.query(Attendance)
+            .filter(
+                Attendance.date == on_date,
+                Attendance.teachers_id.in_(teacher_ids),
+            )
+            .all()
+        ):
+            teacher_att[row.teachers_id] = row
+
+    staff_att: dict = {}
+    if staff_ids:
+        for row in (
+            db.query(Attendance)
+            .filter(
+                Attendance.date == on_date,
+                Attendance.staff_id.in_(staff_ids),
+            )
+            .all()
+        ):
+            staff_att[row.staff_id] = row
+
+    overlap_leaves = []
+    if teacher_ids or staff_ids:
+        overlap_parts = []
+        if teacher_ids:
+            overlap_parts.append(LeaveRequest.teacher_id.in_(teacher_ids))
+        if staff_ids:
+            overlap_parts.append(LeaveRequest.staff_id.in_(staff_ids))
+        overlap_leaves = (
+            db.query(LeaveRequest)
+            .filter(
+                LeaveRequest.school_id == school.id,
+                LeaveRequest.student_id.is_(None),
+                LeaveRequest.start_date <= on_date,
+                LeaveRequest.end_date >= on_date,
+                or_(*overlap_parts),
+            )
+            .all()
+        )
+
+    leaves_by_teacher: dict = {}
+    leaves_by_staff: dict = {}
+    for lr in overlap_leaves:
+        if lr.teacher_id:
+            leaves_by_teacher.setdefault(lr.teacher_id, []).append(lr)
+        if lr.staff_id:
+            leaves_by_staff.setdefault(lr.staff_id, []).append(lr)
+
+    pending_teacher: dict = {}
+    if teacher_ids:
+        for tid, cnt in (
+            db.query(LeaveRequest.teacher_id, func.count(LeaveRequest.id))
+            .filter(
+                LeaveRequest.school_id == school.id,
+                LeaveRequest.teacher_id.isnot(None),
+                LeaveRequest.staff_id.is_(None),
+                LeaveRequest.student_id.is_(None),
+                LeaveRequest.status == LeaveStatus.PENDING,
+                extract("year", LeaveRequest.created_at) == year,
+            )
+            .group_by(LeaveRequest.teacher_id)
+            .all()
+        ):
+            pending_teacher[tid] = int(cnt or 0)
+
+    pending_staff: dict = {}
+    if staff_ids:
+        for sid, cnt in (
+            db.query(LeaveRequest.staff_id, func.count(LeaveRequest.id))
+            .filter(
+                LeaveRequest.school_id == school.id,
+                LeaveRequest.staff_id.isnot(None),
+                LeaveRequest.teacher_id.is_(None),
+                LeaveRequest.student_id.is_(None),
+                LeaveRequest.status == LeaveStatus.PENDING,
+                extract("year", LeaveRequest.created_at) == year,
+            )
+            .group_by(LeaveRequest.staff_id)
+            .all()
+        ):
+            pending_staff[sid] = int(cnt or 0)
+
+    subjects_by_teacher: dict = {}
+    if teacher_ids:
+        for tid, subj_name in (
+            db.query(TeacherClassSectionSubject.teacher_id, Subject.name)
+            .join(Subject, Subject.id == TeacherClassSectionSubject.subject_id)
+            .filter(
+                TeacherClassSectionSubject.school_id == school.id,
+                TeacherClassSectionSubject.teacher_id.in_(teacher_ids),
+            )
+            .distinct()
+            .all()
+        ):
+            if subj_name:
+                subjects_by_teacher.setdefault(tid, set()).add(subj_name)
+
+    def _present(att_row) -> bool:
+        return bool(
+            att_row and att_row.status and str(att_row.status).upper() == "P"
+        )
+
+    def _has_approved_or_pending_on_date(leaves: list) -> bool:
+        for lr in leaves or []:
+            if lr.status in (LeaveStatus.APPROVED, LeaveStatus.PENDING):
+                if lr.start_date <= on_date <= lr.end_date:
+                    return True
+        return False
+
+    def _leave_applied_for_date(leaves: list) -> bool:
+        for lr in leaves or []:
+            if lr.start_date <= on_date <= lr.end_date:
+                return True
+        return False
+
+    items = []
+
+    for t in teachers:
+        att = teacher_att.get(t.id)
+        present = _present(att)
+        t_leaves = leaves_by_teacher.get(t.id, [])
+        actionable_leave = _has_approved_or_pending_on_date(t_leaves)
+        if present and not actionable_leave:
+            continue
+        items.append(
+            {
+                "id": t.id,
+                "name": f"{t.first_name} {t.last_name}".strip(),
+                "phone": t.phone,
+                "role": "teacher",
+                "designation": None,
+                "subjects": sorted(subjects_by_teacher.get(t.id, set())),
+                "leave_applied_for_date": _leave_applied_for_date(t_leaves),
+                "total_leave_pending": pending_teacher.get(t.id, 0),
+            }
+        )
+
+    for s in staff_list:
+        att = staff_att.get(s.id)
+        present = _present(att)
+        s_leaves = leaves_by_staff.get(s.id, [])
+        actionable_leave = _has_approved_or_pending_on_date(s_leaves)
+        if present and not actionable_leave:
+            continue
+        items.append(
+            {
+                "id": s.id,
+                "name": f"{s.first_name} {s.last_name}".strip(),
+                "phone": s.phone,
+                "role": "staff",
+                "designation": s.designation,
+                "subjects": [],
+                "leave_applied_for_date": _leave_applied_for_date(s_leaves),
+                "total_leave_pending": pending_staff.get(s.id, 0),
+            }
+        )
+
+    items.sort(key=lambda x: (x["role"], x["name"]))
+
+    return {
+        "on_date": on_date.isoformat(),
+        "year": year,
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.post("/attendance/", status_code=201)
 def create_attendance(
     data: AttendanceCreate,

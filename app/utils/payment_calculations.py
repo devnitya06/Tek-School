@@ -3,6 +3,8 @@ Utility functions for payment calculations.
 """
 
 from datetime import date
+from typing import Optional
+
 from app.models.students import InstallmentType
 
 
@@ -15,7 +17,8 @@ def calculate_installment_pending_amount(
     tek_school_fee_paid: float,
     installment_type: str | None,
     class_start_date: date | None,
-    class_end_date: date | None
+    class_end_date: date | None,
+    as_of: Optional[date] = None,
 ) -> float:
     """
     Calculate the installment pending amount based on installment type and class dates.
@@ -42,7 +45,7 @@ def calculate_installment_pending_amount(
     if not class_start_date or not class_end_date:
         return round(max(0.0, total_fees - total_paid), 2)
     
-    today = date.today()
+    today = as_of if as_of is not None else date.today()
     installment_type_value = installment_type if installment_type else InstallmentType.YEARLY.value
     
     # Calculate per-period amount and periods passed based on installment type

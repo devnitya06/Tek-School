@@ -1,15 +1,48 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session,joinedload
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, and_, or_
 from app.db.session import get_db
-from app.models.admin import StudentAdminExamData,SchoolClassSubject,AdminExam,ExamType
-from app.models.school import SchoolBoard,SchoolMedium,SchoolType
+from app.models.admin import StudentAdminExamData, SchoolClassSubject, AdminExam, ExamType
+from app.models.school import (
+    SchoolBoard,
+    SchoolMedium,
+    SchoolType,
+    Exam,
+    StudentExamData,
+    ExamTypeEnum,
+    ExamStatusEnum,
+    EvaluationScopeEnum,
+)
 from app.schemas.students import SelfSignedStudentUpdate
 from app.models.students import SelfSignedStudent
 from app.core.dependencies import get_current_user
 from app.models.users import User
 from app.models.users import UserRole
 from app.utils.permission import require_roles
+from datetime import date, datetime
+from calendar import monthrange
+
 router = APIRouter()
+
+
+def _self_signed_visible_active_exams_query(db: Session, student: SelfSignedStudent):
+    """Same visibility rules as GET /school/exams/ for SELF_SIGNED_STUDENT role."""
+    return db.query(Exam).filter(
+        Exam.status == ExamStatusEnum.ACTIVE,
+        or_(
+            Exam.created_by_admin == True,
+            and_(
+                Exam.created_by_admin == False,
+                Exam.evaluation_scope.in_(
+                    [EvaluationScopeEnum.EXTERNAL, EvaluationScopeEnum.BOTH]
+                ),
+            ),
+        ),
+        or_(
+            Exam.selected_class_id == student.select_class_id,
+            Exam.class_id == student.select_class_id,
+        ),
+    )
 @router.get("/state-board-medium-type/", status_code=status.HTTP_200_OK)
 def get_selfsigned_student_filters():
     try:
@@ -145,6 +178,113 @@ def get_self_signed_student_profile(
             status_code=500,
             detail="Something went wrong while fetching the profile."
         )
+
+
+@router.get("/me/dashboard-summary/")
+def get_self_signed_student_dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SELF_SIGNED_STUDENT)),
+):
+    student = (
+        db.query(SelfSignedStudent)
+        .filter(SelfSignedStudent.user_id == current_user.id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    visible_exams = _self_signed_visible_active_exams_query(db, student)
+    total_mock_test = visible_exams.filter(Exam.exam_type == ExamTypeEnum.MOCK).count()
+    rank_test_total = visible_exams.filter(Exam.exam_type == ExamTypeEnum.RANK).count()
+
+    attend_mock_test = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.self_signed_student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.MOCK,
+            StudentExamData.is_submitted == True,
+        )
+        .scalar()
+    ) or 0
+
+    rank_test_attend = (
+        db.query(func.count(StudentExamData.id))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.self_signed_student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.RANK,
+            StudentExamData.is_submitted == True,
+        )
+        .scalar()
+    ) or 0
+
+    return {
+        "total_mock_test": total_mock_test,
+        "attend_mock_test": attend_mock_test,
+        "rank_test_total": rank_test_total,
+        "rank_test_attend": rank_test_attend,
+    }
+
+
+@router.get("/me/exam-score-averages/")
+def get_self_signed_student_exam_score_averages(
+    month: int = Query(..., ge=1, le=12, description="Calendar month (1-12)"),
+    year: int = Query(..., ge=2000, le=2100, description="Four-digit year"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SELF_SIGNED_STUDENT)),
+):
+    student = (
+        db.query(SelfSignedStudent)
+        .filter(SelfSignedStudent.user_id == current_user.id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    period_start_date = date(year, month, 1)
+    period_end_date = date(year, month, monthrange(year, month)[1])
+    range_start = datetime(year, month, 1)
+    if month == 12:
+        range_end_exclusive = datetime(year + 1, 1, 1)
+    else:
+        range_end_exclusive = datetime(year, month + 1, 1)
+
+    mock_avg = (
+        db.query(func.avg(StudentExamData.percentage_scored))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.self_signed_student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.MOCK,
+            StudentExamData.is_submitted == True,
+            StudentExamData.submitted_at >= range_start,
+            StudentExamData.submitted_at < range_end_exclusive,
+        )
+        .scalar()
+    )
+
+    rank_avg = (
+        db.query(func.avg(StudentExamData.percentage_scored))
+        .join(Exam, Exam.id == StudentExamData.exam_id)
+        .filter(
+            StudentExamData.self_signed_student_id == student.id,
+            Exam.exam_type == ExamTypeEnum.RANK,
+            StudentExamData.is_submitted == True,
+            StudentExamData.submitted_at >= range_start,
+            StudentExamData.submitted_at < range_end_exclusive,
+        )
+        .scalar()
+    )
+
+    return {
+        "month": month,
+        "year": year,
+        "period_start": period_start_date.isoformat(),
+        "period_end": period_end_date.isoformat(),
+        "mock_average": round(float(mock_avg), 2) if mock_avg is not None else 0.0,
+        "rank_test_average": round(float(rank_avg), 2) if rank_avg is not None else 0.0,
+    }
+
 
 @router.get("/exam-summary")
 def get_student_exam_summary(
