@@ -5245,10 +5245,11 @@ def get_exam_detail(
             raise HTTPException(status_code=404, detail="Student not found")
 
         if (
-            exam.class_id != student.class_id
-            or not any(s.id == student.section_id for s in exam.sections)
-            or exam.status != ExamStatusEnum.ACTIVE
-            or not exam.is_published
+            # exam.class_id != student.class_id
+            # or not any(s.id == student.section_id for s in exam.sections)
+            # or exam.status != ExamStatusEnum.ACTIVE
+            exam.status != ExamStatusEnum.ACTIVE
+            # or not exam.is_published
         ):
             raise HTTPException(status_code=403, detail="Not allowed")
 
@@ -5758,7 +5759,8 @@ def fetch_questions(
                     "option_text": opt.option_text,
                 }
                 for opt in q.options
-            ]
+            ],
+            "answer_keywords": q.answer_keywords,
         }
 
         # --------------------------------------------------
