@@ -95,6 +95,14 @@ def ensure_attendance_qr_token_columns():
             conn.execute(text(f'ALTER TABLE schools ADD COLUMN "{col}" {ddl_sqlite}'))
 
 
+def ensure_attendance_verified_at_column():
+    """Teacher/staff attendance approval timestamp (set when is_verified becomes true)."""
+    if column_exists("attendances", "verified_at"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE attendances ADD COLUMN verified_at TIMESTAMP NULL'))
+
+
 def ensure_attendance_mark_columns():
     """
     Ensure attendance mark-in/out columns exist for runtime compatibility.

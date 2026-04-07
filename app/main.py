@@ -6,6 +6,7 @@ from app.db.session import (
     create_tables,
     add_missing_columns,
     ensure_attendance_mark_columns,
+    ensure_attendance_verified_at_column,
     ensure_attendance_qr_token_columns,
 )
 import os
@@ -38,6 +39,7 @@ def on_startup():
     # Prevents runtime failures when code is updated before a manual migration.
     try:
         ensure_attendance_mark_columns()
+        ensure_attendance_verified_at_column()
         ensure_attendance_qr_token_columns()
     except Exception as e:
         print(f"Error ensuring attendance / QR columns: {str(e)}")
