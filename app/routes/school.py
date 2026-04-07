@@ -3509,6 +3509,41 @@ def verify_staff_attendance(
     }
 
 
+def _resolve_mark_times_target_user_id(db: Session, school_id: str, user_id: str) -> int:
+    """
+    Resolve query user_id (string) to users.id (int).
+    Accepts numeric users.id, or Teacher.id / Staff.id string primary keys — must belong to school_id.
+    """
+    raw = (user_id or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="user_id cannot be empty.")
+
+    if raw.isdigit():
+        return int(raw)
+
+    teacher = db.query(Teacher).filter(Teacher.id == raw).first()
+    if teacher:
+        if teacher.school_id != school_id:
+            raise HTTPException(status_code=403, detail="Teacher is not in your school.")
+        if teacher.user_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="This teacher record has no linked login (users.id).",
+            )
+        return teacher.user_id
+
+    staff = db.query(Staff).filter(Staff.id == raw).first()
+    if staff:
+        if staff.school_id != school_id:
+            raise HTTPException(status_code=403, detail="Staff member is not in your school.")
+        return staff.user_id
+
+    raise HTTPException(
+        status_code=404,
+        detail="No user, teacher, or staff found for this user_id.",
+    )
+
+
 def _mark_times_for_school_user(
     db: Session,
     school_id: str,
@@ -3576,12 +3611,12 @@ def get_my_mark_in_out_times(
         None,
         description="Inclusive end date. Defaults to today if omitted.",
     ),
-    user_id: Optional[int] = Query(
+    user_id: Optional[str] = Query(
         None,
         description=(
-            "Users.id of the teacher or staff whose marks you are viewing. "
-            "Required for SCHOOL. Optional for STAFF (defaults to yourself). "
-            "Teachers may only omit this or pass their own id."
+            "String: numeric users.id, or Teacher.id / Staff.id (e.g. TCH-…). "
+            "Required for SCHOOL. Optional for STAFF (omit for yourself). "
+            "Teachers may only omit this or pass their own id / teacher id."
         ),
     ),
     db: Session = Depends(get_db),
@@ -3602,14 +3637,15 @@ def get_my_mark_in_out_times(
 
     if current_user.role == UserRole.SCHOOL:
         verify_school_business_access(current_user, db)
-        if user_id is None:
+        if user_id is None or not str(user_id).strip():
             raise HTTPException(
                 status_code=400,
-                detail="user_id is required for school users (teacher or staff users.id).",
+                detail="user_id is required for school users (users.id as digits, or Teacher.id / Staff.id string).",
             )
         school_id = current_user.school_profile.id
+        target_uid = _resolve_mark_times_target_user_id(db, school_id, str(user_id))
         role_label, person_id, subject_user_id, rows = _mark_times_for_school_user(
-            db, school_id, user_id, fd, td
+            db, school_id, target_uid, fd, td
         )
     elif current_user.role == UserRole.STAFF:
         requester = db.query(Staff).filter(Staff.user_id == current_user.id).first()
@@ -3621,19 +3657,24 @@ def get_my_mark_in_out_times(
                 detail="Staff member is not assigned to a school.",
             )
         school_id = requester.school_id
-        target_user_id = user_id if user_id is not None else current_user.id
+        if user_id is None or not str(user_id).strip():
+            target_uid = current_user.id
+        else:
+            target_uid = _resolve_mark_times_target_user_id(db, school_id, str(user_id))
         role_label, person_id, subject_user_id, rows = _mark_times_for_school_user(
-            db, school_id, target_user_id, fd, td
+            db, school_id, target_uid, fd, td
         )
     else:
-        if user_id is not None and user_id != current_user.id:
-            raise HTTPException(
-                status_code=403,
-                detail="Teachers may only view their own mark times.",
-            )
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher profile not found.")
+        if user_id is not None and str(user_id).strip():
+            target_uid = _resolve_mark_times_target_user_id(db, teacher.school_id, str(user_id))
+            if target_uid != current_user.id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Teachers may only view their own mark times.",
+                )
         rows = (
             db.query(Attendance)
             .filter(
