@@ -3509,6 +3509,63 @@ def verify_staff_attendance(
     }
 
 
+def _mark_times_for_school_user(
+    db: Session,
+    school_id: str,
+    target_user_id: int,
+    fd: date,
+    td: date,
+) -> tuple[str, str, int, list]:
+    """
+    Load teacher/staff mark-in/out rows for users.id = target_user_id if they belong to school_id.
+    Returns (role_label, person_id, subject_user_id, attendance_rows).
+    """
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if target_user.role not in (UserRole.TEACHER, UserRole.STAFF):
+        raise HTTPException(
+            status_code=400,
+            detail="Target user must be a teacher or staff member.",
+        )
+
+    if target_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == target_user_id).first()
+        if not teacher or teacher.school_id != school_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Teacher is not in your school.",
+            )
+        rows = (
+            db.query(Attendance)
+            .filter(
+                Attendance.teachers_id == teacher.id,
+                Attendance.date.between(fd, td),
+            )
+            .order_by(Attendance.date.desc(), Attendance.id.desc())
+            .all()
+        )
+        return "teacher", teacher.id, target_user_id, rows
+
+    staff = db.query(Staff).filter(Staff.user_id == target_user_id).first()
+    if not staff or staff.school_id != school_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Staff member is not in your school.",
+        )
+    rows = (
+        db.query(Attendance)
+        .filter(
+            Attendance.staff_id == staff.id,
+            Attendance.date.between(fd, td),
+        )
+        .order_by(Attendance.date.desc(), Attendance.id.desc())
+        .all()
+    )
+    return "staff", staff.id, target_user_id, rows
+
+
 @router.get("/attendance/my-mark-times/")
 def get_my_mark_in_out_times(
     from_date: Optional[date] = Query(
@@ -3519,12 +3576,20 @@ def get_my_mark_in_out_times(
         None,
         description="Inclusive end date. Defaults to today if omitted.",
     ),
+    user_id: Optional[int] = Query(
+        None,
+        description=(
+            "Users.id of the teacher or staff whose marks you are viewing. "
+            "Required for SCHOOL. Optional for STAFF (defaults to yourself). "
+            "Teachers may only omit this or pass their own id."
+        ),
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.TEACHER, UserRole.STAFF)),
+    current_user: User = Depends(require_roles(UserRole.TEACHER, UserRole.STAFF, UserRole.SCHOOL)),
 ):
     """
-    Logged-in teacher or staff: list their own mark-in / mark-out rows, approval status,
-    and when the record was approved (`verified_at`), if applicable.
+    Teacher/staff: own mark-in / mark-out rows (and approval), unless staff passes user_id for someone
+    in the same school. School (business): must pass user_id for a teacher/staff in that school.
     """
     today = date.today()
     td = to_date if to_date is not None else today
@@ -3535,7 +3600,37 @@ def get_my_mark_in_out_times(
             detail="from_date must be on or before to_date.",
         )
 
-    if current_user.role == UserRole.TEACHER:
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+        if user_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="user_id is required for school users (teacher or staff users.id).",
+            )
+        school_id = current_user.school_profile.id
+        role_label, person_id, subject_user_id, rows = _mark_times_for_school_user(
+            db, school_id, user_id, fd, td
+        )
+    elif current_user.role == UserRole.STAFF:
+        requester = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not requester:
+            raise HTTPException(status_code=404, detail="Staff profile not found.")
+        if not requester.school_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Staff member is not assigned to a school.",
+            )
+        school_id = requester.school_id
+        target_user_id = user_id if user_id is not None else current_user.id
+        role_label, person_id, subject_user_id, rows = _mark_times_for_school_user(
+            db, school_id, target_user_id, fd, td
+        )
+    else:
+        if user_id is not None and user_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Teachers may only view their own mark times.",
+            )
         teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher profile not found.")
@@ -3550,21 +3645,7 @@ def get_my_mark_in_out_times(
         )
         role_label = "teacher"
         person_id = teacher.id
-    else:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
-        if not staff:
-            raise HTTPException(status_code=404, detail="Staff profile not found.")
-        rows = (
-            db.query(Attendance)
-            .filter(
-                Attendance.staff_id == staff.id,
-                Attendance.date.between(fd, td),
-            )
-            .order_by(Attendance.date.desc(), Attendance.id.desc())
-            .all()
-        )
-        role_label = "staff"
-        person_id = staff.id
+        subject_user_id = current_user.id
 
     items = [
         {
@@ -3580,6 +3661,7 @@ def get_my_mark_in_out_times(
     ]
 
     return {
+        "subject_user_id": subject_user_id,
         "role": role_label,
         "person_id": person_id,
         "from_date": fd.isoformat(),
