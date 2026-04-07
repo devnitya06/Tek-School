@@ -5997,6 +5997,7 @@ def fetch_questions(
                 for opt in q.options
             ],
             "answer_keywords": q.answer_keywords,
+            "correct_text_answer": q.correct_text_answer
         }
 
         # --------------------------------------------------
