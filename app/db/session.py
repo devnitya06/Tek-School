@@ -83,6 +83,18 @@ def drop_extra_columns():
                     conn.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN "{column}"'))
 
 
+def ensure_attendance_qr_token_columns():
+    """Ensure school attendance QR token columns exist (persisted tokens; old QR invalid after regenerate)."""
+    for col, ddl_sqlite in (
+        ("attendance_qr_mark_in_token", "VARCHAR(64)"),
+        ("attendance_qr_mark_out_token", "VARCHAR(64)"),
+    ):
+        if column_exists("schools", col):
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE schools ADD COLUMN "{col}" {ddl_sqlite}'))
+
+
 def ensure_attendance_mark_columns():
     """
     Ensure attendance mark-in/out columns exist for runtime compatibility.

@@ -150,6 +150,9 @@ class School(Base):
     teaching_method = Column(JSON, nullable=True)
     catalogue = Column(ARRAY(String), nullable=True)
     photo_gallery = Column(ARRAY(String), nullable=True)
+    # Teacher/staff attendance QR: latest token per mode only; regenerating overwrites and invalidates the old one.
+    attendance_qr_mark_in_token = Column(String(64), nullable=True)
+    attendance_qr_mark_out_token = Column(String(64), nullable=True)
 
     user = relationship("User", backref="school")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")

@@ -44,7 +44,7 @@ from app.utils.s3 import upload_base64_to_s3
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 router = APIRouter()
-attendance_qr_tokens_by_school = {}
+
 
 def timer():
     return time.perf_counter()
@@ -3171,21 +3171,31 @@ def create_attendance_qr_link(
 ):
     """
     Generate a new active QR link for attendance.
-    Requirement: no expiry; re-generating creates a new token.
+    No time-based expiry: the previous token for this mode is replaced on the school record,
+    so only the latest QR for that mode is valid (old printed/saved QRs stop working).
     """
     verify_school_business_access(current_user, db)
-    school_id = current_user.school_profile.id
+    school = (
+        db.query(School)
+        .filter(School.user_id == current_user.id)
+        .first()
+    )
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
 
     token = str(uuid.uuid4())
-    school_qr_data = attendance_qr_tokens_by_school.get(school_id, {})
-    school_qr_data[mode] = token
-    attendance_qr_tokens_by_school[school_id] = school_qr_data
+    if mode == "mark_in":
+        school.attendance_qr_mark_in_token = token
+    else:
+        school.attendance_qr_mark_out_token = token
+    db.commit()
+    db.refresh(school)
 
     base_url = str(request.base_url).rstrip("/")
     qr_url = f"{base_url}/school/attendance/qr-checkin?token={token}"
     return {
         "detail": "QR attendance link generated successfully.",
-        "school_id": school_id,
+        "school_id": school.id,
         "mode": mode,
         "token": token,
         "qr_url": qr_url,
@@ -3203,10 +3213,16 @@ def get_attendance_qr_link(
     Frontend can call this to fetch URL and generate QR code.
     """
     verify_school_business_access(current_user, db)
-    school_id = current_user.school_profile.id
-    qr_data = attendance_qr_tokens_by_school.get(school_id, {})
-    mark_in_token = qr_data.get("mark_in")
-    mark_out_token = qr_data.get("mark_out")
+    school = (
+        db.query(School)
+        .filter(School.user_id == current_user.id)
+        .first()
+    )
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+    school_id = school.id
+    mark_in_token = school.attendance_qr_mark_in_token
+    mark_out_token = school.attendance_qr_mark_out_token
     if not mark_in_token and not mark_out_token:
         raise HTTPException(
             status_code=404,
@@ -3264,9 +3280,11 @@ def qr_attendance_checkin(
         role_label = "staff"
         person_id = staff.id
 
-    qr_data = attendance_qr_tokens_by_school.get(school_id, {})
-    mark_in_token = qr_data.get("mark_in")
-    mark_out_token = qr_data.get("mark_out")
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+    mark_in_token = school.attendance_qr_mark_in_token
+    mark_out_token = school.attendance_qr_mark_out_token
     if not mark_in_token and not mark_out_token:
         raise HTTPException(
             status_code=400,
@@ -3285,16 +3303,13 @@ def qr_attendance_checkin(
 
     if qr_mode == "mark_in":
         if existing and existing.mark_in_at is not None:
-            return {
-                "detail": "Mark in already recorded for today.",
-                "mode": "mark_in",
-                "id": existing.id,
-                "role": role_label,
-                "person_id": person_id,
-                "date": today.isoformat(),
-                "mark_in_at": existing.mark_in_at.isoformat() if existing.mark_in_at else None,
-                "mark_out_at": existing.mark_out_at.isoformat() if existing.mark_out_at else None,
-            }
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Mark in has already been recorded for today. "
+                    "Only one mark in per day is allowed."
+                ),
+            )
 
         if existing:
             existing.mark_in_at = now_ts
@@ -3328,16 +3343,13 @@ def qr_attendance_checkin(
                 detail="Mark in is required first; cannot mark out via QR.",
             )
         if existing.mark_out_at is not None:
-            return {
-                "detail": "Mark out already recorded for today.",
-                "mode": "mark_out",
-                "id": existing.id,
-                "role": role_label,
-                "person_id": person_id,
-                "date": today.isoformat(),
-                "mark_in_at": existing.mark_in_at.isoformat() if existing.mark_in_at else None,
-                "mark_out_at": existing.mark_out_at.isoformat() if existing.mark_out_at else None,
-            }
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Mark out has already been recorded for today. "
+                    "Only one mark out per day is allowed."
+                ),
+            )
 
         existing.mark_out_at = now_ts
         existing.is_verified = False
