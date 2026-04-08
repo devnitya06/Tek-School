@@ -163,6 +163,11 @@ class School(Base):
     transports = relationship("Transport", back_populates="school")
     students = relationship("Student", back_populates="school")
     staff_members = relationship("Staff", back_populates="school", cascade="all, delete-orphan")
+    designation_compensation_templates = relationship(
+        "DesignationCompensationTemplate",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
     timetables = relationship("Timetable", back_populates="school", cascade="all, delete")
     # timetable_periods = relationship("TimetablePeriod", back_populates="school")
     # school = relationship("School", back_populates="timetable_periods")

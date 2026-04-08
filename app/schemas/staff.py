@@ -89,6 +89,37 @@ class StaffResponse(StaffBase):
     }
 
 
+class StaffResponseWithCompensation(StaffResponse):
+    """Same as StaffResponse plus employee_compensation when linked from designation template."""
+
+    employee_compensation: Optional[Dict[str, Any]] = None
+
+
+class DesignationCompensationTemplateUpsert(BaseModel):
+    designation: str = Field(..., min_length=1, max_length=255)
+    basic_salary: Optional[Decimal] = None
+    hra: Optional[Decimal] = None
+    special_allowance: Optional[Decimal] = None
+    travel_allowance: Optional[Decimal] = None
+    medical_allowance: Optional[Decimal] = None
+    employee_pf_contribution: Optional[Decimal] = None
+    additional_benefits: bool = Field(
+        default=False,
+        description="Whether extra structured benefits (see extra_benefits) apply.",
+    )
+    extra_benefits: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Optional JSON object for custom benefits (e.g. insurance name, gym, meal allowance). "
+            "Copied to staff EmployeeCompensation when designation matches. Keys/values are free-form."
+        ),
+    )
+    employee_grade: Optional[str] = None
+    max_salary: Optional[Decimal] = None
+    emergency_leave: Optional[int] = None
+    casual_leave: Optional[int] = None
+
+
 class StaffPermissionAssignRequest(BaseModel):
     permissions: List[StaffPermissionType]
 

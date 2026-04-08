@@ -10,15 +10,39 @@ from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.school import School
-from app.models.staff import Staff, ActivityLog, staff_permissions, StaffPermissionType, ActionType, ResourceType
+from app.models.staff import (
+    Staff,
+    ActivityLog,
+    staff_permissions,
+    StaffPermissionType,
+    ActionType,
+    ResourceType,
+    DesignationCompensationTemplate,
+    EmployeeCompensation,
+)
 from app.models.teachers import TeacherStaffPayment, TeacherStaffPaymentTransaction
 from app.models.users import User
-from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffUpdateRequest, StaffPermissionAssignRequest, StaffPermissionResponse, ActivityLogResponse
+from app.schemas.staff import (
+    StaffCreateRequest,
+    StaffResponse,
+    StaffResponseWithCompensation,
+    StaffUpdateRequest,
+    StaffPermissionAssignRequest,
+    StaffPermissionResponse,
+    ActivityLogResponse,
+    DesignationCompensationTemplateUpsert,
+)
 from app.schemas.teachers import TeacherStaffPaymentRequest, TeacherStaffPaymentTransactionResponse, PendingMonthResponse, BulkStaffPaymentRequest, BulkPaymentResponse, FailedPaymentItem, BulkStaffPaymentRequest, BulkPaymentResponse
 from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
 from app.utils.permission import get_staff_permissions, require_roles, verify_school_business_access
 from app.utils.staff_logging import log_action
+from app.utils.staff_compensation import (
+    serialize_employee_compensation,
+    serialize_designation_template,
+    staff_designation_for_display,
+    sync_employee_compensation_from_designation_template,
+)
 from app.services.pagination import PaginationParams
 from typing import Optional, List
 
@@ -28,7 +52,7 @@ router = APIRouter()
 @router.post(
     "/create-staff/",
     status_code=status.HTTP_201_CREATED,
-    response_model=StaffResponse,
+    response_model=StaffResponseWithCompensation,
     responses={
         status.HTTP_201_CREATED: {
             "description": "Staff account created and credentials emailed."
@@ -39,10 +63,16 @@ def create_staff(
     data: StaffCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> StaffResponse:
+) -> StaffResponseWithCompensation:
     """
     Create a staff account. Only school accounts have permission to create staff members.
     Creates both User and Staff profile, then emails credentials to the staff member.
+
+    **Designation and benefits:** The school defines pay/benefits per designation via
+    `PUT /staff/designation-compensation-template`. When `designation` is set on this request
+    (exact match after trim, per school), that template is copied into `employee_compensation`
+    for the new staff member (salary components, grade, extra benefits, leave entitlements, etc.).
+    Call `GET /staff/designation-compensation?designation=...` from the UI to preview before submit.
     """
     # Permission check: Only SCHOOL role (business account) can create staff
     if current_user.role != UserRole.SCHOOL:
@@ -92,7 +122,9 @@ def create_staff(
         )
         db.add(staff)
         db.flush()  # Get staff.id
-        
+
+        sync_employee_compensation_from_designation_template(db, staff)
+
         # Add permissions if provided
         if data.permissions:
             for permission in data.permissions:
@@ -209,7 +241,179 @@ def create_staff(
         db=db,
     )
 
-    return StaffResponse.model_validate(staff)
+    db.refresh(staff)
+    base = StaffResponse.model_validate(staff)
+    out = base.model_dump()
+    out["designation"] = staff_designation_for_display(staff)
+    return StaffResponseWithCompensation(
+        **out,
+        employee_compensation=serialize_employee_compensation(staff.compensation),
+    )
+
+
+@router.get("/designation-compensation")
+def get_designation_compensation_preview(
+    designation: str = Query(..., min_length=1, description="Staff designation (exact match after trim)."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    When the school selects a designation in the UI, call this to load the saved compensation template
+    (if any) for that designation. Use PUT /staff/designation-compensation-template to define templates.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can load designation compensation.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    key = designation.strip()
+    template = (
+        db.query(DesignationCompensationTemplate)
+        .filter(
+            DesignationCompensationTemplate.school_id == school.id,
+            DesignationCompensationTemplate.designation == key,
+        )
+        .first()
+    )
+    if not template:
+        return {
+            "designation": key,
+            "has_template": False,
+            "compensation": None,
+        }
+    return {
+        "designation": key,
+        "has_template": True,
+        "compensation": serialize_designation_template(template),
+    }
+
+
+@router.get("/designation-compensation-templates")
+def list_designation_compensation_templates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return every designation + compensation template the school has saved.
+    Each `PUT /staff/designation-compensation-template` creates or updates one row; a school can
+    have many rows (one per distinct designation string).
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can list designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    rows = (
+        db.query(DesignationCompensationTemplate)
+        .filter(DesignationCompensationTemplate.school_id == school.id)
+        .order_by(DesignationCompensationTemplate.designation.asc())
+        .all()
+    )
+    return {
+        "count": len(rows),
+        "items": [serialize_designation_template(t) for t in rows],
+    }
+
+
+@router.post("/designation-compensation-template")
+def create_designation_compensation_template(
+    data: DesignationCompensationTemplateUpsert,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create a compensation template for a designation (per school).
+    If the same designation already exists for the school, returns 400 (use PUT to update).
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can manage designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    payload = data.model_dump()
+    designation_key = payload.pop("designation", "").strip()
+    if not designation_key:
+        raise HTTPException(status_code=400, detail="designation is required.")
+
+    existing = (
+        db.query(DesignationCompensationTemplate)
+        .filter(
+            DesignationCompensationTemplate.school_id == school.id,
+            DesignationCompensationTemplate.designation == designation_key,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Template already exists for this designation. Use PUT /staff/designation-compensation-template to update.",
+        )
+
+    template = DesignationCompensationTemplate(
+        school_id=school.id,
+        designation=designation_key,
+        **payload,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return {
+        "detail": "Designation compensation template created.",
+        "compensation": serialize_designation_template(template),
+    }
+
+
+@router.put("/designation-compensation-template")
+def upsert_designation_compensation_template(
+    data: DesignationCompensationTemplateUpsert,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create or replace the compensation template for a designation (per school).
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can manage designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    payload = data.model_dump()
+    designation_key = payload.pop("designation", "").strip()
+    if not designation_key:
+        raise HTTPException(status_code=400, detail="designation is required.")
+
+    template = (
+        db.query(DesignationCompensationTemplate)
+        .filter(
+            DesignationCompensationTemplate.school_id == school.id,
+            DesignationCompensationTemplate.designation == designation_key,
+        )
+        .first()
+    )
+    if template:
+        for field, value in payload.items():
+            setattr(template, field, value)
+    else:
+        template = DesignationCompensationTemplate(
+            school_id=school.id,
+            designation=designation_key,
+            **payload,
+        )
+        db.add(template)
+    db.commit()
+    db.refresh(template)
+    return {
+        "detail": "Designation compensation template saved.",
+        "compensation": serialize_designation_template(template),
+    }
 
 
 @router.get("/profile")
@@ -310,7 +514,7 @@ def get_staff_profile(
         "last_name": staff.last_name,
         "email": staff.email or (user.email if user else None),
         "phone": staff.phone or (user.phone if user else None),
-        "designation": staff.designation,
+        "designation": staff_designation_for_display(staff),
         "employee_type": staff.employee_type,
         "annual_salary": float(staff.annual_salary) if staff.annual_salary else None,
         "monthly_salary": round(monthly_salary, 2) if monthly_salary else None,
@@ -319,6 +523,7 @@ def get_staff_profile(
         "is_active": staff.is_active,
         "permissions": permissions,
         "salary": salary,
+        "employee_compensation": serialize_employee_compensation(staff.compensation),
         "created_at": staff.created_at.isoformat() if staff.created_at else None,
         "updated_at": staff.updated_at.isoformat() if staff.updated_at else None,
     }
@@ -442,6 +647,20 @@ def update_staff_profile(
                 )
                 db.add(payment)
 
+        if "designation" in data.model_dump(exclude_unset=True):
+            des = data.designation
+            if des is None or (isinstance(des, str) and not des.strip()):
+                staff.designation = None
+                ec_row = (
+                    db.query(EmployeeCompensation)
+                    .filter(EmployeeCompensation.staff_id == staff.id)
+                    .first()
+                )
+                if ec_row is not None:
+                    ec_row.designation = None
+            else:
+                sync_employee_compensation_from_designation_template(db, staff)
+
         db.commit()
         db.refresh(staff)
         db.refresh(user)
@@ -458,12 +677,13 @@ def update_staff_profile(
                 "last_name": staff.last_name,
                 "email": staff.email,
                 "phone": staff.phone,
-                "designation": staff.designation,
+                "designation": staff_designation_for_display(staff),
                 "employee_type": staff.employee_type,
                 "annual_salary": float(staff.annual_salary) if staff.annual_salary else None,
                 "monthly_salary": round(monthly_salary, 2) if monthly_salary else None,
                 "emergency_leave": staff.emergency_leave or 0,
                 "casual_leave": staff.casual_leave or 0,
+                "employee_compensation": serialize_employee_compensation(staff.compensation),
             }
         }
 
@@ -743,7 +963,8 @@ def get_staff_list(
     """
     Get list of all staff members under the school.
     Only school users can access this endpoint.
-    Returns: staff name, permissions, email, phone, date of joining, and activity logs count.
+    Returns: staff name, designation, compensation details, permissions, email, phone,
+    date of joining, activity logs count, salary.
     """
     # Get school
     school = db.query(School).filter(School.user_id == current_user.id).first()
@@ -857,6 +1078,8 @@ def get_staff_list(
         result.append({
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
+            "designation": staff_designation_for_display(staff),
+            "employee_compensation": serialize_employee_compensation(staff.compensation),
             "email": staff.email,
             "phone": staff.phone,
             "permissions": permissions,

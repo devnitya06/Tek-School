@@ -95,6 +95,15 @@ def ensure_attendance_qr_token_columns():
             conn.execute(text(f'ALTER TABLE schools ADD COLUMN "{col}" {ddl_sqlite}'))
 
 
+def ensure_staff_compensation_tables():
+    """
+    Ensure staff compensation tables exist even when RUN_SCHEMA_SYNC is disabled.
+    These are required by staff designation-compensation endpoints.
+    """
+    EmployeeCompensation.__table__.create(bind=engine, checkfirst=True)
+    DesignationCompensationTemplate.__table__.create(bind=engine, checkfirst=True)
+
+
 def ensure_attendance_verified_at_column():
     """Teacher/staff attendance approval timestamp (set when is_verified becomes true)."""
     if column_exists("attendances", "verified_at"):

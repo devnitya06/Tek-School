@@ -9,6 +9,7 @@ from app.db.session import (
     ensure_attendance_verified_at_column,
     ensure_attendance_qr_source_columns,
     ensure_attendance_qr_token_columns,
+    ensure_staff_compensation_tables,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -43,8 +44,9 @@ def on_startup():
         ensure_attendance_verified_at_column()
         ensure_attendance_qr_source_columns()
         ensure_attendance_qr_token_columns()
+        ensure_staff_compensation_tables()
     except Exception as e:
-        print(f"Error ensuring attendance / QR columns: {str(e)}")
+        print(f"Error ensuring runtime schema requirements: {str(e)}")
 
     run_schema_sync = os.getenv("RUN_SCHEMA_SYNC", "false").lower() == "true"
     if run_schema_sync:

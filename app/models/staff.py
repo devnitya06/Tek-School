@@ -1,4 +1,17 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Numeric, Table, Enum as SQLEnum, Text, JSON
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Numeric,
+    Table,
+    Enum as SQLEnum,
+    Text,
+    JSON,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
@@ -54,11 +67,90 @@ class Staff(Base):
     attendances = relationship("Attendance", back_populates="staff")
     leave_requests = relationship("LeaveRequest", back_populates="staff", cascade="all, delete")
     payment = relationship("TeacherStaffPayment", back_populates="staff", uselist=False, cascade="all, delete-orphan")
+    compensation = relationship(
+        "EmployeeCompensation",
+        back_populates="staff",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"STF-{str(uuid.uuid4().int)[:6]}"
+
+
+class EmployeeCompensation(Base):
+    """
+    Salary and benefits breakdown for a staff member (one row per staff).
+    """
+    __tablename__ = "employee_compensations"
+    __table_args__ = (UniqueConstraint("staff_id", name="uq_employee_compensation_staff_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(String, ForeignKey("staff.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    basic_salary = Column(Numeric(12, 2), nullable=True)
+    hra = Column(Numeric(12, 2), nullable=True)
+    special_allowance = Column(Numeric(12, 2), nullable=True)
+    travel_allowance = Column(Numeric(12, 2), nullable=True)
+    medical_allowance = Column(Numeric(12, 2), nullable=True)
+    employee_pf_contribution = Column(Numeric(12, 2), nullable=True)
+
+    additional_benefits = Column(Boolean, nullable=False, default=False)
+    extra_benefits = Column(JSON, nullable=True)
+
+    designation = Column(String(255), nullable=True)
+    employee_grade = Column(String(100), nullable=True)
+    max_salary = Column(Numeric(12, 2), nullable=True)
+
+    emergency_leave = Column(Integer, nullable=True)
+    casual_leave = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    staff = relationship("Staff", back_populates="compensation")
+
+
+class DesignationCompensationTemplate(Base):
+    """
+    Per-school defaults for employee compensation by designation.
+    When a staff member's designation matches, values are copied to EmployeeCompensation.
+    """
+    __tablename__ = "designation_compensation_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id",
+            "designation",
+            name="uq_designation_compensation_template_school_designation",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    designation = Column(String(255), nullable=False)
+
+    basic_salary = Column(Numeric(12, 2), nullable=True)
+    hra = Column(Numeric(12, 2), nullable=True)
+    special_allowance = Column(Numeric(12, 2), nullable=True)
+    travel_allowance = Column(Numeric(12, 2), nullable=True)
+    medical_allowance = Column(Numeric(12, 2), nullable=True)
+    employee_pf_contribution = Column(Numeric(12, 2), nullable=True)
+
+    additional_benefits = Column(Boolean, nullable=False, default=False)
+    extra_benefits = Column(JSON, nullable=True)
+
+    employee_grade = Column(String(100), nullable=True)
+    max_salary = Column(Numeric(12, 2), nullable=True)
+
+    emergency_leave = Column(Integer, nullable=True)
+    casual_leave = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    school = relationship("School", back_populates="designation_compensation_templates")
 
 
 class ActionType(str, PyEnum):
