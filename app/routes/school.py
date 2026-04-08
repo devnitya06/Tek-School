@@ -3123,11 +3123,13 @@ def create_attendance(
                 )
             if existing:
                 existing.mark_in_at = mark_in_ts
+                existing.mark_in_via_qr = False
                 existing.status = "P"
                 existing.is_verified = is_verified
                 existing.is_today_present = is_today_present
                 if mark_out_ts is not None:
                     existing.mark_out_at = mark_out_ts
+                    existing.mark_out_via_qr = False
                 db.commit()
                 db.refresh(existing)
                 attendance = existing
@@ -3142,6 +3144,8 @@ def create_attendance(
                     is_today_present=is_today_present,
                     mark_in_at=mark_in_ts,
                     mark_out_at=mark_out_ts,
+                    mark_in_via_qr=False,
+                    mark_out_via_qr=False if mark_out_ts is not None else None,
                 )
                 db.add(attendance)
                 db.commit()
@@ -3159,6 +3163,7 @@ def create_attendance(
                     detail="Mark out already recorded for this date.",
                 )
             existing.mark_out_at = data.mark_out_at or now_ts
+            existing.mark_out_via_qr = False
             db.commit()
             db.refresh(existing)
             attendance = existing
@@ -3170,6 +3175,8 @@ def create_attendance(
             "is_today_present": attendance.is_today_present,
             "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
             "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+            "mark_in_from_qr": attendance.mark_in_via_qr if attendance.mark_in_at else None,
+            "mark_out_from_qr": attendance.mark_out_via_qr if attendance.mark_out_at else None,
             "time_taken": round(end - start, 4),
         }
 
@@ -3342,6 +3349,7 @@ def qr_attendance_checkin(
 
         if existing:
             existing.mark_in_at = now_ts
+            existing.mark_in_via_qr = True
             existing.status = "P"
             existing.is_today_present = True
             existing.is_verified = False
@@ -3359,6 +3367,8 @@ def qr_attendance_checkin(
                 is_today_present=True,
                 mark_in_at=now_ts,
                 mark_out_at=None,
+                mark_in_via_qr=True,
+                mark_out_via_qr=None,
             )
             db.add(attendance)
             db.commit()
@@ -3381,6 +3391,7 @@ def qr_attendance_checkin(
             )
 
         existing.mark_out_at = now_ts
+        existing.mark_out_via_qr = True
         existing.is_verified = False
         db.commit()
         db.refresh(existing)
@@ -3396,6 +3407,8 @@ def qr_attendance_checkin(
         "date": attendance.date.isoformat(),
         "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
         "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+        "mark_in_from_qr": attendance.mark_in_via_qr if attendance.mark_in_at else None,
+        "mark_out_from_qr": attendance.mark_out_via_qr if attendance.mark_out_at else None,
     }
 
 
@@ -3444,8 +3457,10 @@ def verify_teacher_attendance(
 
     if body.mark_in_at is not None:
         attendance.mark_in_at = body.mark_in_at
+        attendance.mark_in_via_qr = False
     if body.mark_out_at is not None:
         attendance.mark_out_at = body.mark_out_at
+        attendance.mark_out_via_qr = False
 
     attendance.is_verified = True
     attendance.verified_at = datetime.utcnow()
@@ -3459,6 +3474,8 @@ def verify_teacher_attendance(
         "verified_at": attendance.verified_at.isoformat() if attendance.verified_at else None,
         "mark_in_at": attendance.mark_in_at.isoformat() if attendance.mark_in_at else None,
         "mark_out_at": attendance.mark_out_at.isoformat() if attendance.mark_out_at else None,
+        "mark_in_from_qr": attendance.mark_in_via_qr if attendance.mark_in_at else None,
+        "mark_out_from_qr": attendance.mark_out_via_qr if attendance.mark_out_at else None,
     }
 
 
@@ -3694,6 +3711,8 @@ def get_my_mark_in_out_times(
             "date": att.date.isoformat(),
             "mark_in_at": att.mark_in_at.isoformat() if att.mark_in_at else None,
             "mark_out_at": att.mark_out_at.isoformat() if att.mark_out_at else None,
+            "mark_in_from_qr": att.mark_in_via_qr if att.mark_in_at else None,
+            "mark_out_from_qr": att.mark_out_via_qr if att.mark_out_at else None,
             "is_approved": bool(att.is_verified) if att.is_verified is not None else False,
             "verified_at": att.verified_at.isoformat() if att.verified_at else None,
             "status": att.status,
@@ -3784,6 +3803,8 @@ def list_teacher_mark_in_out(
                 "status": att.status,
                 "mark_in_at": att.mark_in_at.isoformat() if att.mark_in_at else None,
                 "mark_out_at": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                "mark_in_from_qr": att.mark_in_via_qr if att.mark_in_at else None,
+                "mark_out_from_qr": att.mark_out_via_qr if att.mark_out_at else None,
                 "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
             }
         )
@@ -3869,6 +3890,8 @@ def list_staff_teacher_marks(
                     "role": "teacher",
                     "mark_in": att.mark_in_at.isoformat() if att.mark_in_at else None,
                     "mark_out": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                    "mark_in_from_qr": att.mark_in_via_qr if att.mark_in_at else None,
+                    "mark_out_from_qr": att.mark_out_via_qr if att.mark_out_at else None,
                     "date": att.date.isoformat(),
                     "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
                 }
@@ -3901,6 +3924,8 @@ def list_staff_teacher_marks(
                     "role": "staff",
                     "mark_in": att.mark_in_at.isoformat() if att.mark_in_at else None,
                     "mark_out": att.mark_out_at.isoformat() if att.mark_out_at else None,
+                    "mark_in_from_qr": att.mark_in_via_qr if att.mark_in_at else None,
+                    "mark_out_from_qr": att.mark_out_via_qr if att.mark_out_at else None,
                     "date": att.date.isoformat(),
                     "is_verified": bool(att.is_verified) if att.is_verified is not None else False,
                 }

@@ -335,6 +335,9 @@ class Attendance(Base):
     is_today_present = Column(Boolean, default=True, nullable=False)
     mark_in_at = Column(DateTime, nullable=True)
     mark_out_at = Column(DateTime, nullable=True)
+    # True = recorded via QR scan; False = manual / other API; None = unknown or not applicable yet.
+    mark_in_via_qr = Column(Boolean, nullable=True)
+    mark_out_via_qr = Column(Boolean, nullable=True)
     verified_at = Column(DateTime, nullable=True)
 
     __table_args__ = (

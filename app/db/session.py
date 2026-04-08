@@ -103,6 +103,17 @@ def ensure_attendance_verified_at_column():
         conn.execute(text('ALTER TABLE attendances ADD COLUMN verified_at TIMESTAMP NULL'))
 
 
+def ensure_attendance_qr_source_columns():
+    """Whether mark-in/out was recorded via QR (vs manual attendance API)."""
+    for col in ("mark_in_via_qr", "mark_out_via_qr"):
+        if column_exists("attendances", col):
+            continue
+        with engine.begin() as conn:
+            conn.execute(
+                text(f'ALTER TABLE attendances ADD COLUMN "{col}" BOOLEAN NULL')
+            )
+
+
 def ensure_attendance_mark_columns():
     """
     Ensure attendance mark-in/out columns exist for runtime compatibility.
