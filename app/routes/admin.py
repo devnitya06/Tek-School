@@ -25,7 +25,56 @@ from app.services.pagination import PaginationParams
 from datetime import datetime, timedelta, date, timezone
 from app.utils.services import get_validity_days
 from sqlalchemy.orm import joinedload
+from app.services.staff_account import persist_staff_account, map_staff_creation_sql_error
+from app.schemas.staff import StaffCreateRequest, StaffResponse, StaffResponseWithCompensation
+from app.utils.staff_compensation import serialize_employee_compensation, staff_designation_for_display
+from app.utils.email_utility import send_dynamic_email
+
 router = APIRouter()
+
+
+@router.post(
+    "/platform-staff/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=StaffResponseWithCompensation,
+    summary="Create platform staff (no school)",
+    description=(
+        "Admin or superadmin only. Creates a User with role STAFF and a Staff profile with "
+        "`school_id` null (not under any school). Same JSON body as `POST /staff/create-staff/`. "
+        "Designation templates do not apply (no school); optional `designation` is stored on staff/compensation only."
+    ),
+)
+def create_platform_staff(
+    data: StaffCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+) -> StaffResponseWithCompensation:
+    existing_user = db.query(User).filter(User.email == data.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already exists.")
+
+    try:
+        staff = persist_staff_account(db, data, None, current_user)
+    except SQLAlchemyError as exc:
+        raise map_staff_creation_sql_error(exc) from exc
+
+    send_dynamic_email(
+        context_key="credential.html",
+        subject="Your Staff Account Credentials",
+        recipient_email=staff.email,
+        context_data={"email": staff.email, "password": data.password},
+        db=db,
+    )
+
+    db.refresh(staff)
+    base = StaffResponse.model_validate(staff)
+    out = base.model_dump()
+    out["designation"] = staff_designation_for_display(staff)
+    return StaffResponseWithCompensation(
+        **out,
+        employee_compensation=serialize_employee_compensation(staff.compensation),
+    )
+
 @router.post("/account-credit/configuration/")
 def create_account_credit_config(
     config_data: ConfigurationCreateSchema,

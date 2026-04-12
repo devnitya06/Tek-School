@@ -2,12 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
-import re
 from datetime import date, datetime
 from calendar import month_name
 
 from app.core.dependencies import get_current_user
-from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.school import School
 from app.models.staff import (
@@ -31,6 +29,9 @@ from app.schemas.staff import (
     StaffPermissionResponse,
     ActivityLogResponse,
     DesignationCompensationTemplateUpsert,
+    DesignationCompensationTemplateBulkCreate,
+    DesignationCompensationTemplatePatch,
+    DesignationCompensationTemplateBulkPatch,
 )
 from app.schemas.teachers import TeacherStaffPaymentRequest, TeacherStaffPaymentTransactionResponse, PendingMonthResponse, BulkStaffPaymentRequest, BulkPaymentResponse, FailedPaymentItem, BulkStaffPaymentRequest, BulkPaymentResponse
 from app.schemas.users import UserRole
@@ -44,6 +45,7 @@ from app.utils.staff_compensation import (
     sync_employee_compensation_from_designation_template,
 )
 from app.services.pagination import PaginationParams
+from app.services.staff_account import persist_staff_account, map_staff_creation_sql_error
 from typing import Optional, List
 
 router = APIRouter()
@@ -92,145 +94,9 @@ def create_staff(
         raise HTTPException(status_code=404, detail="School profile not found for the current user.")
 
     try:
-        # Create User account for staff (following same pattern as teacher creation)
-        staff_user = User(
-            name=f"{data.first_name} {data.last_name}",
-            email=data.email,
-            phone=data.phone,
-            location=current_user.location,
-            website=current_user.website,
-            role=UserRole.STAFF,
-            hashed_password=get_password_hash(data.password),
-            is_verified=True,
-        )
-        db.add(staff_user)
-        db.flush()  # assigns user.id
-
-        # Create Staff profile
-        staff = Staff(
-            first_name=data.first_name,
-            last_name=data.last_name,
-            email=data.email,
-            phone=data.phone,
-            designation=data.designation,
-            employee_type=data.employee_type,
-            annual_salary=data.annual_salary,
-            emergency_leave=data.emergency_leave or 0,
-            casual_leave=data.casual_leave or 0,
-            school_id=school.id,
-            user_id=staff_user.id,
-        )
-        db.add(staff)
-        db.flush()  # Get staff.id
-
-        sync_employee_compensation_from_designation_template(db, staff)
-
-        # Add permissions if provided
-        if data.permissions:
-            for permission in data.permissions:
-                db.execute(
-                    staff_permissions.insert().values(
-                        staff_id=staff.id,
-                        permission=permission.value,
-                        granted_by=current_user.id
-                    )
-                )
-        
-        # Create Staff Payment if payment data is provided
-        if data.payment:
-            staff_payment = TeacherStaffPayment(
-                teacher_id=None,
-                staff_id=staff.id,
-                monthly_in_hand_salary=data.payment.monthly_in_hand_salary if data.payment.monthly_in_hand_salary is not None else 0.0,
-                allowance=data.payment.allowance if data.payment.allowance is not None else 0.0,
-                bonus=data.payment.bonus if data.payment.bonus is not None else 0.0,
-                other_allowances=data.payment.other_allowances if data.payment.other_allowances is not None else 0.0,
-                incentive_plan=data.payment.incentive_plan if data.payment.incentive_plan is not None else 0.0,
-                health_care_insurance=data.payment.health_care_insurance if data.payment.health_care_insurance is not None else 0.0,
-                skill_development=data.payment.skill_development if data.payment.skill_development is not None else 0.0
-            )
-            db.add(staff_payment)
-        else:
-            # Create default payment structure with all zeros if not provided
-            staff_payment = TeacherStaffPayment(
-                teacher_id=None,
-                staff_id=staff.id,
-                monthly_in_hand_salary=0.0,
-                allowance=0.0,
-                bonus=0.0,
-                other_allowances=0.0,
-                incentive_plan=0.0,
-                health_care_insurance=0.0,
-                skill_development=0.0
-            )
-            db.add(staff_payment)
-        
-        db.commit()
-        db.refresh(staff)
-
+        staff = persist_staff_account(db, data, school.id, current_user)
     except SQLAlchemyError as exc:
-        db.rollback()
-        # Parse the error to identify which field caused the issue
-        error_message = str(exc)
-        field_name = None
-        error_detail = "Database error occurred"
-        
-        # Check for enum errors
-        if "enum" in error_message.lower() and "userrole" in error_message.lower():
-            field_name = "role"
-            error_detail = f"Invalid role value. The 'role' field must be one of: superadmin, admin, school, teacher, student, staff"
-
-        elif "unique" in error_message.lower() or "duplicate" in error_message.lower():
-            if "email" in error_message.lower():
-                field_name = "email"
-                error_detail = "Email already exists in the system"
-            else:
-                field_name = "unknown"
-                error_detail = "A record with these values already exists"
-
-        elif "foreign key" in error_message.lower():
-            if "school_id" in error_message.lower():
-                field_name = "school_id"
-                error_detail = "Invalid school reference"
-            else:
-                field_name = "unknown"
-                error_detail = "Invalid reference to related record"
-
-        elif "not null" in error_message.lower() or "null value" in error_message.lower():
-
-            match = re.search(r'column "(\w+)"', error_message)
-            if match:
-                field_name = match.group(1)
-                error_detail = f"The '{field_name}' field is required and cannot be empty"
-            else:
-                field_name = "unknown"
-                error_detail = "A required field is missing"
-        # Check for data type errors
-        elif "invalid input" in error_message.lower():
-
-            match = re.search(r'for enum \w+: "(\w+)"', error_message)
-            if match:
-                field_name = "role"
-                invalid_value = match.group(1)
-                error_detail = f"Invalid role value '{invalid_value}'. Valid values are: superadmin, admin, school, teacher, student, staff"
-            else:
-                field_name = "unknown"
-                error_detail = "Invalid data format for one or more fields"
-        
-        # Build detailed error response
-        error_response = {
-            "detail": error_detail,
-            "error_type": "database_error",
-        }
-        
-        if field_name:
-            error_response["field"] = field_name
-            error_response["message"] = f"Error in field '{field_name}': {error_detail}"
-        
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_response if field_name else error_detail,
-        ) from exc
+        raise map_staff_creation_sql_error(exc) from exc
 
     # Send credentials email to staff member
     send_dynamic_email(
@@ -297,8 +163,8 @@ def list_designation_compensation_templates(
 ):
     """
     Return every designation + compensation template the school has saved.
-    Each `PUT /staff/designation-compensation-template` creates or updates one row; a school can
-    have many rows (one per distinct designation string).
+    Use `POST /staff/designation-compensation-template/bulk` to create many at once, `PATCH` for
+    partial updates, `PUT` for upsert of a single designation.
     """
     if current_user.role != UserRole.SCHOOL:
         raise HTTPException(status_code=403, detail="Only school users can list designation templates.")
@@ -352,7 +218,10 @@ def create_designation_compensation_template(
     if existing:
         raise HTTPException(
             status_code=400,
-            detail="Template already exists for this designation. Use PUT /staff/designation-compensation-template to update.",
+            detail=(
+                "Template already exists for this designation. Use PATCH /staff/designation-compensation-template "
+                "for partial update, PUT for full upsert, or POST .../bulk for many new designations at once."
+            ),
         )
 
     template = DesignationCompensationTemplate(
@@ -413,6 +282,211 @@ def upsert_designation_compensation_template(
     return {
         "detail": "Designation compensation template saved.",
         "compensation": serialize_designation_template(template),
+    }
+
+
+@router.post("/designation-compensation-template/bulk")
+def bulk_create_designation_compensation_templates(
+    data: DesignationCompensationTemplateBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create multiple designation templates in one request.
+    Fails if any designation in the payload duplicates another in the same request, or if the school
+    already has a template for any of those designations (use PATCH or PUT per designation instead).
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can manage designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    keys: List[str] = []
+    for item in data.templates:
+        k = (item.designation or "").strip()
+        if not k:
+            raise HTTPException(status_code=400, detail="Each template must include a non-empty designation.")
+        keys.append(k)
+    if len(keys) != len(set(keys)):
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate designation in request: each template in the batch must have a unique designation.",
+        )
+
+    for k in keys:
+        exists = (
+            db.query(DesignationCompensationTemplate)
+            .filter(
+                DesignationCompensationTemplate.school_id == school.id,
+                DesignationCompensationTemplate.designation == k,
+            )
+            .first()
+        )
+        if exists:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template already exists for designation '{k}'. Use PATCH or PUT for that designation, or omit it from bulk create.",
+            )
+
+    created: List[DesignationCompensationTemplate] = []
+    try:
+        for item in data.templates:
+            payload = item.model_dump()
+            designation_key = payload.pop("designation", "").strip()
+            template = DesignationCompensationTemplate(
+                school_id=school.id,
+                designation=designation_key,
+                **payload,
+            )
+            db.add(template)
+            created.append(template)
+        db.commit()
+        for t in created:
+            db.refresh(t)
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+    return {
+        "detail": f"Created {len(created)} designation compensation template(s).",
+        "count": len(created),
+        "items": [serialize_designation_template(t) for t in created],
+    }
+
+
+@router.patch("/designation-compensation-template")
+def patch_designation_compensation_template(
+    data: DesignationCompensationTemplatePatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Partially update one template. `designation` identifies which row to update; only fields
+    present in the JSON body are changed. For many at once use
+    `PATCH /staff/designation-compensation-template/bulk`.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can manage designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    key = (data.designation or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="designation is required.")
+
+    template = (
+        db.query(DesignationCompensationTemplate)
+        .filter(
+            DesignationCompensationTemplate.school_id == school.id,
+            DesignationCompensationTemplate.designation == key,
+        )
+        .first()
+    )
+    if not template:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No template found for designation '{key}'. Create it first with POST or PUT.",
+        )
+
+    updates = data.model_dump(exclude_unset=True)
+    updates.pop("designation", None)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update; send at least one field besides designation.")
+
+    for field, value in updates.items():
+        setattr(template, field, value)
+
+    try:
+        db.commit()
+        db.refresh(template)
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+    return {
+        "detail": "Designation compensation template updated.",
+        "compensation": serialize_designation_template(template),
+    }
+
+
+@router.patch("/designation-compensation-template/bulk")
+def bulk_patch_designation_compensation_templates(
+    data: DesignationCompensationTemplateBulkPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Partially update multiple templates in one request.
+    Each object must include `designation` and at least one other field to change.
+    Fails if the same designation appears twice in the payload, or if any designation has no template.
+    """
+    if current_user.role != UserRole.SCHOOL:
+        raise HTTPException(status_code=403, detail="Only school users can manage designation templates.")
+    verify_school_business_access(current_user, db)
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    keys: List[str] = []
+    for item in data.updates:
+        k = (item.designation or "").strip()
+        if not k:
+            raise HTTPException(status_code=400, detail="Each update must include a non-empty designation.")
+        keys.append(k)
+    if len(keys) != len(set(keys)):
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate designation in request: each update must target a different template.",
+        )
+
+    templates_by_key: dict[str, DesignationCompensationTemplate] = {}
+    for k in keys:
+        row = (
+            db.query(DesignationCompensationTemplate)
+            .filter(
+                DesignationCompensationTemplate.school_id == school.id,
+                DesignationCompensationTemplate.designation == k,
+            )
+            .first()
+        )
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No template found for designation '{k}'. Create it first with POST or PUT.",
+            )
+        templates_by_key[k] = row
+
+    touched: List[DesignationCompensationTemplate] = []
+    for item in data.updates:
+        key = (item.designation or "").strip()
+        template = templates_by_key[key]
+        updates = item.model_dump(exclude_unset=True)
+        updates.pop("designation", None)
+        if not updates:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No fields to update for designation '{key}'; send at least one field besides designation.",
+            )
+        for field, value in updates.items():
+            setattr(template, field, value)
+        touched.append(template)
+
+    try:
+        db.commit()
+        for t in touched:
+            db.refresh(t)
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+    return {
+        "detail": f"Updated {len(touched)} designation compensation template(s).",
+        "count": len(touched),
+        "items": [serialize_designation_template(t) for t in touched],
     }
 
 

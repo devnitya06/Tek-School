@@ -76,7 +76,7 @@ class StaffUpdateRequest(BaseModel):
 
 class StaffResponse(StaffBase):
     id: str
-    school_id: str
+    school_id: Optional[str] = None
     employee_type: Optional[str] = None
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
@@ -118,6 +118,44 @@ class DesignationCompensationTemplateUpsert(BaseModel):
     max_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+
+
+class DesignationCompensationTemplateBulkCreate(BaseModel):
+    """Create many designation templates in one request (school must not already have that designation)."""
+
+    templates: List[DesignationCompensationTemplateUpsert] = Field(
+        ...,
+        min_length=1,
+        description="Each item is one designation + its compensation fields.",
+    )
+
+
+class DesignationCompensationTemplatePatch(BaseModel):
+    """Partial update: identify template by current designation; only sent fields are updated."""
+
+    designation: str = Field(..., min_length=1, max_length=255, description="Existing template designation key.")
+    basic_salary: Optional[Decimal] = None
+    hra: Optional[Decimal] = None
+    special_allowance: Optional[Decimal] = None
+    travel_allowance: Optional[Decimal] = None
+    medical_allowance: Optional[Decimal] = None
+    employee_pf_contribution: Optional[Decimal] = None
+    additional_benefits: Optional[bool] = None
+    extra_benefits: Optional[Dict[str, Any]] = None
+    employee_grade: Optional[str] = None
+    max_salary: Optional[Decimal] = None
+    emergency_leave: Optional[int] = None
+    casual_leave: Optional[int] = None
+
+
+class DesignationCompensationTemplateBulkPatch(BaseModel):
+    """Partially update many templates in one request (each item: designation + fields to change)."""
+
+    updates: List[DesignationCompensationTemplatePatch] = Field(
+        ...,
+        min_length=1,
+        description="Each entry targets one existing template by designation.",
+    )
 
 
 class StaffPermissionAssignRequest(BaseModel):

@@ -95,6 +95,18 @@ def ensure_attendance_qr_token_columns():
             conn.execute(text(f'ALTER TABLE schools ADD COLUMN "{col}" {ddl_sqlite}'))
 
 
+def ensure_staff_school_id_nullable():
+    """Allow platform staff (admin/superadmin) with no school."""
+    inspector = inspect(engine)
+    if not inspector.has_table("staff"):
+        return
+    for col in inspector.get_columns("staff"):
+        if col["name"] == "school_id" and col.get("nullable") is False:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE staff ALTER COLUMN school_id DROP NOT NULL'))
+            break
+
+
 def ensure_staff_compensation_tables():
     """
     Ensure staff compensation tables exist even when RUN_SCHEMA_SYNC is disabled.

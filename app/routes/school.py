@@ -45,6 +45,13 @@ from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 router = APIRouter()
 
+# Multi-image uploads: max files per request (client should show this in a popup if exceeded).
+MAX_SCHOOL_IMAGES_PER_UPLOAD = 3
+_MAX_IMAGES_PER_UPLOAD_MESSAGE = (
+    "You can upload at most 3 images at a time. If you need more, save these first, "
+    "then open edit and add up to 3 more images."
+)
+
 
 def timer():
     return time.perf_counter()
@@ -281,10 +288,10 @@ async def add_catalogue_images(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """Add images to school catalogue. Accepts multiple image files and uploads them to S3."""
+    """Add images to school catalogue. At most 3 files per request; append more via separate uploads."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
-    if len(images) > 20:
-        raise HTTPException(status_code=400, detail="Maximum 20 images allowed per request")
+    if len(images) > MAX_SCHOOL_IMAGES_PER_UPLOAD:
+        raise HTTPException(status_code=400, detail=_MAX_IMAGES_PER_UPLOAD_MESSAGE)
     uploaded_urls = []
     errors = []
     for image in images:
@@ -425,10 +432,10 @@ async def add_photo_gallery_images(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """Add images to school photo gallery. Accepts multiple image files and uploads them to S3."""
+    """Add images to school photo gallery. At most 3 files per request; append more via separate uploads."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
-    if len(images) > 50:
-        raise HTTPException(status_code=400, detail="Maximum 50 images allowed per request")
+    if len(images) > MAX_SCHOOL_IMAGES_PER_UPLOAD:
+        raise HTTPException(status_code=400, detail=_MAX_IMAGES_PER_UPLOAD_MESSAGE)
     uploaded_urls = []
     errors = []
     for image in images:

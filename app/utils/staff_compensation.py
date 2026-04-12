@@ -114,14 +114,16 @@ def sync_employee_compensation_from_designation_template(db: Session, staff: Sta
 
     ec.designation = key
 
-    template = (
-        db.query(DesignationCompensationTemplate)
-        .filter(
-            DesignationCompensationTemplate.school_id == staff.school_id,
-            DesignationCompensationTemplate.designation == key,
+    template = None
+    if staff.school_id:
+        template = (
+            db.query(DesignationCompensationTemplate)
+            .filter(
+                DesignationCompensationTemplate.school_id == staff.school_id,
+                DesignationCompensationTemplate.designation == key,
+            )
+            .first()
         )
-        .first()
-    )
     if template is not None:
         _apply_template_fields(ec, template)
         # Keep Staff profile leave fields aligned with designation benefits when the school defined them.

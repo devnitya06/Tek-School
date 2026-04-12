@@ -56,7 +56,7 @@ class Staff(Base):
     annual_salary = Column(Numeric(12, 2), nullable=True)
     emergency_leave = Column(Integer, nullable=True, default=0)
     casual_leave = Column(Integer, nullable=True, default=0)
-    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
