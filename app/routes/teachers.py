@@ -59,6 +59,20 @@ def create_teacher(
             raise HTTPException(status_code=404, detail="School not found for this staff member.")
 
     try:
+        if data.immidiate_boss:
+            immediate_boss = db.query(Staff).filter(Staff.id == data.immidiate_boss).first()
+            if not immediate_boss:
+                raise HTTPException(status_code=404, detail="immidiate_boss staff not found.")
+            if immediate_boss.school_id != school.id:
+                raise HTTPException(status_code=400, detail="immidiate_boss must belong to the same school.")
+
+        if data.super_boss:
+            super_boss = db.query(Staff).filter(Staff.id == data.super_boss).first()
+            if not super_boss:
+                raise HTTPException(status_code=404, detail="super_boss staff not found.")
+            if super_boss.school_id != school.id:
+                raise HTTPException(status_code=400, detail="super_boss must belong to the same school.")
+
         # Upload teacher profile image if provided
         profile_pic_url = None
         if data.profile_image:
@@ -91,6 +105,13 @@ def create_teacher(
             end_duty=data.end_duty,
             teacher_type=data.teacher_type,
             present_in=data.present_in,
+            designation=data.designation,
+            immidiate_boss=data.immidiate_boss,
+            super_boss=data.super_boss,
+            mark_in_time=data.mark_in_time,
+            mark_out_time=data.mark_out_time,
+            employee_grade=data.employee_grade,
+            is_active_hr_service=data.is_active_hr_service if data.is_active_hr_service is not None else False,
             school_id=school.id,
             user_id=user.id,
             profile_image=profile_pic_url 
@@ -331,6 +352,13 @@ def get_all_teachers_for_school(
             "teacher_id": teacher.id,
             "teacher_name": f"{teacher.first_name} {teacher.last_name}",
             "email": teacher.email,
+            "designation": teacher.designation,
+            "immidiate_boss": teacher.immidiate_boss,
+            "super_boss": teacher.super_boss,
+            "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
+            "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
+            "employee_grade": teacher.employee_grade,
+            "is_active_hr_service": teacher.is_active_hr_service,
             "status": "active" if teacher.is_active else "inactive",
             "attendance_count": attendance_count or 0,
             "exam_count": exam_count or 0,
@@ -445,6 +473,13 @@ def get_teacher_profile(
         "phone": teacher.phone,
         "present_in": teacher.present_in,
         "teacher_type": teacher.teacher_type,
+        "designation": teacher.designation,
+        "immidiate_boss": teacher.immidiate_boss,
+        "super_boss": teacher.super_boss,
+        "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
+        "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
+        "employee_grade": teacher.employee_grade,
+        "is_active_hr_service": teacher.is_active_hr_service,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
         "status": "active" if teacher.is_active else "inactive",
@@ -578,6 +613,13 @@ def get_teacher_by_id(
         "status": "active" if teacher.is_active else "inactive",
         "present_in": teacher.present_in,
         "teacher_type": teacher.teacher_type,
+        "designation": teacher.designation,
+        "immidiate_boss": teacher.immidiate_boss,
+        "super_boss": teacher.super_boss,
+        "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
+        "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
+        "employee_grade": teacher.employee_grade,
+        "is_active_hr_service": teacher.is_active_hr_service,
         "highest_qualification": teacher.highest_qualification,
         "university": teacher.university,
         "created_at": teacher.created_at,
@@ -637,6 +679,22 @@ def update_teacher_profile(
         )
 
     try:
+        if data.immidiate_boss is not None:
+            if data.immidiate_boss:
+                immediate_boss = db.query(Staff).filter(Staff.id == data.immidiate_boss).first()
+                if not immediate_boss:
+                    raise HTTPException(status_code=404, detail="immidiate_boss staff not found.")
+                if immediate_boss.school_id != school.id:
+                    raise HTTPException(status_code=400, detail="immidiate_boss must belong to the same school.")
+
+        if data.super_boss is not None:
+            if data.super_boss:
+                super_boss = db.query(Staff).filter(Staff.id == data.super_boss).first()
+                if not super_boss:
+                    raise HTTPException(status_code=404, detail="super_boss staff not found.")
+                if super_boss.school_id != school.id:
+                    raise HTTPException(status_code=400, detail="super_boss must belong to the same school.")
+
         # Handle profile image upload if provided
         if data.profile_image:
             try:

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator, Field
 from typing import Optional, Literal, List, Dict, Any
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, time
 from app.models.staff import StaffPermissionType, ActionType, ResourceType
 
 
@@ -39,6 +39,17 @@ class StaffCreateRequest(StaffBase):
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
+    hiring_for_board: Optional[str] = None
+    teaching_language: Optional[Dict[str, Any]] = None
+    subjects: Optional[str] = None
+    assigned_class: Optional[str] = None
+    assigned_subjects: Optional[Dict[str, Any]] = None
     permissions: Optional[List[StaffPermissionType]] = None
     payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure
 
@@ -61,6 +72,17 @@ class StaffUpdateRequest(BaseModel):
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
+    hiring_for_board: Optional[str] = None
+    teaching_language: Optional[Dict[str, Any]] = None
+    subjects: Optional[str] = None
+    assigned_class: Optional[str] = None
+    assigned_subjects: Optional[Dict[str, Any]] = None
     payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure update
 
     @field_validator("phone")
@@ -81,6 +103,17 @@ class StaffResponse(StaffBase):
     annual_salary: Optional[Decimal] = None
     emergency_leave: Optional[int] = None
     casual_leave: Optional[int] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
+    hiring_for_board: Optional[str] = None
+    teaching_language: Optional[Dict[str, Any]] = None
+    subjects: Optional[str] = None
+    assigned_class: Optional[str] = None
+    assigned_subjects: Optional[Dict[str, Any]] = None
     is_active: bool
     created_at: Optional[datetime] = None
 

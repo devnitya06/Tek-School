@@ -11,6 +11,7 @@ from sqlalchemy import (
     Text,
     JSON,
     UniqueConstraint,
+    Time,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -56,6 +57,17 @@ class Staff(Base):
     annual_salary = Column(Numeric(12, 2), nullable=True)
     emergency_leave = Column(Integer, nullable=True, default=0)
     casual_leave = Column(Integer, nullable=True, default=0)
+    immidiate_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    super_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    mark_in_time = Column(Time, nullable=True)
+    mark_out_time = Column(Time, nullable=True)
+    employee_grade = Column(String(100), nullable=True)
+    is_active_hr_service = Column(Boolean, nullable=True, default=False)
+    hiring_for_board = Column(String(255), nullable=True)
+    teaching_language = Column(JSON, nullable=True)
+    subjects = Column(String, nullable=True)
+    assigned_class = Column(String(255), nullable=True)
+    assigned_subjects = Column(JSON, nullable=True)
     school_id = Column(String, ForeignKey("schools.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_active = Column(Boolean, default=True)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float, JSON
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -41,6 +41,13 @@ class Teacher(Base):
     end_duty = Column(Time, nullable=False)
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)
     present_in = Column(ARRAY(String), nullable=False)
+    designation = Column(String, nullable=True)
+    immidiate_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    super_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    mark_in_time = Column(Time, nullable=True)
+    mark_out_time = Column(Time, nullable=True)
+    employee_grade = Column(String(100), nullable=True)
+    is_active_hr_service = Column(Boolean, nullable=True, default=False)
     created_at = Column(DateTime, default=func.now())
     # Foreign keys
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)

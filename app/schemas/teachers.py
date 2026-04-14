@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Literal,Optional
+from typing import List, Literal, Optional
 from datetime import time, datetime, date
 from app.models.teachers import DayOfWeek, PaymentMode
 
@@ -30,6 +30,13 @@ class TeacherCreateRequest(BaseModel):
     end_duty: time
     teacher_type: Literal["full_time", "part_time"]
     present_in: List[DayOfWeek]
+    designation: Optional[str] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
     assignments: List[Assignment]
     payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure
 
@@ -44,6 +51,13 @@ class TeacherUpdateRequest(BaseModel):
     end_duty: Optional[time] = None 
     teacher_type: Optional[Literal["full_time", "part_time"]] = None
     present_in: Optional[List[DayOfWeek]] = None
+    designation: Optional[str] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
     assignments: Optional[List[Assignment]] = None
     payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure update 
 class TeacherResponse(BaseModel):
@@ -59,6 +73,13 @@ class TeacherResponse(BaseModel):
     end_duty: time
     teacher_type: Literal["full_time", "part_time"]
     present_in: DayOfWeek
+    designation: Optional[str] = None
+    immidiate_boss: Optional[str] = None
+    super_boss: Optional[str] = None
+    mark_in_time: Optional[time] = None
+    mark_out_time: Optional[time] = None
+    employee_grade: Optional[str] = None
+    is_active_hr_service: Optional[bool] = None
     model_config = {
         "from_attributes": True
     }

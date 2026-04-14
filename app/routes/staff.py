@@ -594,6 +594,17 @@ def get_staff_profile(
         "monthly_salary": round(monthly_salary, 2) if monthly_salary else None,
         "emergency_leave": staff.emergency_leave or 0,
         "casual_leave": staff.casual_leave or 0,
+        "immidiate_boss": staff.immidiate_boss,
+        "super_boss": staff.super_boss,
+        "mark_in_time": staff.mark_in_time.isoformat() if staff.mark_in_time else None,
+        "mark_out_time": staff.mark_out_time.isoformat() if staff.mark_out_time else None,
+        "employee_grade": staff.employee_grade,
+        "is_active_hr_service": staff.is_active_hr_service,
+        "hiring_for_board": staff.hiring_for_board,
+        "teaching_language": staff.teaching_language,
+        "subjects": staff.subjects,
+        "assigned_class": staff.assigned_class,
+        "assigned_subjects": staff.assigned_subjects,
         "is_active": staff.is_active,
         "permissions": permissions,
         "salary": salary,
@@ -682,6 +693,26 @@ def update_staff_profile(
         if data.phone is not None:
             user.phone = data.phone
 
+        if data.immidiate_boss is not None:
+            if data.immidiate_boss == staff.id:
+                raise HTTPException(status_code=400, detail="immidiate_boss cannot be the same staff.")
+            if data.immidiate_boss:
+                immediate_boss = db.query(Staff).filter(Staff.id == data.immidiate_boss).first()
+                if not immediate_boss:
+                    raise HTTPException(status_code=404, detail="immidiate_boss staff not found.")
+                if immediate_boss.school_id != staff.school_id:
+                    raise HTTPException(status_code=400, detail="immidiate_boss must belong to the same school.")
+
+        if data.super_boss is not None:
+            if data.super_boss == staff.id:
+                raise HTTPException(status_code=400, detail="super_boss cannot be the same staff.")
+            if data.super_boss:
+                super_boss = db.query(Staff).filter(Staff.id == data.super_boss).first()
+                if not super_boss:
+                    raise HTTPException(status_code=404, detail="super_boss staff not found.")
+                if super_boss.school_id != staff.school_id:
+                    raise HTTPException(status_code=400, detail="super_boss must belong to the same school.")
+
         # Update staff fields
         update_fields = data.model_dump(exclude_unset=True, exclude={"email", "phone", "payment"})
         for field, value in update_fields.items():
@@ -757,6 +788,17 @@ def update_staff_profile(
                 "monthly_salary": round(monthly_salary, 2) if monthly_salary else None,
                 "emergency_leave": staff.emergency_leave or 0,
                 "casual_leave": staff.casual_leave or 0,
+                "immidiate_boss": staff.immidiate_boss,
+                "super_boss": staff.super_boss,
+                "mark_in_time": staff.mark_in_time.isoformat() if staff.mark_in_time else None,
+                "mark_out_time": staff.mark_out_time.isoformat() if staff.mark_out_time else None,
+                "employee_grade": staff.employee_grade,
+                "is_active_hr_service": staff.is_active_hr_service,
+                "hiring_for_board": staff.hiring_for_board,
+                "teaching_language": staff.teaching_language,
+                "subjects": staff.subjects,
+                "assigned_class": staff.assigned_class,
+                "assigned_subjects": staff.assigned_subjects,
                 "employee_compensation": serialize_employee_compensation(staff.compensation),
             }
         }
@@ -1153,6 +1195,17 @@ def get_staff_list(
             "staff_id": staff.id,
             "staff_name": f"{staff.first_name} {staff.last_name}",
             "designation": staff_designation_for_display(staff),
+            "immidiate_boss": staff.immidiate_boss,
+            "super_boss": staff.super_boss,
+            "mark_in_time": staff.mark_in_time.isoformat() if staff.mark_in_time else None,
+            "mark_out_time": staff.mark_out_time.isoformat() if staff.mark_out_time else None,
+            "employee_grade": staff.employee_grade,
+            "is_active_hr_service": staff.is_active_hr_service,
+            "hiring_for_board": staff.hiring_for_board,
+            "teaching_language": staff.teaching_language,
+            "subjects": staff.subjects,
+            "assigned_class": staff.assigned_class,
+            "assigned_subjects": staff.assigned_subjects,
             "employee_compensation": serialize_employee_compensation(staff.compensation),
             "email": staff.email,
             "phone": staff.phone,

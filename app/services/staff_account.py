@@ -91,6 +91,20 @@ def persist_staff_account(
     Commits on success; rolls back and re-raises SQLAlchemyError on failure.
     """
     try:
+        if data.immidiate_boss:
+            immediate_boss = db.query(Staff).filter(Staff.id == data.immidiate_boss).first()
+            if not immediate_boss:
+                raise HTTPException(status_code=404, detail="immidiate_boss staff not found.")
+            if school_id and immediate_boss.school_id != school_id:
+                raise HTTPException(status_code=400, detail="immidiate_boss must belong to the same school.")
+
+        if data.super_boss:
+            super_boss = db.query(Staff).filter(Staff.id == data.super_boss).first()
+            if not super_boss:
+                raise HTTPException(status_code=404, detail="super_boss staff not found.")
+            if school_id and super_boss.school_id != school_id:
+                raise HTTPException(status_code=400, detail="super_boss must belong to the same school.")
+
         staff_user = User(
             name=f"{data.first_name} {data.last_name}",
             email=data.email,
@@ -114,6 +128,17 @@ def persist_staff_account(
             annual_salary=data.annual_salary,
             emergency_leave=data.emergency_leave or 0,
             casual_leave=data.casual_leave or 0,
+            immidiate_boss=data.immidiate_boss,
+            super_boss=data.super_boss,
+            mark_in_time=data.mark_in_time,
+            mark_out_time=data.mark_out_time,
+            employee_grade=data.employee_grade,
+            is_active_hr_service=data.is_active_hr_service if data.is_active_hr_service is not None else False,
+            hiring_for_board=data.hiring_for_board,
+            teaching_language=data.teaching_language,
+            subjects=data.subjects,
+            assigned_class=data.assigned_class,
+            assigned_subjects=data.assigned_subjects,
             school_id=school_id,
             user_id=staff_user.id,
         )
