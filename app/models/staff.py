@@ -13,7 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Time,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 
@@ -57,7 +57,10 @@ class Staff(Base):
     annual_salary = Column(Numeric(12, 2), nullable=True)
     emergency_leave = Column(Integer, nullable=True, default=0)
     casual_leave = Column(Integer, nullable=True, default=0)
-    immidiate_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    # Keep DB column as legacy-spelled `immidiate_boss`; expose
+    # `immediate_boss` alias for compatibility in newer code.
+    immidiate_boss = Column("immidiate_boss", String, ForeignKey("staff.id"), nullable=True)
+    immediate_boss = synonym("immidiate_boss")
     super_boss = Column(String, ForeignKey("staff.id"), nullable=True)
     mark_in_time = Column(Time, nullable=True)
     mark_out_time = Column(Time, nullable=True)

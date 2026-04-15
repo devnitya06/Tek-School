@@ -1,6 +1,6 @@
 from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float, JSON
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from app.db.session import Base
 from enum import Enum
 import uuid
@@ -42,7 +42,10 @@ class Teacher(Base):
     teacher_type = Column(SQLEnum(TeacherTypeEnum), nullable=False)
     present_in = Column(ARRAY(String), nullable=False)
     designation = Column(String, nullable=True)
-    immidiate_boss = Column(String, ForeignKey("staff.id"), nullable=True)
+    # Keep DB column as legacy-spelled `immidiate_boss`; expose
+    # `immediate_boss` alias for compatibility in newer code.
+    immidiate_boss = Column("immidiate_boss", String, ForeignKey("staff.id"), nullable=True)
+    immediate_boss = synonym("immidiate_boss")
     super_boss = Column(String, ForeignKey("staff.id"), nullable=True)
     mark_in_time = Column(Time, nullable=True)
     mark_out_time = Column(Time, nullable=True)

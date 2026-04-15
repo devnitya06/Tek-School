@@ -25,6 +25,26 @@ from app.utils.permission import verify_school_business_access
 router = APIRouter()
 
 
+def _staff_boss_details(staff_id: str | None, db: Session) -> dict | None:
+    if not staff_id:
+        return None
+    boss = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not boss:
+        return None
+    return {
+        "id": boss.id,
+        "name": f"{boss.first_name} {boss.last_name}",
+        "first_name": boss.first_name,
+        "last_name": boss.last_name,
+        "designation": boss.designation,
+        "email": boss.email,
+        "phone": boss.phone,
+        "employee_type": boss.employee_type,
+        "employee_grade": boss.employee_grade,
+        "is_active": boss.is_active,
+    }
+
+
 @router.post("/create-teacher/", status_code=status.HTTP_201_CREATED)
 def create_teacher(
     data: TeacherCreateRequest,
@@ -355,6 +375,8 @@ def get_all_teachers_for_school(
             "designation": teacher.designation,
             "immidiate_boss": teacher.immidiate_boss,
             "super_boss": teacher.super_boss,
+            "immidiate_boss_details": _staff_boss_details(teacher.immidiate_boss, db),
+            "super_boss_details": _staff_boss_details(teacher.super_boss, db),
             "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
             "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
             "employee_grade": teacher.employee_grade,
@@ -476,6 +498,8 @@ def get_teacher_profile(
         "designation": teacher.designation,
         "immidiate_boss": teacher.immidiate_boss,
         "super_boss": teacher.super_boss,
+        "immidiate_boss_details": _staff_boss_details(teacher.immidiate_boss, db),
+        "super_boss_details": _staff_boss_details(teacher.super_boss, db),
         "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
         "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
         "employee_grade": teacher.employee_grade,
@@ -616,6 +640,8 @@ def get_teacher_by_id(
         "designation": teacher.designation,
         "immidiate_boss": teacher.immidiate_boss,
         "super_boss": teacher.super_boss,
+        "immidiate_boss_details": _staff_boss_details(teacher.immidiate_boss, db),
+        "super_boss_details": _staff_boss_details(teacher.super_boss, db),
         "mark_in_time": teacher.mark_in_time.isoformat() if teacher.mark_in_time else None,
         "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
         "employee_grade": teacher.employee_grade,

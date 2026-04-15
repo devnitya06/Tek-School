@@ -51,6 +51,26 @@ from typing import Optional, List
 router = APIRouter()
 
 
+def _staff_boss_details(staff_id: Optional[str], db: Session) -> Optional[dict]:
+    if not staff_id:
+        return None
+    boss = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not boss:
+        return None
+    return {
+        "id": boss.id,
+        "name": f"{boss.first_name} {boss.last_name}",
+        "first_name": boss.first_name,
+        "last_name": boss.last_name,
+        "designation": staff_designation_for_display(boss),
+        "email": boss.email,
+        "phone": boss.phone,
+        "employee_type": boss.employee_type,
+        "employee_grade": boss.employee_grade,
+        "is_active": boss.is_active,
+    }
+
+
 @router.post(
     "/create-staff/",
     status_code=status.HTTP_201_CREATED,
@@ -596,6 +616,8 @@ def get_staff_profile(
         "casual_leave": staff.casual_leave or 0,
         "immidiate_boss": staff.immidiate_boss,
         "super_boss": staff.super_boss,
+        "immidiate_boss_details": _staff_boss_details(staff.immidiate_boss, db),
+        "super_boss_details": _staff_boss_details(staff.super_boss, db),
         "mark_in_time": staff.mark_in_time.isoformat() if staff.mark_in_time else None,
         "mark_out_time": staff.mark_out_time.isoformat() if staff.mark_out_time else None,
         "employee_grade": staff.employee_grade,
@@ -1197,6 +1219,8 @@ def get_staff_list(
             "designation": staff_designation_for_display(staff),
             "immidiate_boss": staff.immidiate_boss,
             "super_boss": staff.super_boss,
+            "immidiate_boss_details": _staff_boss_details(staff.immidiate_boss, db),
+            "super_boss_details": _staff_boss_details(staff.super_boss, db),
             "mark_in_time": staff.mark_in_time.isoformat() if staff.mark_in_time else None,
             "mark_out_time": staff.mark_out_time.isoformat() if staff.mark_out_time else None,
             "employee_grade": staff.employee_grade,

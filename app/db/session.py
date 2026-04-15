@@ -159,6 +159,55 @@ def ensure_attendance_mark_columns():
         )
 
 
+def ensure_staff_teacher_boss_columns():
+    """
+    Ensure both legacy/current boss column spellings exist and stay mirrored.
+    Some databases have `immediate_boss`, others have `immidiate_boss`.
+    """
+    with engine.begin() as conn:
+        # staff table
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "immidiate_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "immediate_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "super_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "mark_in_time" TIME NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "mark_out_time" TIME NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "employee_grade" VARCHAR(100) NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "is_active_hr_service" BOOLEAN NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "hiring_for_board" VARCHAR(255) NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "teaching_language" JSON NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "subjects" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "assigned_class" VARCHAR(255) NULL'))
+        conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "assigned_subjects" JSON NULL'))
+        conn.execute(
+            text(
+                """
+                UPDATE staff
+                SET immidiate_boss = COALESCE(immidiate_boss, immediate_boss),
+                    immediate_boss = COALESCE(immediate_boss, immidiate_boss)
+                """
+            )
+        )
+
+        # teachers table
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "immidiate_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "immediate_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "super_boss" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "designation" VARCHAR NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "mark_in_time" TIME NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "mark_out_time" TIME NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "employee_grade" VARCHAR(100) NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "is_active_hr_service" BOOLEAN NULL'))
+        conn.execute(
+            text(
+                """
+                UPDATE teachers
+                SET immidiate_boss = COALESCE(immidiate_boss, immediate_boss),
+                    immediate_boss = COALESCE(immediate_boss, immidiate_boss)
+                """
+            )
+        )
+
+
 # Dependency to get DB session
 def get_db():
     db = SessionLocal()
