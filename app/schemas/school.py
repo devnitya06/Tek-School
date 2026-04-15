@@ -1,10 +1,12 @@
-from pydantic import BaseModel, EmailStr, HttpUrl,Field
-from typing import Optional,List,Dict,Literal
+from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator
+from typing import Optional, List, Dict, Literal
 from datetime import time
-from datetime import date,datetime
+from datetime import date, datetime
 from enum import Enum
 from fastapi import Query
 from app.models.school import *
+
+
 class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
@@ -12,29 +14,31 @@ class SchoolProfileBase(BaseModel):
     school_medium: str
     school_board: str
     establishment_year: int
-    
+
     # Address Information
     pin_code: str
     block_division: Optional[str] = None
     district: str
     state: str
     country: Optional[str] = "India"
-    
+
     # Contact Information
     school_email: EmailStr
     school_phone: str
     school_alt_phone: Optional[str] = None
     school_website: Optional[str] = None
     # school_website: Optional[HttpUrl] = None
-    
+
     # Principal Information
     principal_name: str
     principal_designation: Optional[str] = None
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
 
+
 class SchoolProfileCreate(SchoolProfileBase):
     pass
+
 
 class SchoolProfileOut(SchoolProfileBase):
     id: str
@@ -42,11 +46,9 @@ class SchoolProfileOut(SchoolProfileBase):
     school_type: Optional[str] = None
     school_medium: Optional[str] = None
     school_board: Optional[str] = None
-    
-    model_config = {
-        "from_attributes": True,
-        "arbitrary_types_allowed": True  
-    }
+
+    model_config = {"from_attributes": True, "arbitrary_types_allowed": True}
+
 
 class SchoolProfileUpdate(BaseModel):
     school_name: Optional[str] = None
@@ -79,10 +81,17 @@ class SchoolProfileUpdate(BaseModel):
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None
-    school_logo: Optional[str] = None  # URL or base64 data URL (data:image/...;base64,...)
+    school_logo: Optional[str] = (
+        None  # URL or base64 data URL (data:image/...;base64,...)
+    )
+
+
 class SubjectItem(BaseModel):
     name: str
-    school_class_subject_id: Optional[int] = None  # 🧩 new field for linking to global subject
+    school_class_subject_id: Optional[int] = (
+        None  # 🧩 new field for linking to global subject
+    )
+
 
 class ClassWithSubjectCreate(BaseModel):
     class_name: str
@@ -93,7 +102,9 @@ class ClassWithSubjectCreate(BaseModel):
     annual_transport_fee: Optional[float] = 3000.0
     tek_school_payment_annually: Optional[float] = 1000.0
     class_start_date: date
-    class_end_date: date   
+    class_end_date: date
+
+
 class ClassWithSubjectUpdate(BaseModel):
     class_name: Optional[str] = None
 
@@ -108,6 +119,7 @@ class ClassWithSubjectUpdate(BaseModel):
     class_start_date: Optional[date] = None
     class_end_date: Optional[date] = None
 
+
 class ClassInput(BaseModel):
     mandatory_subject_ids: Optional[List[int]]
     optional_subject_ids: Optional[List[int]]
@@ -117,19 +129,21 @@ class ClassInput(BaseModel):
     end_time: time
     annual_course_fee: Optional[float] = None
     annual_transport_fee: Optional[float] = None
-    tek_school_payment_annually: Optional[float] = None    
-    
+    tek_school_payment_annually: Optional[float] = None
+
+
 class ClassOut(BaseModel):
     id: int
     class_name: str
     section: str
     start_time: Optional[time]
     end_time: Optional[time]
-           
+
 
 class StopBase(BaseModel):
     stop_name: str
     stop_time: time
+
 
 class TransportCreate(BaseModel):
     vehicle_number: str
@@ -140,7 +154,8 @@ class TransportCreate(BaseModel):
     duty_end_time: time
     pickup_stops: List[StopBase]
     drop_stops: List[StopBase]
-    
+
+
 class StopUpdate(BaseModel):
     id: Optional[int] = None  # existing stop id (if updating)
     stop_name: Optional[str] = None
@@ -157,9 +172,11 @@ class TransportUpdate(BaseModel):
     pickup_stops: Optional[List[StopUpdate]] = None
     drop_stops: Optional[List[StopUpdate]] = None
 
+
 class StopResponse(StopBase):
     stop_name: str
     stop_time: str
+
 
 class TransportResponse(BaseModel):
     driver_id: int
@@ -172,14 +189,13 @@ class TransportResponse(BaseModel):
     school_id: str
     pickup_stops: List[StopResponse]
     drop_stops: List[StopResponse]
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
+
 
 class AttendanceCreate(BaseModel):
-    student_id: Optional[int]=None
-    teachers_id: Optional[str]=None
-    staff_id: Optional[str]=None
+    student_id: Optional[int] = None
+    teachers_id: Optional[str] = None
+    staff_id: Optional[str] = None
     date: date
     status: Optional[str] = Field(
         None,
@@ -192,11 +208,9 @@ class AttendanceCreate(BaseModel):
     )
     mark_in_at: Optional[datetime] = None
     mark_out_at: Optional[datetime] = None
-    is_verified:bool =Field(default=True)
-    is_today_present: bool=Field(default=False)
-    model_config = {
-        "from_attributes": True
-    }
+    is_verified: bool = Field(default=True)
+    is_today_present: bool = Field(default=False)
+    model_config = {"from_attributes": True}
 
 
 class TeacherAttendanceVerifyBody(BaseModel):
@@ -230,13 +244,14 @@ class AttendanceQRCheckinRequest(BaseModel):
     }
 
 
-class WeekDay(str,Enum):
+class WeekDay(str, Enum):
     MONDAY = "MONDAY"
     TUESDAY = "TUESDAY"
     WEDNESDAY = "WEDNESDAY"
     THURSDAY = "THURSDAY"
     FRIDAY = "FRIDAY"
-    SATURDAY = "SATURDAY" 
+    SATURDAY = "SATURDAY"
+
 
 class PeriodCreate(BaseModel):
     # period_number: int
@@ -252,37 +267,45 @@ class TimetableCreate(BaseModel):
     day: WeekDay
     periods: List[PeriodCreate]
 
+
 class TimetableUpdate(BaseModel):
     day: Optional[WeekDay] = None
     periods: Optional[List[PeriodCreate]] = None
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
+
+
 class PeriodUpdate(BaseModel):
     subject_id: Optional[int] = None
     teacher_id: Optional[str] = None
     start_time: Optional[time] = None
     end_time: Optional[time] = None
+
+
 class CreateSchoolCredit(BaseModel):
     class_id: int
     credit_configuration_id: int
-    margin_value: int    
+    margin_value: int
+
 
 class TransferSchoolCredit(BaseModel):
     receiver_school_id: str
     credit_amount: int
 
+
 class CreatePaymentRequest(BaseModel):
     amount: float
+
 
 class PaymentVerificationRequest(BaseModel):
     razorpay_payment_id: str
     razorpay_order_id: str
     razorpay_signature: str
-    amount: float            
+    amount: float
+
+
 class ExamCreateRequest(BaseModel):
-    class_id: Optional[int]=None
-    selected_class_id:Optional[int]=None
+    class_id: Optional[int] = None
+    selected_class_id: Optional[int] = None
     subject_id: Optional[int] = None
     section_ids: List[int] = None
     chapters: List[int] = None
@@ -296,10 +319,11 @@ class ExamCreateRequest(BaseModel):
     inactive_date: Optional[datetime] = None
     max_repeat: Optional[int] = 1
 
+
 class ExamUpdateRequest(BaseModel):
     class_id: Optional[int] = None
     subject_id: Optional[int] = None
-    selected_class_id:Optional[int]=None
+    selected_class_id: Optional[int] = None
     section_ids: Optional[List[int]] = None
     chapters: Optional[List[int]] = None
 
@@ -317,6 +341,8 @@ class ExamUpdateRequest(BaseModel):
 
     max_repeat: Optional[int] = None
     status: Optional[ExamStatusEnum] = None
+
+
 class ExamListResponse(BaseModel):
     id: str
     # is_published: bool
@@ -339,13 +365,13 @@ class ExamListResponse(BaseModel):
     max_repeat: int
     status: ExamStatusEnum
     no_students_appeared: int
-    created_by: Optional[str]=None
-    created_by_admin:bool
+    created_by: Optional[str] = None
+    created_by_admin: bool
     created_at: datetime
 
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
+
+
 class ExamDetailResponse(BaseModel):
     id: str
     is_published: bool
@@ -386,12 +412,15 @@ class ExamDetailResponse(BaseModel):
     no_students_appeared: int
     attempt_no: Optional[int] = None
     created_by: Optional[str] = None
-    created_by_admin:bool
+    created_by_admin: bool
     created_at: datetime
+
 
 class ExamQuestionOptionCreate(BaseModel):
     option_text: str
     is_correct: bool
+
+
 class ExamQuestionCreate(BaseModel):
     question_type: QuestionTypeEnum
     question_text: str
@@ -404,9 +433,11 @@ class ExamQuestionCreate(BaseModel):
     # For MCQ
     options: Optional[List["ExamQuestionOptionCreate"]] = None
 
+
 class ExamQuestionOptionUpdate(BaseModel):
     option_text: Optional[str] = None
     is_correct: Optional[bool] = None
+
 
 class ExamQuestionUpdate(BaseModel):
     question_type: Optional[QuestionTypeEnum] = None
@@ -418,12 +449,14 @@ class ExamQuestionUpdate(BaseModel):
 
     options: Optional[List[ExamQuestionOptionUpdate]] = None
 
+
 class AnswerSchema(BaseModel):
     question_id: int
     # For MCQ
     selected_option_id: Optional[int] = None
     # For SHORT / LONG
     descriptive_answer: Optional[str] = None
+
 
 class ExamQuestionOptionResponse(BaseModel):
     id: int
@@ -442,15 +475,22 @@ class ExamQuestionResponse(BaseModel):
     options: Optional[List[ExamQuestionOptionResponse]] = None
 
     model_config = {"from_attributes": True}
+
+
 class StudentExamSubmitRequest(BaseModel):
     answers: List[AnswerSchema]
+
+
 class ExamPublishResponse(BaseModel):
     exam_id: str
     is_published: bool
     published_at: datetime
 
+
 class ExamFilterParams(BaseModel):
-    exam_name_or_id: Optional[str] = Query(None, description="Search by Exam ID or Name")
+    exam_name_or_id: Optional[str] = Query(
+        None, description="Search by Exam ID or Name"
+    )
     exam_type: Optional[ExamTypeEnum] = None
     subject_id: Optional[int] = None
     teacher_name: Optional[str] = None
@@ -458,9 +498,10 @@ class ExamFilterParams(BaseModel):
     to_date: Optional[datetime] = None
     class_name: Optional[str] = None
 
+
 # class McqCreate(BaseModel):
 #     question: str
-#     mcq_type: str = Field(..., pattern="^(1|2)$") 
+#     mcq_type: str = Field(..., pattern="^(1|2)$")
 #     image: Optional[str] = None
 #     option_a: str
 #     option_b: str
@@ -471,12 +512,14 @@ class ExamFilterParams(BaseModel):
 # class McqBulkCreate(BaseModel):
 #     mcqs: List[McqCreate]
 
+
 class ExamStatusUpdateRequest(BaseModel):
     status: ExamStatusEnum
 
+
 # class AnswerSchema(BaseModel):
 #     question_id: int
-#     selected_option: str  
+#     selected_option: str
 
 # class StudentExamSubmitRequest(BaseModel):
 #     answers: List[AnswerSchema]
@@ -486,7 +529,8 @@ class ExamStatusUpdateRequest(BaseModel):
 
 #     model_config = {
 #         "from_attributes": True
-#     } 
+#     }
+
 
 class LeaveCreate(BaseModel):
     subject: str
@@ -496,8 +540,11 @@ class LeaveCreate(BaseModel):
     description: Optional[str] = None
     attach_file: Optional[str] = None
 
+
 class LeaveStatusUpdate(BaseModel):
     status: str
+
+
 class LeaveResponse(BaseModel):
     id: int
     subject: str
@@ -509,9 +556,9 @@ class LeaveResponse(BaseModel):
     user_id: int
     role: str
 
-    model_config = {
-        "from_attributes": True
-    } 
+    model_config = {"from_attributes": True}
+
+
 # ---------------- Home Task ----------------
 class AssignmentTaskCreate(BaseModel):
     title: str
@@ -528,6 +575,7 @@ class HomeAssignmentCreate(BaseModel):
     tasks: List[AssignmentTaskCreate]
     student_ids: Optional[List[int]] = None
 
+
 class StudentHomeTaskListResponse(BaseModel):
     id: int
     teacher_name: str
@@ -539,15 +587,23 @@ class StudentHomeTaskListResponse(BaseModel):
     no_of_tasks_completed: int
     no_of_tasks_incomplete: int
 
+
 # Bank Account Schemas
 class BankAccountCreate(BaseModel):
     account_holder_name: str
     account_number: str
-    ifsc_code: str = Field(..., min_length=11, max_length=11, description="IFSC code must be 11 characters")
+    ifsc_code: str = Field(
+        ..., min_length=11, max_length=11, description="IFSC code must be 11 characters"
+    )
     bank_name: str
     branch_name: Optional[str] = None
-    account_type: str = Field(..., pattern="^(savings|current)$", description="Account type must be 'savings' or 'current'")
+    account_type: str = Field(
+        ...,
+        pattern="^(savings|current)$",
+        description="Account type must be 'savings' or 'current'",
+    )
     is_primary: bool = False
+
 
 class BankAccountUpdate(BaseModel):
     account_holder_name: Optional[str] = None
@@ -557,6 +613,7 @@ class BankAccountUpdate(BaseModel):
     branch_name: Optional[str] = None
     account_type: Optional[str] = Field(None, pattern="^(savings|current)$")
     is_primary: Optional[bool] = None
+
 
 class BankAccountResponse(BaseModel):
     id: int
@@ -570,14 +627,14 @@ class BankAccountResponse(BaseModel):
     is_primary: bool
     created_at: datetime
     updated_at: datetime
-    
-    model_config = {
-        "from_attributes": True
-    }
+
+    model_config = {"from_attributes": True}
+
 
 # Promotion Account Schemas
 class PromoteAccountRequest(BaseModel):
     pass  # No additional data needed, just triggers request
+
 
 class PromoteAccountResponse(BaseModel):
     detail: str
@@ -626,7 +683,9 @@ class ListedSchoolStudentResponse(BaseModel):
 
 # SchoolInfo (one-to-one with School): admission path, vision, mission, about us
 class SchoolInfoCreate(BaseModel):
-    school_id: Optional[str] = None  # Required for super admin; ignored for school (uses own school)
+    school_id: Optional[str] = (
+        None  # Required for super admin; ignored for school (uses own school)
+    )
     admission_path: Optional[str] = None
     vision: Optional[str] = None
     mission: Optional[str] = None
@@ -749,6 +808,7 @@ class ExcellentStudentResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class BackupUserResponse(BaseModel):
     user_id: str | int
     name: str
@@ -757,6 +817,7 @@ class BackupUserResponse(BaseModel):
     session: str | None
     record_date: datetime | None
     updated_by: str | None
+
 
 # SchoolRating: any user can submit rating/feedback for a listed school
 class SchoolRatingCreate(BaseModel):
@@ -833,6 +894,37 @@ class BusinessInquiryResponse(BaseModel):
 
 class BusinessInquiryListFilter(BaseModel):
     """Query filters for listing inquiries."""
-    school_id: Optional[str] = None  # filter by one school (admin) or scopes to that school (school)
+
+    school_id: Optional[str] = (
+        None  # filter by one school (admin) or scopes to that school (school)
+    )
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
+
+
+class SchoolHolidaySelectRequest(BaseModel):
+    holiday_ids: List[int] = Field(..., min_length=1)
+
+    @field_validator("holiday_ids")
+    @classmethod
+    def validate_ids(cls, v):
+        if len(set(v)) != len(v):
+            raise ValueError("Duplicate holiday IDs are not allowed")
+
+        if any(i <= 0 for i in v):
+            raise ValueError("Holiday IDs must be positive integers")
+
+        return v
+
+
+class SchoolHolidayResponse(BaseModel):
+    id: int
+    holiday_master_id: int
+    name: str = Field(..., max_length=255)
+    type: str = Field(..., max_length=100)
+    date: date
+    file: Optional[str] = None
+    description: Optional[str] = None
+
+    class Config:
+        from_attributes = True

@@ -1,8 +1,23 @@
-from sqlalchemy import Column, Integer, ForeignKey,String,DateTime,event,Text,Boolean,ARRAY,JSON,Float,UniqueConstraint,Table
+from sqlalchemy import (
+    Column,
+    Integer,
+    ForeignKey,
+    String,
+    DateTime,
+    Date,
+    event,
+    Text,
+    Boolean,
+    ARRAY,
+    JSON,
+    Float,
+    UniqueConstraint,
+    Table,
+)
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
-from app.models.school import SchoolBoard,SchoolMedium
+from app.models.school import SchoolBoard, SchoolMedium
 from enum import Enum
 from sqlalchemy import Enum as SQLEnum
 import uuid
@@ -23,24 +38,31 @@ class QuestionType(str, Enum):
 class AdminExamStatus(str, Enum):
     ACTIVE = "active"
     EXPIRED = "expired"
+
+
 class StudentExamStatus(str, Enum):
     pass_ = "pass"
     fail = "fail"
+
+
 class SetType(str, Enum):
     A = "A"
     B = "B"
     C = "C"
     ALL = "ALL"
-class PlanDuration(str,Enum):
+
+
+class PlanDuration(str, Enum):
     MONTHLY = "monthly"
     QUARTERLY = "quarterly"
     YEARLY = "yearly"
 
 
-class PaymentStatus(str,Enum):
+class PaymentStatus(str, Enum):
     PENDING = "pending"
     SUCCESS = "success"
     FAILED = "failed"
+
 
 class AdminExam(Base):
     __tablename__ = "admin_exams"
@@ -48,21 +70,35 @@ class AdminExam(Base):
     id = Column(String, primary_key=True, index=True)
     name = Column(String, nullable=False)
 
-    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
-    school_class_subject_id = Column(Integer,ForeignKey("school_classes_subjects.id", ondelete="CASCADE"),nullable=False)
+    school_class_subject_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=False
+    )
+    school_class_subject_id = Column(
+        Integer,
+        ForeignKey("school_classes_subjects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     exam_type = Column(SQLEnum(ExamType), nullable=False)
     question_type = Column(SQLEnum(QuestionType), nullable=False)
     passing_mark = Column(Integer, nullable=False)
-    repeat = Column(Integer,default=0)
+    repeat = Column(Integer, default=0)
     duration = Column(Integer, nullable=False)
     exam_validity = Column(DateTime, nullable=True)
     description = Column(String, nullable=True)
     no_students_appeared = Column(Integer, default=0)
-    status = Column(SQLEnum(AdminExamStatus), default=AdminExamStatus.ACTIVE, nullable=False)
+    status = Column(
+        SQLEnum(AdminExamStatus), default=AdminExamStatus.ACTIVE, nullable=False
+    )
 
-    school_class_subject = relationship("SchoolClassSubject", back_populates="admin_exams")
-    admin_exam_bank = relationship("AdminExamBank", back_populates="exam", cascade="all, delete")
-    student_admin_exam_data = relationship("StudentAdminExamData", back_populates="exam", cascade="all, delete")
+    school_class_subject = relationship(
+        "SchoolClassSubject", back_populates="admin_exams"
+    )
+    admin_exam_bank = relationship(
+        "AdminExamBank", back_populates="exam", cascade="all, delete"
+    )
+    student_admin_exam_data = relationship(
+        "StudentAdminExamData", back_populates="exam", cascade="all, delete"
+    )
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -99,12 +135,19 @@ class AdminExamBank(Base):
 
     exam = relationship("AdminExam", back_populates="admin_exam_bank")
 
+
 class StudentAdminExamData(Base):
     __tablename__ = "student_admin_exam_data"
 
     id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer, ForeignKey("self_signed_students.id", ondelete="CASCADE"), nullable=False)
-    exam_id = Column(String, ForeignKey("admin_exams.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(
+        Integer,
+        ForeignKey("self_signed_students.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    exam_id = Column(
+        String, ForeignKey("admin_exams.id", ondelete="CASCADE"), nullable=False
+    )
 
     attempt_no = Column(Integer, default=1)
     answers = Column(JSON, nullable=False)
@@ -118,6 +161,7 @@ class StudentAdminExamData(Base):
 
     exam = relationship("AdminExam", back_populates="student_admin_exam_data")
 
+
 class Admin(Base):
     __tablename__ = "admins"
 
@@ -125,21 +169,25 @@ class Admin(Base):
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
 
     user = relationship("User", back_populates="admin_profile")
-    
+
+
 class AccountConfiguration(Base):
     __tablename__ = "account_configuration"
 
     id = Column(Integer, primary_key=True, index=True)
-    name= Column(String, nullable=False, unique=True)
-    value=Column(Integer, nullable=False)
+    name = Column(String, nullable=False, unique=True)
+    value = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
 
 class PaymentConfiguration(Base):
     __tablename__ = "payment_configurations"
 
     id = Column(Integer, primary_key=True, index=True)
-    class_id = Column(Integer,ForeignKey("school_classes_subjects.id"),nullable=False,unique=True)
+    class_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=False, unique=True
+    )
     monthly_amount = Column(Integer, nullable=False)
     monthly_discount = Column(Integer, nullable=False)
     quarterly_amount = Column(Integer, nullable=False)
@@ -152,19 +200,24 @@ class PaymentConfiguration(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # relationship (optional but recommended)
-    class_obj = relationship("SchoolClassSubject",backref="payment_configuration",uselist=False)
+    class_obj = relationship(
+        "SchoolClassSubject", backref="payment_configuration", uselist=False
+    )
 
-    
+
 class CreditConfiguration(Base):
     __tablename__ = "credit_configuration"
 
     id = Column(Integer, primary_key=True, index=True)
-    standard_name = Column(String, nullable=False,unique=True)
+    standard_name = Column(String, nullable=False, unique=True)
     monthly_credit = Column(Integer, nullable=False)
     margin_up_to = Column(Integer, nullable=False)
-    
-    school_margins = relationship("SchoolMarginConfiguration", back_populates="credit_configuration")
-    
+
+    school_margins = relationship(
+        "SchoolMarginConfiguration", back_populates="credit_configuration"
+    )
+
+
 class CreditMaster(Base):
     __tablename__ = "credit_master"
     id = Column(Integer, primary_key=True, index=True)
@@ -176,17 +229,25 @@ class CreditMaster(Base):
     transfer_credit = Column(Integer, nullable=True, default=0)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    
+
     def calculate_available_credit(self):
-        self.available_credit = (self.self_added_credit or 0) + (self.earned_credit or 0) - (self.used_credit or 0) - (self.transfer_credit or 0)
+        self.available_credit = (
+            (self.self_added_credit or 0)
+            + (self.earned_credit or 0)
+            - (self.used_credit or 0)
+            - (self.transfer_credit or 0)
+        )
+
 
 @event.listens_for(CreditMaster, "before_insert")
 def calculate_available_before_insert(mapper, connection, target):
     target.calculate_available_credit()
 
+
 @event.listens_for(CreditMaster, "before_update")
 def calculate_available_before_update(mapper, connection, target):
     target.calculate_available_credit()
+
 
 class SchoolClassSubject(Base):
     __tablename__ = "school_classes_subjects"
@@ -201,40 +262,52 @@ class SchoolClassSubject(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # ✅ Relationships
-    chapters = relationship("Chapter", back_populates="school_class_subject", cascade="all, delete-orphan")
-    admin_exams = relationship("AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan")
-    recharge_plans = relationship("RechargePlan", back_populates="school_class_subject", cascade="all, delete-orphan")
+    chapters = relationship(
+        "Chapter", back_populates="school_class_subject", cascade="all, delete-orphan"
+    )
+    admin_exams = relationship(
+        "AdminExam", back_populates="school_class_subject", cascade="all, delete-orphan"
+    )
+    recharge_plans = relationship(
+        "RechargePlan",
+        back_populates="school_class_subject",
+        cascade="all, delete-orphan",
+    )
     exams_as_selected_class = relationship(
         "Exam",
         back_populates="selected_class",
         foreign_keys="[Exam.selected_class_id]",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
     exams_as_subject = relationship(
         "Exam",
         back_populates="subject",
         foreign_keys="[Exam.subject_id]",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
     question_banks_as_class = relationship(
         "QuestionBank",
         foreign_keys="[QuestionBank.school_class_subject_id]",
-        back_populates="school_class_subject"
+        back_populates="school_class_subject",
     )
 
     question_banks_as_subject = relationship(
         "QuestionBank",
         foreign_keys="[QuestionBank.subject_id]",
-        back_populates="subject"
+        back_populates="subject",
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "school_board", "school_medium", "class_name", "subject",
-            name="uq_board_medium_class_subject"
+            "school_board",
+            "school_medium",
+            "class_name",
+            "subject",
+            name="uq_board_medium_class_subject",
         ),
     )
+
 
 class Chapter(Base):
     __tablename__ = "chapters"
@@ -243,19 +316,33 @@ class Chapter(Base):
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
 
-    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id", ondelete="CASCADE"))
+    school_class_subject_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id", ondelete="CASCADE")
+    )
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # ✅ Relationships
     school_class_subject = relationship("SchoolClassSubject", back_populates="chapters")
-    videos = relationship("ChapterVideo", back_populates="chapter", cascade="all, delete-orphan")
-    images = relationship("ChapterImage", back_populates="chapter", cascade="all, delete-orphan")
-    pdfs = relationship("ChapterPDF", back_populates="chapter", cascade="all, delete-orphan")
-    qnas = relationship("ChapterQnA", back_populates="chapter", cascade="all, delete-orphan")
-    keypoints = relationship("ChapterKeyPoint",back_populates="chapter",cascade="all, delete-orphan")
+    videos = relationship(
+        "ChapterVideo", back_populates="chapter", cascade="all, delete-orphan"
+    )
+    images = relationship(
+        "ChapterImage", back_populates="chapter", cascade="all, delete-orphan"
+    )
+    pdfs = relationship(
+        "ChapterPDF", back_populates="chapter", cascade="all, delete-orphan"
+    )
+    qnas = relationship(
+        "ChapterQnA", back_populates="chapter", cascade="all, delete-orphan"
+    )
+    keypoints = relationship(
+        "ChapterKeyPoint", back_populates="chapter", cascade="all, delete-orphan"
+    )
     student_progress = relationship("StudentChapterProgress", back_populates="chapter")
+
+
 class ChapterVideo(Base):
     __tablename__ = "chapter_videos"
 
@@ -295,6 +382,8 @@ class ChapterQnA(Base):
     chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
 
     chapter = relationship("Chapter", back_populates="qnas")
+
+
 class ChapterKeyPoint(Base):
     __tablename__ = "chapter_keypoints"
 
@@ -302,9 +391,7 @@ class ChapterKeyPoint(Base):
     point = Column(Text, nullable=False)
 
     chapter_id = Column(
-        Integer,
-        ForeignKey("chapters.id", ondelete="CASCADE"),
-        nullable=False
+        Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False
     )
 
     created_at = Column(DateTime, default=func.now())
@@ -322,15 +409,16 @@ class StudentChapterProgress(Base):
     last_read_at = Column(DateTime, default=func.now())
 
     student = relationship("Student", back_populates="chapter_progress")
-    chapter = relationship("Chapter", back_populates="student_progress")    
+    chapter = relationship("Chapter", back_populates="student_progress")
+
 
 class QuestionSet(Base):
     __tablename__ = "question_sets"
 
     id = Column(Integer, primary_key=True, index=True)
     board = Column(String(100), nullable=False)
-    class_name= Column(String(50), nullable=False)
-    set = Column(SQLEnum(SetType),default=SetType.A,nullable=False)
+    class_name = Column(String(50), nullable=False)
+    set = Column(SQLEnum(SetType), default=SetType.A, nullable=False)
     description = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=func.now())
@@ -338,6 +426,7 @@ class QuestionSet(Base):
 
     # Relationship
     questions = relationship("QuestionSetBank", back_populates="question_set")
+
 
 class QuestionSetBank(Base):
     __tablename__ = "question_set_bank"
@@ -358,6 +447,7 @@ class QuestionSetBank(Base):
     question_set = relationship("QuestionSet", back_populates="questions")
     school_class_subject = relationship("SchoolClassSubject")
 
+
 class RechargePlan(Base):
     __tablename__ = "recharge_plans"
 
@@ -371,11 +461,14 @@ class RechargePlan(Base):
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime, default=func.now())
-    school_class_subject = relationship("SchoolClassSubject", back_populates="recharge_plans")
+    school_class_subject = relationship(
+        "SchoolClassSubject", back_populates="recharge_plans"
+    )
 
     __table_args__ = (
         UniqueConstraint("class_id", "duration", name="uq_class_duration_plan"),
     )
+
 
 class StudentSubscription(Base):
     __tablename__ = "student_subscriptions"
@@ -395,13 +488,16 @@ class StudentSubscription(Base):
     student = relationship("SelfSignedStudent", back_populates="subscriptions")
     payments = relationship("Payment", back_populates="subscription")
 
+
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True)
 
-    student_id = Column(Integer, ForeignKey("self_signed_students.id"),nullable=False)
-    subscription_id = Column(Integer, ForeignKey("student_subscriptions.id"),nullable=False)
+    student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=False)
+    subscription_id = Column(
+        Integer, ForeignKey("student_subscriptions.id"), nullable=False
+    )
 
     amount = Column(Integer, nullable=False)
     payment_status = Column(SQLEnum(PaymentStatus), default=PaymentStatus.PENDING)
@@ -416,7 +512,7 @@ class Payment(Base):
 
 class FAQ(Base):
     __tablename__ = "faqs"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
@@ -424,7 +520,7 @@ class FAQ(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True)
-    
+
     # relationships
     creator = relationship("User", foreign_keys=[created_by])
     schools = relationship("School", secondary="school_faqs", back_populates="faqs")
@@ -434,10 +530,18 @@ class FAQ(Base):
 school_faqs = Table(
     "school_faqs",
     Base.metadata,
-    Column("school_id", String, ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True),
-    Column("faq_id", Integer, ForeignKey("faqs.id", ondelete="CASCADE"), primary_key=True),
-    Column("created_at", DateTime, default=func.now())
+    Column(
+        "school_id",
+        String,
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "faq_id", Integer, ForeignKey("faqs.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("created_at", DateTime, default=func.now()),
 )
+
 
 class QuestionBank(Base):
     __tablename__ = "question_banks"
@@ -445,8 +549,12 @@ class QuestionBank(Base):
     id = Column(Integer, primary_key=True, index=True)
     board = Column(SQLEnum(SchoolBoard), nullable=True)
     medium = Column(SQLEnum(SchoolMedium), nullable=True)
-    school_class_subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
-    subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+    school_class_subject_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=True
+    )
+    subject_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=True
+    )
     mcq_count = Column(Integer, default=0)
     short_count = Column(Integer, default=0)
     long_count = Column(Integer, default=0)
@@ -457,26 +565,22 @@ class QuestionBank(Base):
     school_class_subject = relationship(
         "SchoolClassSubject",
         back_populates="question_banks_as_class",
-        foreign_keys=[school_class_subject_id]
+        foreign_keys=[school_class_subject_id],
     )
     subject = relationship(
         "SchoolClassSubject",
         back_populates="question_banks_as_subject",
-        foreign_keys=[subject_id]
+        foreign_keys=[subject_id],
     )
     questions = relationship(
-        "Question",
-        back_populates="question_bank",
-        cascade="all, delete-orphan"
+        "Question", back_populates="question_bank", cascade="all, delete-orphan"
     )
     __table_args__ = (
         UniqueConstraint(
-            "board",
-            "medium",
-            "school_class_subject_id",
-            name="uq_question_bank"
+            "board", "medium", "school_class_subject_id", name="uq_question_bank"
         ),
     )
+
 
 class Question(Base):
     __tablename__ = "questions"
@@ -484,9 +588,7 @@ class Question(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     question_bank_id = Column(
-        Integer,
-        ForeignKey("question_banks.id", ondelete="CASCADE"),
-        nullable=False
+        Integer, ForeignKey("question_banks.id", ondelete="CASCADE"), nullable=False
     )
     chapter_id = Column(Integer, ForeignKey("chapters.id"))
 
@@ -494,57 +596,76 @@ class Question(Base):
     marks = Column(Integer, nullable=False)
     image = Column(String, nullable=True)
     question_text = Column(Text, nullable=False)
-    source =Column(Text, nullable=True)
+    source = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
     question_bank = relationship("QuestionBank", back_populates="questions")
     chapter = relationship("Chapter")
     options = relationship(
-        "QuestionOption",
-        back_populates="question",
-        cascade="all, delete-orphan"
+        "QuestionOption", back_populates="question", cascade="all, delete-orphan"
     )
 
     answer = relationship(
         "QuestionAnswer",
         back_populates="question",
         uselist=False,
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
     key_points = relationship(
-        "AnswerKeyPoint",
-        back_populates="question",
-        cascade="all, delete-orphan"
+        "AnswerKeyPoint", back_populates="question", cascade="all, delete-orphan"
     )
+
 
 class QuestionOption(Base):
     __tablename__ = "question_options"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"))
+    question_id = Column(Integer, ForeignKey("questions.id", ondelete="CASCADE"))
 
     option_text = Column(String(255), nullable=False)
     is_correct = Column(Boolean, default=False)
 
     question = relationship("Question", back_populates="options")
 
+
 class QuestionAnswer(Base):
     __tablename__ = "question_answers"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"), unique=True)
+    question_id = Column(
+        Integer, ForeignKey("questions.id", ondelete="CASCADE"), unique=True
+    )
 
     answer_text = Column(Text, nullable=False)
 
     question = relationship("Question", back_populates="answer")
 
+
 class AnswerKeyPoint(Base):
     __tablename__ = "answer_key_points"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(Integer, ForeignKey("questions.id",ondelete="CASCADE"))
+    question_id = Column(Integer, ForeignKey("questions.id", ondelete="CASCADE"))
 
     key_point = Column(String(255), nullable=False)
 
     question = relationship("Question", back_populates="key_points")
+
+
+class HolidayMaster(Base):
+    __tablename__ = "holiday_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    name = Column(String(255), nullable=False)
+    type = Column(String(100), nullable=False)
+    date = Column(Date, nullable=False)
+
+    description = Column(String(500), nullable=True)
+    file = Column(String, nullable=True)
+
+    is_deleted = Column(Boolean, default=False)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
