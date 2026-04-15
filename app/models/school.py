@@ -1,4 +1,20 @@
-from sqlalchemy import Column, Integer, String, ForeignKey,Table,Time,UniqueConstraint,Date,Boolean,DateTime,Float,ARRAY,Text,JSON,TypeDecorator
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    ForeignKey,
+    Table,
+    Time,
+    UniqueConstraint,
+    Date,
+    Boolean,
+    DateTime,
+    Float,
+    ARRAY,
+    Text,
+    JSON,
+    TypeDecorator,
+)
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -8,17 +24,21 @@ from sqlalchemy import Enum as SQLEnum
 from datetime import datetime
 from sqlalchemy.sql import func
 from datetime import date
+
+
 class SchoolType(str, Enum):
     PVT = "private"
     GOVT = "government"
     SEMI_GOVT = "semi-government"
     INTERNATIONAL = "international"
 
+
 class SchoolMedium(str, Enum):
     ENGLISH = "english"
     HINDI = "hindi"
     BILINGUAL = "bilingual"
     OTHER = "other"
+
 
 class SchoolBoard(str, Enum):
     CBSE = "cbse"
@@ -27,42 +47,52 @@ class SchoolBoard(str, Enum):
     IB = "ib"
     OTHER = "other"
 
+
 class ExamTypeEnum(str, Enum):
     MOCK = "mock"
     RANK = "rank"
+
+
 class ExamStatusEnum(str, Enum):
     ACTIVE = "active"
     PENDING = "pending"
     EXPIRED = "expired"
     DECLINED = "declined"
 
+
 class SchoolAccountType(str, Enum):
-    LISTING = "listing"           # Only listing account (can login immediately)
-    BUSINESS = "business"         # Business account (has both listing + business permissions, requires admin approval)
+    LISTING = "listing"  # Only listing account (can login immediately)
+    BUSINESS = "business"  # Business account (has both listing + business permissions, requires admin approval)
+
+
 class EvaluationScopeEnum(str, Enum):
     INTERNAL = "internal"
     EXTERNAL = "external"
     BOTH = "both"
+
 
 class QuestionTypeEnum(str, Enum):
     MCQ = "mcq"
     SHORT = "short"
     LONG = "long"
 
-class ExamStatus(str,Enum):
+
+class ExamStatus(str, Enum):
     pass_ = "pass"
     fail = "fail"
 
+
 class SchoolAccountTypeDecorator(TypeDecorator):
     """Custom type decorator to handle case-insensitive enum mapping"""
+
     impl = String
     cache_ok = True
-    
+
     def __init__(self, enum_class, length=50):
         self.enum_class = enum_class
         self.length = length
         super().__init__(length=length)
-    
+
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
@@ -75,7 +105,7 @@ class SchoolAccountTypeDecorator(TypeDecorator):
                 if enum_member.value.lower() == value_lower:
                     return enum_member.value
         return value
-    
+
     def process_result_value(self, value, dialect):
         if value is None:
             return None
@@ -109,7 +139,7 @@ class School(Base):
     school_medium = Column(SQLEnum(SchoolMedium), nullable=True)
     school_board = Column(SQLEnum(SchoolBoard), nullable=True)
     establishment_year = Column(Integer, nullable=True)
-    
+
     # Address Information
     profile_pic_url = Column(String, nullable=True)
     banner_pic_url = Column(String, nullable=True)
@@ -118,14 +148,14 @@ class School(Base):
     district = Column(String, nullable=True)
     state = Column(String, nullable=True)
     country = Column(String, nullable=False, default="India")
-    
+
     # Contact Information
     school_email = Column(String, nullable=False)
     school_phone = Column(String(15), nullable=False)
     school_alt_phone = Column(String(15))
     school_website = Column(String)
-    school_location=Column(String(100),nullable=True)
-    
+    school_location = Column(String(100), nullable=True)
+
     # Principal Information
     principal_name = Column(String, nullable=True)
     principal_designation = Column(String)
@@ -133,11 +163,14 @@ class School(Base):
     principal_phone = Column(String(15))
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
-    account_type = Column(SchoolAccountTypeDecorator(SchoolAccountType, length=50), default=SchoolAccountType.LISTING)
+    account_type = Column(
+        SchoolAccountTypeDecorator(SchoolAccountType, length=50),
+        default=SchoolAccountType.LISTING,
+    )
     is_business_approved = Column(Boolean, default=False)
     is_promotion_pending = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
-    
+
     school_other_email = Column(String, nullable=True)
     school_location = Column(String, nullable=True)
     total_teachers = Column(Integer, nullable=True)
@@ -155,51 +188,89 @@ class School(Base):
     attendance_qr_mark_out_token = Column(String(64), nullable=True)
 
     user = relationship("User", backref="school")
-    teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
+    teachers = relationship(
+        "Teacher", back_populates="school", cascade="all, delete-orphan"
+    )
     classes = relationship("Class", back_populates="school")
     subjects = relationship("Subject", back_populates="school")
     extra_activities = relationship("ExtraCurricularActivity", back_populates="school")
     sections = relationship("Section", back_populates="school")
     transports = relationship("Transport", back_populates="school")
     students = relationship("Student", back_populates="school")
-    staff_members = relationship("Staff", back_populates="school", cascade="all, delete-orphan")
+    staff_members = relationship(
+        "Staff", back_populates="school", cascade="all, delete-orphan"
+    )
     designation_compensation_templates = relationship(
         "DesignationCompensationTemplate",
         back_populates="school",
         cascade="all, delete-orphan",
     )
-    timetables = relationship("Timetable", back_populates="school", cascade="all, delete")
+    timetables = relationship(
+        "Timetable", back_populates="school", cascade="all, delete"
+    )
     # timetable_periods = relationship("TimetablePeriod", back_populates="school")
     # school = relationship("School", back_populates="timetable_periods")
-    school_margins = relationship("SchoolMarginConfiguration", back_populates="school", cascade="all, delete-orphan")
-    transaction_history = relationship("TransactionHistory", back_populates="school", cascade="all, delete-orphan")
+    school_margins = relationship(
+        "SchoolMarginConfiguration",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    transaction_history = relationship(
+        "TransactionHistory", back_populates="school", cascade="all, delete-orphan"
+    )
     exams = relationship("Exam", back_populates="school")
     exam_data = relationship("StudentExamData", back_populates="school")
-    leave_requests = relationship("LeaveRequest", back_populates="school", cascade="all, delete")
-    bank_accounts = relationship("BankAccount", back_populates="school", cascade="all, delete-orphan")
+    leave_requests = relationship(
+        "LeaveRequest", back_populates="school", cascade="all, delete"
+    )
+    bank_accounts = relationship(
+        "BankAccount", back_populates="school", cascade="all, delete-orphan"
+    )
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
-    listed_school_students = relationship("ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan")
-    school_info = relationship("SchoolInfo", back_populates="school", uselist=False, cascade="all, delete-orphan")
-    class_fees = relationship("SchoolClassFee", back_populates="school", cascade="all, delete-orphan")
-    team_members = relationship("SchoolTeamMember", back_populates="school", cascade="all, delete-orphan")
-    excellent_students = relationship("ExcellentStudent", back_populates="school", cascade="all, delete-orphan")
-    school_ratings = relationship("SchoolRating", back_populates="school", cascade="all, delete-orphan")
-    support_plus = relationship("SupportPlus", back_populates="school", cascade="all, delete-orphan")
+    listed_school_students = relationship(
+        "ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan"
+    )
+    school_info = relationship(
+        "SchoolInfo",
+        back_populates="school",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    class_fees = relationship(
+        "SchoolClassFee", back_populates="school", cascade="all, delete-orphan"
+    )
+    team_members = relationship(
+        "SchoolTeamMember", back_populates="school", cascade="all, delete-orphan"
+    )
+    excellent_students = relationship(
+        "ExcellentStudent", back_populates="school", cascade="all, delete-orphan"
+    )
+    school_ratings = relationship(
+        "SchoolRating", back_populates="school", cascade="all, delete-orphan"
+    )
+    support_plus = relationship(
+        "SupportPlus", back_populates="school", cascade="all, delete-orphan"
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"SCH-{str(uuid.uuid4().int)[:6]}"
-            
+
+
 class_subjects = Table(
     "class_subjects",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("subject_id", Integer, ForeignKey("subjects.id")),
     Column("school_id", String, ForeignKey("schools.id")),
-    Column("school_class_subject_id", Integer, ForeignKey("school_classes_subjects.id", ondelete="SET NULL"), nullable=True)
+    Column(
+        "school_class_subject_id",
+        Integer,
+        ForeignKey("school_classes_subjects.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
 )
-
 
 
 class_extra_curricular = Table(
@@ -207,7 +278,7 @@ class_extra_curricular = Table(
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("activity_id", Integer, ForeignKey("extra_curricular_activities.id")),
-    Column("school_id", String, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id")),
 )
 
 class_assigned_teachers = Table(
@@ -215,45 +286,59 @@ class_assigned_teachers = Table(
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("teacher_id", String, ForeignKey("teachers.id")),
-    Column("school_id", String, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id")),
 )
 class_section = Table(
     "class_section",
     Base.metadata,
     Column("class_id", Integer, ForeignKey("classes.id")),
     Column("section_id", Integer, ForeignKey("sections.id")),
-    Column("school_id", String, ForeignKey("schools.id"))
+    Column("school_id", String, ForeignKey("schools.id")),
 )
+
+
 # Subject Models
 class Subject(Base):
     __tablename__ = "subjects"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
     school_id = Column(String, ForeignKey("schools.id"))
-    
+
     school = relationship("School", back_populates="subjects")
     classes = relationship("Class", secondary=class_subjects, back_populates="subjects")
 
+
 class class_optional_subjects(Base):
-    __tablename__ = 'class_optional_subjects'
-    
-    class_id = Column(Integer, ForeignKey('classes.id', ondelete="CASCADE"), primary_key=True)
-    subject_id = Column(Integer, ForeignKey('subjects.id', ondelete="CASCADE"), primary_key=True)
+    __tablename__ = "class_optional_subjects"
+
+    class_id = Column(
+        Integer, ForeignKey("classes.id", ondelete="CASCADE"), primary_key=True
+    )
+    subject_id = Column(
+        Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
 class ExtraCurricularActivity(Base):
     __tablename__ = "extra_curricular_activities"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
     school_id = Column(String, ForeignKey("schools.id"))
-    
+
     school = relationship("School", back_populates="extra_activities")
-    classes = relationship("Class", secondary=class_extra_curricular, back_populates="extra_curricular_activities")
+    classes = relationship(
+        "Class",
+        secondary=class_extra_curricular,
+        back_populates="extra_curricular_activities",
+    )
+
 
 # Class Model (main table)
 class Class(Base):
     __tablename__ = "classes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
     start_time = Column(Time)
@@ -264,27 +349,40 @@ class Class(Base):
     tek_school_payment_annually = Column(Float, default=1000.0)
     class_start_date = Column(Date, nullable=False)
     class_end_date = Column(Date, nullable=False)
-    
+
     # Relationships
     school = relationship("School", back_populates="classes")
     students = relationship("Student", back_populates="classes")
-    
+
     # Many-to-many relationships
-    subjects = relationship("Subject", secondary=class_subjects,back_populates="classes")
-    optional_subjects = relationship("Subject",secondary="class_optional_subjects",back_populates="classes")
-    assigned_teachers = relationship("Teacher", secondary=class_assigned_teachers,back_populates="assigned_classes")
-    extra_curricular_activities = relationship("ExtraCurricularActivity", secondary=class_extra_curricular,back_populates="classes")
-    sections = relationship("Section", secondary=class_section,back_populates="classes")
+    subjects = relationship(
+        "Subject", secondary=class_subjects, back_populates="classes"
+    )
+    optional_subjects = relationship(
+        "Subject", secondary="class_optional_subjects", back_populates="classes"
+    )
+    assigned_teachers = relationship(
+        "Teacher", secondary=class_assigned_teachers, back_populates="assigned_classes"
+    )
+    extra_curricular_activities = relationship(
+        "ExtraCurricularActivity",
+        secondary=class_extra_curricular,
+        back_populates="classes",
+    )
+    sections = relationship(
+        "Section", secondary=class_section, back_populates="classes"
+    )
     school_margins = relationship("SchoolMarginConfiguration", back_populates="class_")
     exams = relationship("Exam", back_populates="class_obj")
     timetables = relationship("Timetable", back_populates="class_")
     student_payments = relationship("StudentPayment", back_populates="classes")
-    
+
     # Unique constraint to prevent duplicate class names within a school
     __table_args__ = (
-        UniqueConstraint('name', 'school_id', name='uq_class_name_school'),
-    )            
-            
+        UniqueConstraint("name", "school_id", name="uq_class_name_school"),
+    )
+
+
 class Transport(Base):
     __tablename__ = "transports"
 
@@ -296,13 +394,18 @@ class Transport(Base):
     duty_start_time = Column(Time, nullable=False)
     duty_end_time = Column(Time, nullable=False)
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
-    pickup_stops = relationship("PickupStop", back_populates="transport", cascade="all, delete-orphan")
-    drop_stops = relationship("DropStop", back_populates="transport", cascade="all, delete-orphan")
+    pickup_stops = relationship(
+        "PickupStop", back_populates="transport", cascade="all, delete-orphan"
+    )
+    drop_stops = relationship(
+        "DropStop", back_populates="transport", cascade="all, delete-orphan"
+    )
 
     # Relationship to students
     students = relationship("Student", back_populates="driver")
     school = relationship("School", back_populates="transports")
-    
+
+
 class PickupStop(Base):
     __tablename__ = "pickup_stops"
 
@@ -313,6 +416,7 @@ class PickupStop(Base):
 
     transport = relationship("Transport", back_populates="pickup_stops")
 
+
 class DropStop(Base):
     __tablename__ = "drop_stops"
 
@@ -322,7 +426,7 @@ class DropStop(Base):
     stop_time = Column(Time, nullable=False)
 
     transport = relationship("Transport", back_populates="drop_stops")
-    
+
 
 class Attendance(Base):
     __tablename__ = "attendances"
@@ -346,13 +450,15 @@ class Attendance(Base):
     verified_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint('student_id','date', name='uq_student_attendance'),
-        UniqueConstraint('teachers_id','date', name='uq_teacher_attendance'),
-        UniqueConstraint('staff_id','date', name='uq_staff_attendance'),
+        UniqueConstraint("student_id", "date", name="uq_student_attendance"),
+        UniqueConstraint("teachers_id", "date", name="uq_teacher_attendance"),
+        UniqueConstraint("staff_id", "date", name="uq_staff_attendance"),
     )
+
     def update_today_status(self):
         """Automatically set is_today_present based on whether date == today."""
-        self.is_today_present = (self.date == date.today())
+        self.is_today_present = self.date == date.today()
+
 
 class WeekDay(Enum):
     MONDAY = "Monday"
@@ -361,6 +467,7 @@ class WeekDay(Enum):
     THURSDAY = "Thursday"
     FRIDAY = "Friday"
     SATURDAY = "Saturday"
+
 
 class Timetable(Base):
     __tablename__ = "timetables"
@@ -373,13 +480,18 @@ class Timetable(Base):
     published_at = Column(DateTime, nullable=True)
     # A timetable belongs to a school/class/section
     school = relationship("School", back_populates="timetables")
-    days = relationship("TimetableDay", back_populates="timetable", cascade="all, delete-orphan")
+    days = relationship(
+        "TimetableDay", back_populates="timetable", cascade="all, delete-orphan"
+    )
     class_ = relationship("Class", back_populates="timetables")
     section = relationship("Section", back_populates="timetables")
 
     __table_args__ = (
-        UniqueConstraint("school_id", "class_id", "section_id", name="uq_timetable_class_section"),
+        UniqueConstraint(
+            "school_id", "class_id", "section_id", name="uq_timetable_class_section"
+        ),
     )
+
 
 class TimetableDay(Base):
     __tablename__ = "timetable_days"
@@ -389,12 +501,13 @@ class TimetableDay(Base):
     day = Column(SQLEnum(WeekDay, name="weekday"), nullable=False)
 
     timetable = relationship("Timetable", back_populates="days")
-    periods = relationship("TimetablePeriod", back_populates="day", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        UniqueConstraint("timetable_id", "day", name="uq_timetable_day"),
+    periods = relationship(
+        "TimetablePeriod", back_populates="day", cascade="all, delete-orphan"
     )
-      
+
+    __table_args__ = (UniqueConstraint("timetable_id", "day", name="uq_timetable_day"),)
+
+
 class TimetablePeriod(Base):
     __tablename__ = "timetable_periods"
 
@@ -407,20 +520,24 @@ class TimetablePeriod(Base):
 
     day = relationship("TimetableDay", back_populates="periods")
     # school = relationship("School", back_populates="timetable_periods")
-    teacher = relationship("Teacher", back_populates="timetable_periods")    
+    teacher = relationship("Teacher", back_populates="timetable_periods")
     subject = relationship("Subject")
+
 
 class SchoolMarginConfiguration(Base):
     __tablename__ = "school_margin_configuration"
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String,ForeignKey("schools.id"), nullable=False)
-    class_id = Column(Integer,ForeignKey("classes.id"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
     credit_configuration_id = Column(Integer, ForeignKey("credit_configuration.id"))
     margin_value = Column(Integer, nullable=False)
-    
-    school= relationship("School", back_populates="school_margins")
+
+    school = relationship("School", back_populates="school_margins")
     class_ = relationship("Class", back_populates="school_margins")
-    credit_configuration = relationship("CreditConfiguration", back_populates="school_margins")
+    credit_configuration = relationship(
+        "CreditConfiguration", back_populates="school_margins"
+    )
+
 
 class TransactionHistory(Base):
     __tablename__ = "transaction_history"
@@ -432,8 +549,9 @@ class TransactionHistory(Base):
     order_id = Column(String, nullable=False)
     status = Column(String, nullable=False, default="SUCCESS")
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    school= relationship("School", back_populates="transaction_history")
+
+    school = relationship("School", back_populates="transaction_history")
+
 
 exam_sections = Table(
     "exam_sections",
@@ -441,18 +559,21 @@ exam_sections = Table(
     Column("exam_id", String, ForeignKey("exams.id"), primary_key=True),
     Column("section_id", Integer, ForeignKey("sections.id"), primary_key=True),
 )
+
+
 class Section(Base):
     __tablename__ = "sections"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50))
     school_id = Column(String, ForeignKey("schools.id"))
-    
+
     school = relationship("School", back_populates="sections")
     classes = relationship("Class", secondary=class_section, back_populates="sections")
     students = relationship("Student", back_populates="section")
     exams = relationship("Exam", secondary=exam_sections, back_populates="sections")
     timetables = relationship("Timetable", back_populates="section")
+
 
 class Exam(Base):
     __tablename__ = "exams"
@@ -460,8 +581,12 @@ class Exam(Base):
     id = Column(String, primary_key=True)
     school_id = Column(String, ForeignKey("schools.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
-    selected_class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
-    subject_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
+    selected_class_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=True
+    )
+    subject_id = Column(
+        Integer, ForeignKey("school_classes_subjects.id"), nullable=True
+    )
 
     chapters = Column(ARRAY(Integer), nullable=False)
 
@@ -494,21 +619,24 @@ class Exam(Base):
     selected_class = relationship(
         "SchoolClassSubject",
         back_populates="exams_as_selected_class",
-        foreign_keys=[selected_class_id]
+        foreign_keys=[selected_class_id],
     )
     subject = relationship(
         "SchoolClassSubject",
         back_populates="exams_as_subject",
-        foreign_keys=[subject_id]
+        foreign_keys=[subject_id],
     )
     sections = relationship("Section", secondary=exam_sections, back_populates="exams")
-    questions = relationship("ExamQuestion", back_populates="exam", cascade="all, delete-orphan")
+    questions = relationship(
+        "ExamQuestion", back_populates="exam", cascade="all, delete-orphan"
+    )
     student_exam_data = relationship("StudentExamData", back_populates="exam")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"EXM-{str(uuid.uuid4().int)[:6]}"
+
 
 class ExamQuestion(Base):
     __tablename__ = "exam_questions"
@@ -529,8 +657,11 @@ class ExamQuestion(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     exam = relationship("Exam", back_populates="questions")
-    options = relationship("ExamQuestionOption", back_populates="question", cascade="all, delete")
+    options = relationship(
+        "ExamQuestionOption", back_populates="question", cascade="all, delete"
+    )
     student_answers = relationship("StudentAnswer", back_populates="question")
+
 
 class ExamQuestionOption(Base):
     __tablename__ = "exam_question_options"
@@ -543,14 +674,23 @@ class ExamQuestionOption(Base):
 
     question = relationship("ExamQuestion", back_populates="options")
 
+
 class StudentExamData(Base):
     __tablename__ = "student_exam_data"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=True)
-    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id", ondelete="CASCADE"), nullable=True)
+    student_id = Column(
+        Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True
+    )
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=True
+    )
+    self_signed_student_id = Column(
+        Integer,
+        ForeignKey("self_signed_students.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     exam_id = Column(String, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
 
     attempt_no = Column(Integer, default=1)
@@ -572,11 +712,16 @@ class StudentExamData(Base):
     school = relationship("School", back_populates="exam_data")
     exam = relationship("Exam", back_populates="student_exam_data")
 
-    student_answers = relationship("StudentAnswer", back_populates="attempt", cascade="all, delete")
+    student_answers = relationship(
+        "StudentAnswer", back_populates="attempt", cascade="all, delete"
+    )
 
     __table_args__ = (
-        UniqueConstraint("exam_id", "student_id", "attempt_no", name="unique_exam_student_attempt"),
+        UniqueConstraint(
+            "exam_id", "student_id", "attempt_no", name="unique_exam_student_attempt"
+        ),
     )
+
 
 class StudentAnswer(Base):
     __tablename__ = "student_answers"
@@ -588,7 +733,9 @@ class StudentAnswer(Base):
 
     # For MCQ
     # selected_option_id = Column(Integer, ForeignKey("question_options.id"), nullable=True)
-    selected_option_id = Column(Integer, ForeignKey("exam_question_options.id"), nullable=True)
+    selected_option_id = Column(
+        Integer, ForeignKey("exam_question_options.id"), nullable=True
+    )
 
     # For SHORT / LONG
     descriptive_answer = Column(Text, nullable=True)
@@ -603,6 +750,8 @@ class LeaveStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     DECLINED = "declined"
+
+
 class LeaveType(str, Enum):
     CASUAL = "casual"
     EMERGENCY = "emergency"
@@ -621,9 +770,15 @@ class LeaveRequest(Base):
     status = Column(SQLEnum(LeaveStatus), default=LeaveStatus.PENDING, nullable=False)
     leave_type = Column(SQLEnum(LeaveType), nullable=False)
     # foreign keys
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False)
-    teacher_id = Column(String, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True)
-    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False
+    )
+    teacher_id = Column(
+        String, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True
+    )
+    student_id = Column(
+        Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True
+    )
     staff_id = Column(String, ForeignKey("staff.id", ondelete="CASCADE"), nullable=True)
 
     # metadata
@@ -638,6 +793,7 @@ class LeaveRequest(Base):
 
     def __repr__(self):
         return f"<LeaveRequest(subject={self.subject}, status={self.status})>"
+
 
 # ---------------- Home Task ----------------
 class AssignmentStatus(str, Enum):
@@ -674,16 +830,12 @@ class HomeAssignment(Base):
 
     # Relationship to individual tasks
     tasks = relationship(
-        "AssignmentTask",
-        back_populates="assignment",
-        cascade="all, delete-orphan"
+        "AssignmentTask", back_populates="assignment", cascade="all, delete-orphan"
     )
 
     # Relationship to assigned students
     assigned_students = relationship(
-        "AssignmentStudent",
-        back_populates="assignment",
-        cascade="all, delete-orphan"
+        "AssignmentStudent", back_populates="assignment", cascade="all, delete-orphan"
     )
 
 
@@ -696,14 +848,14 @@ class AssignmentTask(Base):
     description = Column(Text, nullable=True)
     file = Column(String(255), nullable=True)
 
-    assignment_id = Column(Integer, ForeignKey("home_assignments.id", ondelete="CASCADE"))
+    assignment_id = Column(
+        Integer, ForeignKey("home_assignments.id", ondelete="CASCADE")
+    )
     assignment = relationship("HomeAssignment", back_populates="tasks")
 
     # Each student's completion status for this task
     student_task_statuses = relationship(
-        "StudentTaskStatus",
-        back_populates="task",
-        cascade="all, delete-orphan"
+        "StudentTaskStatus", back_populates="task", cascade="all, delete-orphan"
     )
 
 
@@ -712,7 +864,9 @@ class AssignmentStudent(Base):
     __tablename__ = "assignment_students"
 
     id = Column(Integer, primary_key=True, index=True)
-    assignment_id = Column(Integer, ForeignKey("home_assignments.id", ondelete="CASCADE"))
+    assignment_id = Column(
+        Integer, ForeignKey("home_assignments.id", ondelete="CASCADE")
+    )
     student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"))
 
     assigned_date = Column(DateTime, default=datetime.utcnow)
@@ -726,7 +880,7 @@ class AssignmentStudent(Base):
     student_tasks = relationship(
         "StudentTaskStatus",
         back_populates="assignment_student",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
 
@@ -735,7 +889,9 @@ class StudentTaskStatus(Base):
     __tablename__ = "student_task_statuses"
 
     id = Column(Integer, primary_key=True, index=True)
-    assignment_student_id = Column(Integer, ForeignKey("assignment_students.id", ondelete="CASCADE"))
+    assignment_student_id = Column(
+        Integer, ForeignKey("assignment_students.id", ondelete="CASCADE")
+    )
     task_id = Column(Integer, ForeignKey("assignment_tasks.id", ondelete="CASCADE"))
     student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"))
 
@@ -743,18 +899,23 @@ class StudentTaskStatus(Base):
     completed_at = Column(DateTime, nullable=True)
 
     # Relationships
-    assignment_student = relationship("AssignmentStudent", back_populates="student_tasks")
+    assignment_student = relationship(
+        "AssignmentStudent", back_populates="student_tasks"
+    )
     task = relationship("AssignmentTask", back_populates="student_task_statuses")
     student = relationship("Student", back_populates="student_task_statuses")
+
 
 # Bank Account Model
 class BankAccount(Base):
     __tablename__ = "bank_accounts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     school_id = Column(String, ForeignKey("schools.id"), nullable=False)
     account_holder_name = Column(String, nullable=False)
-    account_number = Column(String, nullable=False, unique=True)  # Account number must be unique
+    account_number = Column(
+        String, nullable=False, unique=True
+    )  # Account number must be unique
     ifsc_code = Column(String(11), nullable=False)  # IFSC code is 11 characters
     bank_name = Column(String, nullable=False)
     branch_name = Column(String, nullable=True)
@@ -762,10 +923,10 @@ class BankAccount(Base):
     is_primary = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     school = relationship("School", back_populates="bank_accounts")
-    
+
     # Note: Only one primary account per school is enforced at application level
     # A partial unique index can be added at database level for PostgreSQL:
     # CREATE UNIQUE INDEX uq_school_primary_account ON bank_accounts (school_id) WHERE is_primary = true;
@@ -778,14 +939,18 @@ class Worker(Base):
     school_id = Column(String, ForeignKey("schools.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
-    role = Column(String, nullable=False)  # plumber, labor, electrician, technician, etc.
+    role = Column(
+        String, nullable=False
+    )  # plumber, labor, electrician, technician, etc.
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
     school = relationship("School", backref="workers")
     user = relationship("User", backref="worker_profile")
-    payment_records = relationship("PaymentRecord", back_populates="worker", cascade="all, delete-orphan")
+    payment_records = relationship(
+        "PaymentRecord", back_populates="worker", cascade="all, delete-orphan"
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -804,7 +969,9 @@ class Worker(Base):
             }
             # Get prefix from role (case-insensitive)
             role_lower = self.role.lower() if self.role else "WRK"
-            prefix = role_prefix_map.get(role_lower, "WRK")  # Default to WRK if role not found
+            prefix = role_prefix_map.get(
+                role_lower, "WRK"
+            )  # Default to WRK if role not found
             self.id = f"{prefix}-{str(uuid.uuid4().int)[:6]}"
 
 
@@ -827,60 +994,85 @@ class PaymentRecord(Base):
 
 class SchoolInfo(Base):
     """One-to-one: school profile info (admission path, vision, mission, about us)."""
+
     __tablename__ = "school_info"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, unique=True)
+    school_id = Column(
+        String,
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
     admission_path = Column(Text, nullable=True)
     vision = Column(Text, nullable=True)
     mission = Column(Text, nullable=True)
     about_us = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     school = relationship("School", back_populates="school_info")
 
 
 class SchoolClassFee(Base):
     """Per-school class fee: class name, admission fee, course fee, transport fee. Super admin and school can CRUD."""
+
     __tablename__ = "school_class_fees"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     class_name = Column(String(100), nullable=False)
     admission_fee = Column(Float, nullable=True, default=0)
     course_fee = Column(Float, nullable=True, default=0)
     transport_fee = Column(Float, nullable=True, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     school = relationship("School", back_populates="class_fees")
 
-    __table_args__ = (UniqueConstraint("school_id", "class_name", name="uq_school_class_fee_class_name"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id", "class_name", name="uq_school_class_fee_class_name"
+        ),
+    )
 
 
 class SchoolTeamMember(Base):
     """Team members under a school. Fields: name, designation, member_story, profile_picture. Super admin and school can CRUD."""
+
     __tablename__ = "school_team_members"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name = Column(String(200), nullable=False)
     designation = Column(String(200), nullable=True)
     member_story = Column(Text, nullable=True)
     profile_picture = Column(String(500), nullable=True)  # URL
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     school = relationship("School", back_populates="team_members")
 
 
 class ExcellentStudent(Base):
     """Excellent student list under school. Fields: school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark. School and admin can CRUD."""
+
     __tablename__ = "excellent_students"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     school_name = Column(String(200), nullable=True)
     gender = Column(String(20), nullable=True)
     student_photo = Column(String(500), nullable=True)  # URL (file upload)
@@ -890,13 +1082,16 @@ class ExcellentStudent(Base):
     batch_of_student = Column(String(100), nullable=True)
     secure_mark = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     school = relationship("School", back_populates="excellent_students")
 
 
 class ListedSchoolStudent(Base):
     """Listed school students - students displayed under a school (listing)."""
+
     __tablename__ = "listed_school_students"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -918,13 +1113,21 @@ class ListedSchoolStudent(Base):
 
 class SchoolRating(Base):
     """User rating and feedback for a listed school. Any user can submit."""
+
     __tablename__ = "school_ratings"
     __table_args__ = (
-        UniqueConstraint("school_id", "mobile", "email_id", name="uq_school_rating_school_mobile_email"),
+        UniqueConstraint(
+            "school_id",
+            "mobile",
+            "email_id",
+            name="uq_school_rating_school_mobile_email",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     user_name = Column(String(200), nullable=False)
     user_role = Column(String(50), nullable=False)  # visitor, student, parent
     mobile = Column(String(20), nullable=False)
@@ -945,28 +1148,38 @@ class SupportPlusStatus(str, Enum):
 
 class SupportPlus(Base):
     """Support Plus: schools create records; admin updates status."""
+
     __tablename__ = "supportplus"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(
+        String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     looking_for = Column(String(255), nullable=False)
     whatsapp_number = Column(String(20), nullable=False)
     discussion_datetime = Column(DateTime(timezone=True), nullable=False)
     files = Column(ARRAY(String), nullable=True)  # list of file URLs (multiple files)
     message = Column(Text, nullable=True)
-    status = Column(SQLEnum(SupportPlusStatus), default=SupportPlusStatus.PENDING, nullable=False)
+    status = Column(
+        SQLEnum(SupportPlusStatus), default=SupportPlusStatus.PENDING, nullable=False
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     school = relationship("School", back_populates="support_plus")
 
 
 class BusinessInquiry(Base):
     """Business inquiry from visitors (non-authenticated). Multiple schools, files, lists."""
+
     __tablename__ = "business_inquiry"
 
     id = Column(Integer, primary_key=True, index=True)
-    school_ids = Column(PG_ARRAY(String), nullable=False)  # multiple school IDs (PG_ARRAY for .contains() in queries)
+    school_ids = Column(
+        PG_ARRAY(String), nullable=False
+    )  # multiple school IDs (PG_ARRAY for .contains() in queries)
     guardian_name = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=False)
     email = Column(String(255), nullable=False)
@@ -978,3 +1191,16 @@ class BusinessInquiry(Base):
     files = Column(PG_ARRAY(String), nullable=True)  # uploaded file URLs
     message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SchoolHoliday(Base):
+    __tablename__ = "school_holidays"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"))
+    holiday_master_id = Column(Integer, ForeignKey("holiday_master.id"))
+
+    created_at = Column(DateTime, default=func.now())
+
+    holiday = relationship("HolidayMaster")
