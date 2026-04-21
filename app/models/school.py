@@ -169,6 +169,12 @@ class School(Base):
     )
     is_business_approved = Column(Boolean, default=False)
     is_promotion_pending = Column(Boolean, default=False)
+    # When no bank account exists, fees/payments default to cash (offline) ledger.
+    default_settlement_channel = Column(
+        String(32),
+        nullable=False,
+        default="cash_offline",
+    )
     created_at = Column(DateTime, default=func.now())
 
     school_other_email = Column(String, nullable=True)
@@ -225,6 +231,11 @@ class School(Base):
     )
     bank_accounts = relationship(
         "BankAccount", back_populates="school", cascade="all, delete-orphan"
+    )
+    settlement_transactions = relationship(
+        "SchoolSettlementTransaction",
+        back_populates="school",
+        cascade="all, delete-orphan",
     )
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
     listed_school_students = relationship(
@@ -926,10 +937,50 @@ class BankAccount(Base):
 
     # Relationships
     school = relationship("School", back_populates="bank_accounts")
+    settlement_transactions = relationship(
+        "SchoolSettlementTransaction",
+        back_populates="bank_account",
+    )
 
     # Note: Only one primary account per school is enforced at application level
     # A partial unique index can be added at database level for PostgreSQL:
     # CREATE UNIQUE INDEX uq_school_primary_account ON bank_accounts (school_id) WHERE is_primary = true;
+
+
+class SchoolSettlementTransaction(Base):
+    """
+    Ledger of school-side settlements: either a specific bank account or cash (offline).
+    `settlement_channel` is `cash_offline` (bank_account_id NULL) or `bank_account` (bank_account_id set).
+    """
+
+    __tablename__ = "school_settlement_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(
+        String,
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    settlement_channel = Column(String(32), nullable=False, index=True)
+    bank_account_id = Column(
+        Integer,
+        ForeignKey("bank_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    amount = Column(Float, nullable=False)
+    direction = Column(String(8), nullable=False, default="in")
+    category = Column(String(100), nullable=True)
+    source_reference = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    recorded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    school = relationship("School", back_populates="settlement_transactions")
+    bank_account = relationship(
+        "BankAccount", back_populates="settlement_transactions"
+    )
 
 
 class Worker(Base):

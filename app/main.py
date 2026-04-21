@@ -12,6 +12,7 @@ from app.db.session import (
     ensure_staff_compensation_tables,
     ensure_staff_school_id_nullable,
     ensure_staff_teacher_boss_columns,
+    ensure_school_settlement_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -49,6 +50,7 @@ def on_startup():
         ensure_staff_compensation_tables()
         ensure_staff_school_id_nullable()
         ensure_staff_teacher_boss_columns()
+        ensure_school_settlement_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 

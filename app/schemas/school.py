@@ -631,6 +631,56 @@ class BankAccountResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SchoolSettlementTransactionResponse(BaseModel):
+    """One ledger row: bank account or cash (offline)."""
+
+    id: int
+    school_id: str
+    settlement_channel: str
+    bank_account_id: Optional[int] = None
+    amount: float = Field(
+        ...,
+        description="Signed: negative when school pays out (salary), positive when fee is credited.",
+    )
+    direction: str
+    category: Optional[str] = None
+    source_reference: Optional[str] = None
+    description: Optional[str] = None
+    recorded_by_user_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BankAccountWithTransactionsResponse(BankAccountResponse):
+    """Bank account plus all settlement rows tied to this account."""
+
+    transactions: List[SchoolSettlementTransactionResponse] = Field(
+        default_factory=list,
+        description="History of amounts recorded against this bank account.",
+    )
+
+
+class BankAccountsOverviewResponse(BaseModel):
+    """
+    School finance overview: default channel is cash until bank accounts exist;
+    each bank account lists its own transaction history; cash uses a virtual bucket.
+    """
+
+    default_settlement_channel: str = Field(
+        ...,
+        description="Preferred default: 'cash_offline' or 'bank_account'. New schools start as cash_offline.",
+    )
+    cash_offline: dict = Field(
+        ...,
+        description="Virtual 'Cash (offline)' bucket and its transaction history.",
+    )
+    bank_accounts: List[BankAccountWithTransactionsResponse] = Field(
+        default_factory=list,
+        description="Configured bank accounts, each with transaction history.",
+    )
+
+
 # Promotion Account Schemas
 class PromoteAccountRequest(BaseModel):
     pass  # No additional data needed, just triggers request

@@ -46,6 +46,7 @@ from app.utils.staff_compensation import (
 )
 from app.services.pagination import PaginationParams
 from app.services.staff_account import persist_staff_account, map_staff_creation_sql_error
+from app.utils.school_settlement import record_school_salary_payout
 from typing import Optional, List
 
 router = APIRouter()
@@ -1345,6 +1346,18 @@ def make_staff_payment(
             created_by=current_user.id
         )
         db.add(transaction)
+        db.flush()
+        record_school_salary_payout(
+            db,
+            school_id=school.id,
+            settlement_channel=data.settlement_channel,
+            bank_account_id=data.bank_account_id,
+            gross_payout_amount=data.total_amount,
+            category="staff_salary",
+            source_reference=f"teacher_staff_payment_transaction:{transaction.id}",
+            description=f"Staff salary {staff_id} {data.payment_month}",
+            recorded_by_user_id=current_user.id,
+        )
         db.commit()
         db.refresh(transaction)
         
@@ -1467,6 +1480,18 @@ def make_bulk_staff_payments(
                 created_by=current_user.id
             )
             db.add(transaction)
+            db.flush()
+            record_school_salary_payout(
+                db,
+                school_id=school.id,
+                settlement_channel=payment_item.settlement_channel,
+                bank_account_id=payment_item.bank_account_id,
+                gross_payout_amount=total_amount,
+                category="staff_salary",
+                source_reference=f"teacher_staff_payment_transaction:{transaction.id}",
+                description=f"Staff salary {staff_id} {payment_month}",
+                recorded_by_user_id=current_user.id,
+            )
             successful_payments.append(transaction)
         
         # Commit all successful payments at once

@@ -45,6 +45,10 @@ class PaymentTransactionCreate(BaseModel):
     files: Optional[List[str]] = None  # List of base64 encoded files (payslips, receipts, etc.)
     payment_method: Optional[str] = None  # "cash", "bank_transfer", "cheque", etc.
     transaction_reference: Optional[str] = None  # Transaction ID, cheque number, etc.
+    bank_account_id: Optional[int] = Field(
+        default=None,
+        description="School bank account receiving this fee; omit for cash (offline) ledger.",
+    )
 
 class PaymentReminderRequest(BaseModel):
     """Schema for school to send payment reminder to student"""
@@ -76,6 +80,10 @@ class StudentPaymentSubmit(BaseModel):
     files: Optional[List[str]] = Field(None, max_items=10, description="List of base64 encoded files (receipts, payslips, etc.) - max 10 files")
     payment_method: Optional[str] = Field(None, max_length=50, description="Payment method: cash, bank_transfer, cheque, etc.")
     transaction_reference: Optional[str] = Field(None, max_length=100, description="Transaction ID, cheque number, etc.")
+    bank_account_id: Optional[int] = Field(
+        default=None,
+        description="School bank account where fee was paid; omit for cash (offline).",
+    )
 
 class PaymentVerificationRequest(BaseModel):
     """Schema for school to verify (done) or cancel payment request"""

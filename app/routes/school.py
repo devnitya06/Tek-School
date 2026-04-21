@@ -8038,13 +8038,14 @@ def create_bank_account(
     return new_account
 
 
-@router.get("/bank-accounts/", response_model=List[BankAccountResponse])
+@router.get("/bank-accounts/", response_model=BankAccountsOverviewResponse)
 def get_bank_accounts(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
-    Get all bank accounts for the school.
-    Allows SCHOOL, STAFF, and STUDENT users to view bank accounts.
+    Get bank accounts for the school plus settlement transaction history per account
+    and for the default cash (offline) bucket. New schools default to cash until bank
+    accounts are added.
     """
     # ✅ Allow SCHOOL, STAFF, and STUDENT users
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF, UserRole.STUDENT]:
@@ -8077,7 +8078,13 @@ def get_bank_accounts(
             raise HTTPException(status_code=404, detail="Student profile not found")
         school_id = student.school_id
 
-    # ✅ Get all bank accounts for this school
+    school_row = db.query(School).filter(School.id == school_id).first()
+    default_channel = (
+        getattr(school_row, "default_settlement_channel", None) or "cash_offline"
+        if school_row
+        else "cash_offline"
+    )
+
     bank_accounts = (
         db.query(BankAccount)
         .filter(BankAccount.school_id == school_id)
@@ -8085,7 +8092,46 @@ def get_bank_accounts(
         .all()
     )
 
-    return bank_accounts
+    txns = (
+        db.query(SchoolSettlementTransaction)
+        .filter(SchoolSettlementTransaction.school_id == school_id)
+        .order_by(SchoolSettlementTransaction.created_at.desc())
+        .all()
+    )
+
+    cash_channel = "cash_offline"
+    bank_channel = "bank_account"
+    cash_txns = [
+        SchoolSettlementTransactionResponse.model_validate(t)
+        for t in txns
+        if (t.settlement_channel or "").lower() == cash_channel
+    ]
+    by_bank_id: dict[int, list[SchoolSettlementTransactionResponse]] = {}
+    for t in txns:
+        if (t.settlement_channel or "").lower() == bank_channel and t.bank_account_id:
+            by_bank_id.setdefault(t.bank_account_id, []).append(
+                SchoolSettlementTransactionResponse.model_validate(t)
+            )
+
+    accounts_out: list[BankAccountWithTransactionsResponse] = []
+    for acc in bank_accounts:
+        base = BankAccountResponse.model_validate(acc).model_dump()
+        accounts_out.append(
+            BankAccountWithTransactionsResponse(
+                **base,
+                transactions=by_bank_id.get(acc.id, []),
+            )
+        )
+
+    return BankAccountsOverviewResponse(
+        default_settlement_channel=default_channel,
+        cash_offline={
+            "label": "Cash (offline)",
+            "settlement_channel": cash_channel,
+            "transactions": cash_txns,
+        },
+        bank_accounts=accounts_out,
+    )
 
 
 @router.get("/bank-accounts/{account_id}/", response_model=BankAccountResponse)

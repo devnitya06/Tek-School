@@ -208,6 +208,24 @@ def ensure_staff_teacher_boss_columns():
         )
 
 
+def ensure_school_settlement_schema():
+    """
+    Ledger for school settlements (per bank account or cash offline) + default channel on schools.
+    """
+    from app.models.school import SchoolSettlementTransaction
+
+    SchoolSettlementTransaction.__table__.create(bind=engine, checkfirst=True)
+    if column_exists("schools", "default_settlement_channel"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE schools ADD COLUMN IF NOT EXISTS default_settlement_channel "
+                "VARCHAR(32) NOT NULL DEFAULT 'cash_offline'"
+            )
+        )
+
+
 # Dependency to get DB session
 def get_db():
     db = SessionLocal()

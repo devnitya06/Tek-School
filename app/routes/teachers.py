@@ -22,6 +22,8 @@ from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 from app.models.admin import Chapter
 from app.utils.permission import verify_school_business_access
+from app.utils.school_settlement import record_school_salary_payout
+
 router = APIRouter()
 
 
@@ -1042,6 +1044,18 @@ def make_teacher_payment(
             created_by=current_user.id
         )
         db.add(transaction)
+        db.flush()
+        record_school_salary_payout(
+            db,
+            school_id=school.id,
+            settlement_channel=data.settlement_channel,
+            bank_account_id=data.bank_account_id,
+            gross_payout_amount=data.total_amount,
+            category="teacher_salary",
+            source_reference=f"teacher_staff_payment_transaction:{transaction.id}",
+            description=f"Teacher salary {teacher_id} {data.payment_month}",
+            recorded_by_user_id=current_user.id,
+        )
         db.commit()
         db.refresh(transaction)
         
@@ -1164,6 +1178,18 @@ def make_bulk_teacher_payments(
                 created_by=current_user.id
             )
             db.add(transaction)
+            db.flush()
+            record_school_salary_payout(
+                db,
+                school_id=school.id,
+                settlement_channel=payment_item.settlement_channel,
+                bank_account_id=payment_item.bank_account_id,
+                gross_payout_amount=total_amount,
+                category="teacher_salary",
+                source_reference=f"teacher_staff_payment_transaction:{transaction.id}",
+                description=f"Teacher salary {teacher_id} {payment_month}",
+                recorded_by_user_id=current_user.id,
+            )
             successful_payments.append(transaction)
         
         # Commit all successful payments at once

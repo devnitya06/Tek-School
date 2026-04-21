@@ -76,7 +76,8 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 school_email=user_data.email,
                 school_phone=user_data.phone,
                 school_website=user_data.website,
-                school_location=user_data.location
+                school_location=user_data.location,
+                default_settlement_channel="cash_offline",
             )
             db.add(school_profile)
 

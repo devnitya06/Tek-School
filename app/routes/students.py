@@ -36,6 +36,7 @@ from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
+from app.utils.school_settlement import record_student_fee_credit
 from app.utils.payment_calculations import calculate_installment_pending_amount, calculate_single_fee_installment_pending
 import asyncio
 from starlette.concurrency import run_in_threadpool
@@ -2301,6 +2302,18 @@ def create_payment_transaction(
             }
         )
 
+    if data.bank_account_id is not None:
+        ba = (
+            db.query(BankAccount)
+            .filter(BankAccount.id == data.bank_account_id, BankAccount.school_id == school_id)
+            .first()
+        )
+        if not ba:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid bank_account_id for this school.",
+            )
+
     # If no valid payments, return error
     if not payment_breakdown:
         raise HTTPException(
@@ -2334,12 +2347,24 @@ def create_payment_transaction(
         files=uploaded_file_urls if uploaded_file_urls else None,
         payment_method=data.payment_method,
         transaction_reference=data.transaction_reference,
+        bank_account_id=data.bank_account_id,
         created_by=current_user.id
     )
     db.add(transaction)
     transactions_created = [transaction]
 
     try:
+        db.flush()
+        if total_amount > 0:
+            record_student_fee_credit(
+                db,
+                school_id=school_id,
+                bank_account_id=data.bank_account_id,
+                credited_amount=float(total_amount),
+                source_reference=f"student_payment_transaction:{transaction.id}",
+                description=f"Manual student payment student_id={student_id} class_id={class_id}",
+                recorded_by_user_id=current_user.id,
+            )
         db.commit()
         db.refresh(payment)
         for tx in transactions_created:
@@ -3624,6 +3649,21 @@ def student_update_payment_transaction(
         if total_amount <= 0:
             raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0.")
 
+        if data.bank_account_id is not None:
+            ba = (
+                db.query(BankAccount)
+                .filter(
+                    BankAccount.id == data.bank_account_id,
+                    BankAccount.school_id == student.school_id,
+                )
+                .first()
+            )
+            if not ba:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid bank_account_id for this school.",
+                )
+
         # Determine primary payment type
         primary_payment_type = "course_fee"
         if data.transport_fee_amount and data.transport_fee_amount > 0:
@@ -3640,6 +3680,7 @@ def student_update_payment_transaction(
         existing_transaction.files = uploaded_file_urls if uploaded_file_urls else existing_transaction.files
         existing_transaction.payment_method = data.payment_method if data.payment_method else existing_transaction.payment_method
         existing_transaction.transaction_reference = data.transaction_reference if data.transaction_reference else existing_transaction.transaction_reference
+        existing_transaction.bank_account_id = data.bank_account_id
         existing_transaction.status = PaymentTransactionStatus.PAYMENT_UPDATE_BY_STUDENT.value  # Status changed to payment_update_by_student
 
         db.commit()
@@ -3869,6 +3910,33 @@ def verify_payment_transaction(
                     payment.transport_fee_paid = 0
                 if payment.tek_school_fee_paid < 0:
                     payment.tek_school_fee_paid = 0
+
+                credited_amount = 0.0
+                if transaction.payment_breakdown:
+                    credited_amount += float(
+                        transaction.payment_breakdown.get("course_fee", 0) or 0
+                    )
+                    credited_amount += float(
+                        transaction.payment_breakdown.get("transport_fee", 0) or 0
+                    )
+                    credited_amount += float(
+                        transaction.payment_breakdown.get("tek_school_fee", 0) or 0
+                    )
+                else:
+                    credited_amount = float(transaction.amount or 0)
+                if credited_amount > 0:
+                    record_student_fee_credit(
+                        db,
+                        school_id=school_id,
+                        bank_account_id=transaction.bank_account_id,
+                        credited_amount=credited_amount,
+                        source_reference=f"student_payment_transaction:{transaction.id}",
+                        description=(
+                            f"Student fee approved student_id={student_id} class_id={class_id} "
+                            f"txn={transaction.id}"
+                        ),
+                        recorded_by_user_id=current_user.id,
+                    )
 
             else:  # cancel
                 transaction.status = PaymentTransactionStatus.CANCEL.value

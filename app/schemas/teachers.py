@@ -91,6 +91,14 @@ class TeacherStaffPaymentRequest(BaseModel):
     release_date: datetime = Field(..., description="Date when the payment is released")
     total_amount: float = Field(..., ge=0, description="Total payment amount for this month")
     payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+    settlement_channel: Literal["cash_offline", "bank_account"] = Field(
+        default="cash_offline",
+        description="Ledger: pay from school cash (offline) or a specific bank account.",
+    )
+    bank_account_id: Optional[int] = Field(
+        default=None,
+        description="Required when settlement_channel is bank_account; must belong to the school.",
+    )
 
 
 class TeacherStaffPaymentTransactionResponse(BaseModel):
@@ -114,6 +122,14 @@ class TeacherPaymentItem(BaseModel):
     release_date: datetime = Field(..., description="Date when the payment is released")
     total_amount: float = Field(..., ge=0, description="Total payment amount for this teacher")
     payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+    settlement_channel: Literal["cash_offline", "bank_account"] = Field(
+        default="cash_offline",
+        description="Ledger: pay from school cash (offline) or a specific bank account.",
+    )
+    bank_account_id: Optional[int] = Field(
+        default=None,
+        description="Required when settlement_channel is bank_account.",
+    )
 
 
 class StaffPaymentItem(BaseModel):
@@ -123,6 +139,14 @@ class StaffPaymentItem(BaseModel):
     release_date: datetime = Field(..., description="Date when the payment is released")
     total_amount: float = Field(..., ge=0, description="Total payment amount for this staff member")
     payment_mode: PaymentMode = Field(..., description="Payment mode: Online, Cash in hand, or Account transfer")
+    settlement_channel: Literal["cash_offline", "bank_account"] = Field(
+        default="cash_offline",
+        description="Ledger: pay from school cash (offline) or a specific bank account.",
+    )
+    bank_account_id: Optional[int] = Field(
+        default=None,
+        description="Required when settlement_channel is bank_account.",
+    )
 
 
 class BulkTeacherPaymentRequest(BaseModel):
