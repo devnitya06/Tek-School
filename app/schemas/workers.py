@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 
@@ -29,11 +29,25 @@ class WorkerResponse(WorkerBase):
     }
 
 
+class PaymentBankAccountDetails(BaseModel):
+    id: int
+    account_holder_name: str
+    account_number: str
+    bank_name: str
+    ifsc_code: str
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 class PaymentRecordBase(BaseModel):
     description: Optional[str] = None
     files: Optional[List[str]] = None  # Array of file URLs
     status: str
     amount: Optional[float] = None
+    settlement_channel: Literal["cash_offline", "bank_account"] = "cash_offline"
+    bank_account_id: Optional[int] = None
     payment_date: Optional[datetime] = None
 
 
@@ -46,12 +60,16 @@ class PaymentRecordUpdate(BaseModel):
     files: Optional[List[str]] = None
     status: Optional[str] = None
     amount: Optional[float] = None
+    settlement_channel: Optional[Literal["cash_offline", "bank_account"]] = None
+    bank_account_id: Optional[int] = None
     payment_date: Optional[datetime] = None
 
 
 class PaymentRecordResponse(PaymentRecordBase):
     id: int
     worker_id: str
+    payment_source: Optional[str] = None
+    bank_account_details: Optional[PaymentBankAccountDetails] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -26,7 +26,7 @@ from app.models.school import (
 from app.models.users import User
 from app.models.teachers import Teacher, TeacherClassSectionSubject
 from app.models.students import Student, StudentStatus, SelfSignedStudent
-from app.models.staff import Staff
+from app.models.staff import Staff, staff_permissions, StaffPermissionType
 from app.schemas.admin import *
 from app.schemas.school import (
     SchoolRatingCreate,
@@ -40,7 +40,12 @@ from app.models.admin import *
 from app.models.school import *
 from app.models.teachers import *
 from sqlalchemy.exc import SQLAlchemyError
-from app.utils.permission import require_roles
+from app.utils.permission import (
+    require_roles,
+    get_staff_permissions,
+    has_staff_permission,
+    normalize_staff_permissions,
+)
 from app.schemas.users import UserRole
 from sqlalchemy import func, cast, String, case, or_, and_
 from collections import defaultdict
@@ -59,6 +64,7 @@ from app.schemas.staff import (
     StaffCreateRequest,
     StaffResponse,
     StaffResponseWithCompensation,
+    StaffPermissionAssignRequest,
 )
 from app.utils.staff_compensation import (
     serialize_employee_compensation,
@@ -71,6 +77,35 @@ from app.schemas.admin import HolidayMasterResponse
 
 
 router = APIRouter()
+
+
+def _ensure_admin_staff_permission(
+    current_user: User,
+    db: Session,
+    permission: StaffPermissionType,
+) -> None:
+    """
+    In admin routes: admins/superadmins are fully allowed.
+    STAFF must be platform staff (school_id null) and hold the given permission.
+    """
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        return
+    if current_user.role != UserRole.STAFF:
+        return
+
+    staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff profile not found.")
+    if staff.school_id is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="School staff cannot access admin-staff features.",
+        )
+    if not has_staff_permission(staff.id, permission, db):
+        raise HTTPException(
+            status_code=403,
+            detail=f"You do not have '{permission.value}' permission.",
+        )
 
 
 @router.post(
@@ -114,6 +149,86 @@ def create_platform_staff(
         **out,
         employee_compensation=serialize_employee_compensation(staff.compensation),
     )
+
+
+@router.put("/platform-staff/{staff_id}/permissions")
+def assign_platform_staff_permissions(
+    staff_id: str,
+    data: StaffPermissionAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    """
+    Assign/replace permissions for platform staff (school_id is NULL).
+    """
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found.")
+    if staff.school_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Only platform/admin staff (school_id is null) can be managed here.",
+        )
+
+    try:
+        db.execute(staff_permissions.delete().where(staff_permissions.c.staff_id == staff_id))
+        normalized_permissions = normalize_staff_permissions(data.permissions)
+        for permission in normalized_permissions:
+            db.execute(
+                staff_permissions.insert().values(
+                    staff_id=staff_id,
+                    permission=permission.value,
+                    granted_by=current_user.id,
+                )
+            )
+        db.commit()
+        return {
+            "detail": "Platform staff permissions updated successfully.",
+            "staff_id": staff_id,
+            "staff_name": f"{staff.first_name} {staff.last_name}",
+            "permissions": get_staff_permissions(staff_id, db),
+        }
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/platform-staff/{staff_id}/permissions")
+def get_platform_staff_permissions(
+    staff_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found.")
+    if staff.school_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Only platform/admin staff (school_id is null) can be viewed here.",
+        )
+    return {
+        "staff_id": staff.id,
+        "staff_name": f"{staff.first_name} {staff.last_name}",
+        "permissions": get_staff_permissions(staff.id, db),
+    }
+
+
+@router.get("/platform-staff/permissions/my")
+def get_my_platform_staff_permissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.STAFF)),
+):
+    staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff profile not found.")
+    if staff.school_id is not None:
+        raise HTTPException(status_code=403, detail="Only platform/admin staff can use this endpoint.")
+    return {
+        "staff_id": staff.id,
+        "staff_name": f"{staff.first_name} {staff.last_name}",
+        "permissions": get_staff_permissions(staff.id, db),
+    }
 
 
 @router.post("/account-credit/configuration/")
@@ -2686,6 +2801,7 @@ def update_exam(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ):
+    _ensure_admin_staff_permission(current_user, db, StaffPermissionType.EXAMS)
     exam = db.query(AdminExam).filter(AdminExam.id == exam_id).first()
 
     if not exam:
@@ -3142,6 +3258,7 @@ def get_question_set_details(
         require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT, UserRole.STAFF)
     ),
 ):
+    _ensure_admin_staff_permission(current_user, db, StaffPermissionType.EXAMS)
     # Fetch the set
     question_set = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
 
@@ -4028,6 +4145,7 @@ def get_all_holidays(
         require_roles(UserRole.ADMIN, UserRole.STAFF, UserRole.SCHOOL)
     ),
 ):
+    _ensure_admin_staff_permission(current_user, db, StaffPermissionType.HELP_DESK)
     try:
         holidays = (
             db.query(HolidayMaster)

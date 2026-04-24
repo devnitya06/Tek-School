@@ -50,7 +50,7 @@ class StaffCreateRequest(StaffBase):
     subjects: Optional[str] = None
     assigned_class: Optional[str] = None
     assigned_subjects: Optional[Dict[str, Any]] = None
-    permissions: Optional[List[StaffPermissionType]] = None
+    permissions: Optional[List[str]] = None
     payment: Optional[EmployeePaymentCreate] = None  # Optional payment structure
 
     @field_validator("password")
@@ -192,7 +192,7 @@ class DesignationCompensationTemplateBulkPatch(BaseModel):
 
 
 class StaffPermissionAssignRequest(BaseModel):
-    permissions: List[StaffPermissionType]
+    permissions: List[str]
 
 
 class StaffPermissionResponse(BaseModel):

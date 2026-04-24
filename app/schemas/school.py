@@ -681,6 +681,38 @@ class BankAccountsOverviewResponse(BaseModel):
     )
 
 
+class CashDepositCreate(BaseModel):
+    payment_title: str
+    deposite_amount: float = Field(..., gt=0)
+    bank_acount: int = Field(..., description="Target bank account id")
+    associate_in_payment: Optional[str] = None
+    payment_description: Optional[str] = None
+    depositor_name: str
+    deposite_date: Optional[datetime] = None
+    attached_file: Optional[str] = Field(
+        default=None,
+        description="Optional base64 file (image/pdf). Uploaded to S3 and stored as URL.",
+    )
+
+
+class CashDepositResponse(BaseModel):
+    id: int
+    school_id: str
+    bank_account_id: int
+    payment_title: str
+    deposite_amount: float
+    associate_in_payment: Optional[str] = None
+    payment_description: Optional[str] = None
+    depositor_name: str
+    deposite_date: datetime
+    attached_file: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: Optional[datetime] = None
+    bank_account: Optional[BankAccountResponse] = None
+
+    model_config = {"from_attributes": True}
+
+
 # Promotion Account Schemas
 class PromoteAccountRequest(BaseModel):
     pass  # No additional data needed, just triggers request

@@ -212,9 +212,10 @@ def ensure_school_settlement_schema():
     """
     Ledger for school settlements (per bank account or cash offline) + default channel on schools.
     """
-    from app.models.school import SchoolSettlementTransaction
+    from app.models.school import SchoolSettlementTransaction, CashDepositTransaction
 
     SchoolSettlementTransaction.__table__.create(bind=engine, checkfirst=True)
+    CashDepositTransaction.__table__.create(bind=engine, checkfirst=True)
     if column_exists("schools", "default_settlement_channel"):
         return
     with engine.begin() as conn:
@@ -222,6 +223,29 @@ def ensure_school_settlement_schema():
             text(
                 "ALTER TABLE schools ADD COLUMN IF NOT EXISTS default_settlement_channel "
                 "VARCHAR(32) NOT NULL DEFAULT 'cash_offline'"
+            )
+        )
+
+
+def ensure_worker_payment_settlement_columns():
+    """
+    Worker payments must track bank/cash source for settlement ledger alignment.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE payment_records
+                ADD COLUMN IF NOT EXISTS settlement_channel VARCHAR(32) NOT NULL DEFAULT 'cash_offline'
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE payment_records
+                ADD COLUMN IF NOT EXISTS bank_account_id INTEGER NULL
+                """
             )
         )
 

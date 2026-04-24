@@ -16,6 +16,7 @@ from app.models.users import User
 from app.schemas.staff import StaffCreateRequest
 from app.schemas.users import UserRole
 from app.utils.staff_compensation import sync_employee_compensation_from_designation_template
+from app.utils.permission import normalize_staff_permissions
 
 
 def map_staff_creation_sql_error(exc: SQLAlchemyError) -> HTTPException:
@@ -148,7 +149,8 @@ def persist_staff_account(
         sync_employee_compensation_from_designation_template(db, staff)
 
         if data.permissions:
-            for permission in data.permissions:
+            normalized_permissions = normalize_staff_permissions(data.permissions)
+            for permission in normalized_permissions:
                 db.execute(
                     staff_permissions.insert().values(
                         staff_id=staff.id,

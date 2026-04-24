@@ -36,7 +36,12 @@ from app.schemas.staff import (
 from app.schemas.teachers import TeacherStaffPaymentRequest, TeacherStaffPaymentTransactionResponse, PendingMonthResponse, BulkStaffPaymentRequest, BulkPaymentResponse, FailedPaymentItem, BulkStaffPaymentRequest, BulkPaymentResponse
 from app.schemas.users import UserRole
 from app.utils.email_utility import send_dynamic_email
-from app.utils.permission import get_staff_permissions, require_roles, verify_school_business_access
+from app.utils.permission import (
+    get_staff_permissions,
+    normalize_staff_permissions,
+    require_roles,
+    verify_school_business_access,
+)
 from app.utils.staff_logging import log_action
 from app.utils.staff_compensation import (
     serialize_employee_compensation,
@@ -870,8 +875,9 @@ def assign_staff_permissions(
         db.execute(
             staff_permissions.delete().where(staff_permissions.c.staff_id == staff_id)
         )
-        
-        for permission in data.permissions:
+
+        normalized_permissions = normalize_staff_permissions(data.permissions)
+        for permission in normalized_permissions:
             db.execute(
                 staff_permissions.insert().values(
                     staff_id=staff_id,

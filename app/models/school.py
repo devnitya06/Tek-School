@@ -237,6 +237,11 @@ class School(Base):
         back_populates="school",
         cascade="all, delete-orphan",
     )
+    cash_deposit_transactions = relationship(
+        "CashDepositTransaction",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
     faqs = relationship("FAQ", secondary="school_faqs", back_populates="schools")
     listed_school_students = relationship(
         "ListedSchoolStudent", back_populates="school", cascade="all, delete-orphan"
@@ -941,6 +946,10 @@ class BankAccount(Base):
         "SchoolSettlementTransaction",
         back_populates="bank_account",
     )
+    cash_deposit_transactions = relationship(
+        "CashDepositTransaction",
+        back_populates="bank_account",
+    )
 
     # Note: Only one primary account per school is enforced at application level
     # A partial unique index can be added at database level for PostgreSQL:
@@ -981,6 +990,32 @@ class SchoolSettlementTransaction(Base):
     bank_account = relationship(
         "BankAccount", back_populates="settlement_transactions"
     )
+
+
+class CashDepositTransaction(Base):
+    """
+    Cash to bank transfer record:
+    deduct from cash ledger and add to selected bank ledger.
+    """
+
+    __tablename__ = "cash_deposit_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    payment_title = Column(String(255), nullable=False)
+    deposite_amount = Column(Float, nullable=False)
+    associate_in_payment = Column(String(255), nullable=True)
+    payment_description = Column(Text, nullable=True)
+    depositor_name = Column(String(255), nullable=False)
+    deposite_date = Column(DateTime, nullable=False, default=func.now())
+    attached_file = Column(String(1000), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    school = relationship("School", back_populates="cash_deposit_transactions")
+    bank_account = relationship("BankAccount", back_populates="cash_deposit_transactions")
 
 
 class Worker(Base):
@@ -1035,12 +1070,15 @@ class PaymentRecord(Base):
     files = Column(JSON, nullable=True)  # Array of file URLs
     status = Column(String(50), nullable=False)  # Input field for status
     amount = Column(Float, nullable=True)  # Payment amount
+    settlement_channel = Column(String(32), nullable=False, default="cash_offline")
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
     payment_date = Column(DateTime, nullable=False, default=func.now())
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
     worker = relationship("Worker", back_populates="payment_records")
+    bank_account = relationship("BankAccount")
 
 
 class SchoolInfo(Base):

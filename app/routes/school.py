@@ -67,6 +67,7 @@ from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 from app.schemas.school import SchoolHolidayResponse, SchoolHolidaySelectRequest
 from app.models.admin import HolidayMaster
+from app.utils.school_settlement import record_settlement_entry
 
 router = APIRouter()
 
@@ -8189,6 +8190,173 @@ def get_bank_account(
         )
 
     return bank_account
+
+
+@router.post("/bank-accounts/cash-deposit/", response_model=CashDepositResponse)
+def create_cash_deposit_to_bank(
+    data: CashDepositCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Move funds from cash ledger to selected bank account:
+    cash decreases (-amount), bank increases (+amount).
+    """
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can create cash deposits",
+        )
+
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+        school_id = school.id
+    else:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school_id = staff.school_id
+
+    bank_account = (
+        db.query(BankAccount)
+        .filter(BankAccount.id == data.bank_acount, BankAccount.school_id == school_id)
+        .first()
+    )
+    if not bank_account:
+        raise HTTPException(status_code=400, detail="Invalid bank_acount for this school.")
+
+    cash_balance = (
+        db.query(func.coalesce(func.sum(SchoolSettlementTransaction.amount), 0.0))
+        .filter(
+            SchoolSettlementTransaction.school_id == school_id,
+            SchoolSettlementTransaction.settlement_channel == "cash_offline",
+        )
+        .scalar()
+    )
+    cash_balance = float(cash_balance or 0.0)
+    if data.deposite_amount > cash_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient cash balance. Available cash is {cash_balance:.2f}.",
+        )
+
+    attached_file_url = None
+    if data.attached_file:
+        file_ext = "pdf"
+        if "," in data.attached_file:
+            if "image/png" in data.attached_file:
+                file_ext = "png"
+            elif "image/jpeg" in data.attached_file or "image/jpg" in data.attached_file:
+                file_ext = "jpg"
+            elif "application/pdf" in data.attached_file:
+                file_ext = "pdf"
+        attached_file_url = upload_base64_to_s3(
+            base64_string=data.attached_file,
+            filename_prefix=f"schools/{school_id}/cash_deposits",
+            ext=file_ext,
+        )
+
+    row = CashDepositTransaction(
+        school_id=school_id,
+        bank_account_id=data.bank_acount,
+        payment_title=data.payment_title,
+        deposite_amount=data.deposite_amount,
+        associate_in_payment=data.associate_in_payment,
+        payment_description=data.payment_description,
+        depositor_name=data.depositor_name,
+        deposite_date=data.deposite_date or datetime.utcnow(),
+        attached_file=attached_file_url,
+        created_by=current_user.id,
+    )
+    db.add(row)
+    db.flush()
+
+    record_settlement_entry(
+        db,
+        school_id=school_id,
+        settlement_channel="cash_offline",
+        bank_account_id=None,
+        signed_amount=-abs(float(data.deposite_amount)),
+        direction="out",
+        category="cash_deposit_to_bank",
+        source_reference=f"cash_deposit_transaction:{row.id}",
+        description=f"Cash deposited to bank account {data.bank_acount}",
+        recorded_by_user_id=current_user.id,
+    )
+    record_settlement_entry(
+        db,
+        school_id=school_id,
+        settlement_channel="bank_account",
+        bank_account_id=data.bank_acount,
+        signed_amount=abs(float(data.deposite_amount)),
+        direction="in",
+        category="cash_deposit_to_bank",
+        source_reference=f"cash_deposit_transaction:{row.id}",
+        description=f"Cash deposited to bank account {data.bank_acount}",
+        recorded_by_user_id=current_user.id,
+    )
+
+    db.commit()
+    db.refresh(row)
+    return {
+        **CashDepositResponse.model_validate(row).model_dump(),
+        "bank_account": BankAccountResponse.model_validate(bank_account).model_dump(),
+    }
+
+
+@router.get("/bank-accounts/cash-deposit/", response_model=dict)
+def list_cash_deposit_transactions(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List cash-to-bank deposit transactions for school.
+    """
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only school and staff users can view cash deposit transactions",
+        )
+
+    if current_user.role == UserRole.SCHOOL:
+        verify_school_business_access(current_user, db)
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+        school_id = school.id
+    else:
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        school_id = staff.school_id
+
+    query = (
+        db.query(CashDepositTransaction)
+        .options(joinedload(CashDepositTransaction.bank_account))
+        .filter(CashDepositTransaction.school_id == school_id)
+    )
+
+    total_count = query.count()
+    rows = (
+        query.order_by(CashDepositTransaction.deposite_date.desc())
+        .offset(pagination.offset())
+        .limit(pagination.limit())
+        .all()
+    )
+    items = []
+    for row in rows:
+        payload = CashDepositResponse.model_validate(row).model_dump()
+        payload["bank_account"] = (
+            BankAccountResponse.model_validate(row.bank_account).model_dump()
+            if row.bank_account
+            else None
+        )
+        items.append(payload)
+    return pagination.format_response(items, total_count)
 
 
 @router.put("/bank-accounts/{account_id}/", response_model=BankAccountResponse)

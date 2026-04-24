@@ -102,6 +102,56 @@ def require_staff_permission(permission: StaffPermissionType):
     return permission_checker
 
 
+def require_admin_staff_permission(permission: StaffPermissionType):
+    """
+    Permission checker for ADMIN/SUPERADMIN modules where STAFF role is also allowed.
+    - ADMIN/SUPERADMIN: full access
+    - STAFF: must be platform/admin staff (school_id is NULL) and hold given permission
+    """
+
+    def permission_checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            return current_user
+
+        if current_user.role != UserRole.STAFF:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admin/superadmin or admin staff can access this resource.",
+            )
+
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        if not staff:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Staff profile not found.",
+            )
+        if staff.school_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="School staff cannot access admin-staff resources.",
+            )
+
+        from sqlalchemy import select
+
+        stmt = select(staff_permissions).where(
+            staff_permissions.c.staff_id == staff.id,
+            staff_permissions.c.permission == permission.value,
+        )
+        has_permission = db.execute(stmt).first()
+        if not has_permission:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have the '{permission.value}' permission.",
+            )
+
+        return current_user
+
+    return permission_checker
+
+
 def has_staff_permission(staff_id: str, permission: StaffPermissionType, db: Session) -> bool:
     """
     Helper function to check if a staff member has a specific permission.
@@ -139,6 +189,31 @@ def get_staff_permissions(staff_id: str, db: Session) -> list[str]:
             permissions_list.append(str(perm_value))
     
     return permissions_list
+
+
+def normalize_staff_permissions(permissions: list) -> list[StaffPermissionType]:
+    """
+    Accept plain strings from client and normalize to StaffPermissionType enums.
+    Example valid values: teacher, students, class_and_timetable, exams, transport, payments, leave_request, help_desk
+    """
+    normalized: list[StaffPermissionType] = []
+    invalid: list[str] = []
+    for p in permissions or []:
+        if isinstance(p, StaffPermissionType):
+            normalized.append(p)
+            continue
+        try:
+            normalized.append(StaffPermissionType(str(p).strip()))
+        except ValueError:
+            invalid.append(str(p))
+
+    if invalid:
+        allowed = ", ".join([x.value for x in StaffPermissionType])
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid permission(s): {', '.join(invalid)}. Allowed: {allowed}",
+        )
+    return normalized
 
 
 def require_business_account(

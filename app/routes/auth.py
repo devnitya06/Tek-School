@@ -6,6 +6,7 @@ from jose import JWTError
 from app.db.session import get_db
 from app.models.users import User,Token,Otp
 from app.models.school import School, SchoolAccountType
+from app.models.staff import Staff
 from app.schemas.users import TokenResponse,LoginRequest,ForgotPasswordRequest,UserRole
 from app.utils.email_utility import generate_otp,send_dynamic_email
 from app.core.security import (
@@ -34,6 +35,7 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     
+    is_created_by_admin = False
     # Check account approval for SCHOOL role
     if user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == user.id).first()
@@ -50,6 +52,11 @@ async def login(
                     detail="Your account is not verified yet by admin."
                 )
         response_role = "business_school" if (school and school.is_business_approved) else "listing_school"
+    elif user.role == UserRole.STAFF:
+        response_role = user.role.value
+        staff = db.query(Staff).filter(Staff.user_id == user.id).first()
+        # Platform/admin-created staff: no school linked.
+        is_created_by_admin = bool(staff and staff.school_id is None)
     else:
         response_role = user.role.value
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -80,7 +87,8 @@ async def login(
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "role": response_role,
-        "id": user.id
+        "id": user.id,
+        "is_created_by_admin": is_created_by_admin,
     }
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -137,13 +145,19 @@ async def refresh_token(
         db.add(new_db_token)
         db.commit()
         
+        is_created_by_admin = False
+        if user.role == UserRole.STAFF:
+            staff = db.query(Staff).filter(Staff.user_id == user.id).first()
+            is_created_by_admin = bool(staff and staff.school_id is None)
+
         return {
             "access_token": new_access_token,
             "refresh_token": new_refresh_token,
             "token_type": "bearer",
             "role": user.role,
             "detail": "Token refreshed successfully",
-            "id": user.id
+            "id": user.id,
+            "is_created_by_admin": is_created_by_admin,
         }
         
     except JWTError:

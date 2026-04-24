@@ -7,7 +7,7 @@ from datetime import datetime
 from app.core.dependencies import get_current_user
 from app.core.security import get_password_hash
 from app.db.session import get_db
-from app.models.school import School, Worker, PaymentRecord
+from app.models.school import School, Worker, PaymentRecord, BankAccount
 from app.models.users import User
 from app.schemas.workers import (
     WorkerCreate,
@@ -23,8 +23,40 @@ from app.schemas.users import UserRole
 from app.utils.permission import require_roles, verify_school_business_access
 from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
+from app.utils.school_settlement import (
+    record_school_salary_payout,
+    validate_school_payout_settlement,
+)
 
 router = APIRouter()
+
+
+def _serialize_payment_record_with_source(payment_record: PaymentRecord) -> dict:
+    source = payment_record.settlement_channel or "cash_offline"
+    bank_details = None
+    if payment_record.bank_account is not None:
+        bank_details = {
+            "id": payment_record.bank_account.id,
+            "account_holder_name": payment_record.bank_account.account_holder_name,
+            "account_number": payment_record.bank_account.account_number,
+            "bank_name": payment_record.bank_account.bank_name,
+            "ifsc_code": payment_record.bank_account.ifsc_code,
+        }
+    return {
+        "id": payment_record.id,
+        "worker_id": payment_record.worker_id,
+        "description": payment_record.description,
+        "files": payment_record.files,
+        "status": payment_record.status,
+        "amount": payment_record.amount,
+        "settlement_channel": source,
+        "bank_account_id": payment_record.bank_account_id,
+        "payment_source": source,
+        "bank_account_details": bank_details,
+        "payment_date": payment_record.payment_date,
+        "created_at": payment_record.created_at,
+        "updated_at": payment_record.updated_at,
+    }
 
 
 def get_school_id(current_user: User, db: Session) -> str:
@@ -256,6 +288,18 @@ def create_payment_record(
     
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found.")
+
+    settlement_channel, bank_account_id = validate_school_payout_settlement(
+        settlement_channel=data.settlement_channel,
+        bank_account_id=data.bank_account_id,
+    )
+    if settlement_channel == "bank_account" and bank_account_id is not None:
+        bank_account = db.query(BankAccount).filter(
+            BankAccount.id == bank_account_id,
+            BankAccount.school_id == school_id,
+        ).first()
+        if not bank_account:
+            raise HTTPException(status_code=400, detail="Invalid bank_account_id for this school.")
     
     # Handle file uploads if provided
     uploaded_file_urls = []
@@ -290,9 +334,24 @@ def create_payment_record(
         files=uploaded_file_urls if uploaded_file_urls else None,
         status=data.status,
         amount=data.amount,
+        settlement_channel=settlement_channel,
+        bank_account_id=bank_account_id,
         payment_date=data.payment_date or datetime.utcnow()
     )
     db.add(payment_record)
+    db.flush()
+    if data.amount and data.amount > 0:
+        record_school_salary_payout(
+            db,
+            school_id=school_id,
+            settlement_channel=settlement_channel,
+            bank_account_id=bank_account_id,
+            gross_payout_amount=float(data.amount),
+            category="worker_payment",
+            source_reference=f"worker_payment_record:{payment_record.id}",
+            description=f"Worker payment {worker_id}",
+            recorded_by_user_id=current_user.id,
+        )
     db.commit()
     db.refresh(payment_record)
     
@@ -323,9 +382,9 @@ def get_payment_records(
     
     payment_records = db.query(PaymentRecord).filter(
         PaymentRecord.worker_id == worker_id
-    ).order_by(PaymentRecord.payment_date.desc()).all()
-    
-    return payment_records
+    ).options(joinedload(PaymentRecord.bank_account)).order_by(PaymentRecord.payment_date.desc()).all()
+
+    return [PaymentRecordResponse.model_validate(_serialize_payment_record_with_source(pr)) for pr in payment_records]
 
 
 @router.get(
@@ -398,7 +457,7 @@ def get_all_payment_records(
     
     # Apply pagination, ordering, and eager load worker details
     payment_records = (
-        query.options(joinedload(PaymentRecord.worker))
+        query.options(joinedload(PaymentRecord.worker), joinedload(PaymentRecord.bank_account))
         .order_by(PaymentRecord.payment_date.desc())
         .offset(pagination.offset())
         .limit(pagination.limit())
@@ -406,7 +465,11 @@ def get_all_payment_records(
     )
     
     # Serialize with worker details using PaymentRecordWithWorker schema
-    items = [PaymentRecordWithWorker.model_validate(pr) for pr in payment_records]
+    items = []
+    for pr in payment_records:
+        payload = _serialize_payment_record_with_source(pr)
+        payload["user_details"] = WorkerResponse.model_validate(pr.worker).model_dump() if pr.worker else None
+        items.append(PaymentRecordWithWorker.model_validate(payload))
     return pagination.format_response(items, total_count)
 
 
@@ -424,7 +487,12 @@ def get_payment_record(
     """Get a specific payment record by ID."""
     school_id = get_school_id(current_user, db)
     
-    payment_record = db.query(PaymentRecord).filter(PaymentRecord.id == payment_id).first()
+    payment_record = (
+        db.query(PaymentRecord)
+        .options(joinedload(PaymentRecord.worker), joinedload(PaymentRecord.bank_account))
+        .filter(PaymentRecord.id == payment_id)
+        .first()
+    )
     
     if not payment_record:
         raise HTTPException(status_code=404, detail="Payment record not found.")
@@ -437,7 +505,9 @@ def get_payment_record(
     if not worker:
         raise HTTPException(status_code=403, detail="You don't have access to this payment record.")
     
-    return payment_record
+    payload = _serialize_payment_record_with_source(payment_record)
+    payload["user_details"] = WorkerResponse.model_validate(payment_record.worker).model_dump() if payment_record.worker else None
+    return PaymentRecordWithWorker.model_validate(payload)
 
 
 @router.patch(
