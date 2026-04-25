@@ -484,6 +484,7 @@ class StudentSubscription(Base):
     is_current = Column(Boolean, default=True)
 
     created_at = Column(DateTime, default=func.now())
+    plan = relationship("RechargePlan")
     # relationships
     student = relationship("SelfSignedStudent", back_populates="subscriptions")
     payments = relationship("Payment", back_populates="subscription")
