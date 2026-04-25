@@ -481,3 +481,8 @@ class HolidayMasterResponse(HolidayMasterBase):
 
     class Config:
         from_attributes = True
+
+class VerifyPaymentRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str

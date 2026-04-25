@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     "https://tek-school-admin.vercel.app",
     "https://tek-school-teacher.vercel.app",
     "https://vidya-wings.vercel.app"
+    "*"
    ]
     class Config:
         env_file = ".env"

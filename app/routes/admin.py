@@ -55,6 +55,7 @@ from typing import Optional, List
 from app.services.pagination import PaginationParams
 from datetime import datetime, timedelta, date, timezone
 from app.utils.services import get_validity_days
+from app.utils.razorpay_client import razorpay_client
 from sqlalchemy.orm import joinedload
 from app.services.staff_account import (
     persist_staff_account,
@@ -3535,7 +3536,6 @@ def get_recharge_plans(
             .filter(SelfSignedStudent.user_id == current_user.id)
             .first()
         )
-
         if not student or not student.select_class_id:
             raise HTTPException(400, "Student class not set")
 
@@ -4254,3 +4254,247 @@ def delete_holiday(
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error occurred")
+
+
+@router.post("/subscription/create-order")
+def create_order(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
+        raise HTTPException(status_code=403, detail="Only students allowed")
+
+    student = current_user.self_signed_student_profile
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    plan = db.query(RechargePlan).filter(
+        RechargePlan.id == plan_id,
+        RechargePlan.is_active == True
+    ).first()
+
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # 🔥 Create Razorpay Order
+    order_data = {
+        "amount": plan.amount * 100,  # paise
+        "currency": "INR",
+        "payment_capture": 1
+    }
+
+    razorpay_order = razorpay_client.order.create(order_data)
+
+    # 🔥 Create subscription (temporary)
+    subscription = StudentSubscription(
+        student_id=student.id,
+        plan_id=plan.id,
+        start_date=datetime.utcnow(),
+        end_date=datetime.utcnow(),  # will update later
+        amount_paid=plan.amount,
+        is_current=False,
+    )
+    db.add(subscription)
+    db.commit()
+    db.refresh(subscription)
+
+    # 🔥 Create payment entry
+    payment = Payment(
+        student_id=student.id,
+        subscription_id=subscription.id,
+        amount=plan.amount,
+        payment_status=PaymentStatus.PENDING,
+        gateway_order_id=razorpay_order["id"],
+    )
+    db.add(payment)
+    db.commit()
+
+    return {
+        "order_id": razorpay_order["id"],
+        "amount": plan.amount,
+        "currency": "INR",
+        "subscription_id": subscription.id
+    }
+
+@router.post("/subscription/verify-payment")
+def verify_payment(
+    payload: VerifyPaymentRequest,
+    db: Session = Depends(get_db),
+):
+    print("API HIT")
+
+    try:
+        razorpay_client.utility.verify_payment_signature({
+            "razorpay_order_id": payload.razorpay_order_id,
+            "razorpay_payment_id": payload.razorpay_payment_id,
+            "razorpay_signature": payload.razorpay_signature,
+        })
+    except Exception as e:
+        print("SIGNATURE ERROR:", e)
+        raise HTTPException(status_code=400, detail="Payment verification failed")
+
+    payment = db.query(Payment).filter(
+        Payment.gateway_order_id == payload.razorpay_order_id
+    ).first()
+
+    print("PAYMENT FOUND:", payment)
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if payment.payment_status == PaymentStatus.SUCCESS:
+        return {"message": "Already verified"}
+
+    payment.payment_status = PaymentStatus.SUCCESS
+    payment.gateway_payment_id = payload.razorpay_payment_id
+
+    subscription = payment.subscription
+    plan = subscription.plan
+
+    start_date = datetime.utcnow()
+    end_date = start_date + timedelta(days=plan.validity_days)
+
+    db.query(StudentSubscription).filter(
+        StudentSubscription.student_id == subscription.student_id
+    ).update({"is_current": False})
+
+    subscription.start_date = start_date
+    subscription.end_date = end_date
+    subscription.is_current = True
+
+    db.commit()
+
+    return {"message": "Payment successful"}
+
+@router.get("/payments/student")
+def get_student_payment_details(
+    student_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+
+    # ==================================================
+    # ROLE HANDLING
+    # ==================================================
+
+    # ✅ STUDENT → auto fetch own id
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        student = current_user.self_signed_student_profile
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        student_id = student.id
+
+    # ✅ ADMIN / SCHOOL → must pass student_id
+    elif current_user.role in [UserRole.ADMIN, UserRole.SCHOOL]:
+
+        if not student_id:
+            raise HTTPException(
+                status_code=400,
+                detail="student_id is required",
+            )
+
+        student = db.query(SelfSignedStudent).filter(
+            SelfSignedStudent.id == student_id
+        ).first()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # ✅ SCHOOL restriction
+        if current_user.role == UserRole.SCHOOL:
+            school = db.query(School).filter(
+                School.user_id == current_user.id
+            ).first()
+
+            if not school:
+                raise HTTPException(status_code=404, detail="School not found")
+
+            is_valid = (
+                db.query(StudentSubscription)
+                .join(RechargePlan)
+                .join(SchoolClassSubject)
+                .filter(
+                    StudentSubscription.student_id == student_id,
+                    SchoolClassSubject.school_id == school.id,
+                )
+                .first()
+            )
+
+            if not is_valid:
+                raise HTTPException(status_code=403, detail="Not allowed")
+
+    else:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # ==================================================
+    # FETCH PAYMENTS (DESC ORDER + OPTIMIZED)
+    # ==================================================
+
+    payments = (
+        db.query(Payment)
+        .join(StudentSubscription, Payment.subscription_id == StudentSubscription.id)
+        .join(RechargePlan, StudentSubscription.plan_id == RechargePlan.id)
+        .filter(StudentSubscription.student_id == student_id)
+        .options(
+            joinedload(Payment.subscription)  # only this is enough
+        )
+        .order_by(Payment.created_at.desc())  # ✅ latest first
+        .all()
+    )
+
+    # ==================================================
+    # BUILD RESPONSE
+    # ==================================================
+
+    response = []
+
+    for payment in payments:
+        subscription = payment.subscription
+
+        # ✅ since we joined RechargePlan, fetch via join (no extra query)
+        plan = (
+            db.query(RechargePlan)
+            .filter(RechargePlan.id == subscription.plan_id)
+            .first()
+        )
+
+        response.append(
+            {
+                "payment_id": payment.id,
+                "payment_status": payment.payment_status.value,
+                "amount": payment.amount,
+
+                "plan": {
+                    "plan_id": plan.id,
+                    "duration": plan.duration.value,
+                    "amount": plan.amount,
+                    "validity_days": plan.validity_days,
+                },
+
+                "subscription": {
+                    "start_date": subscription.start_date,
+                    "end_date": subscription.end_date,
+                    "is_current": subscription.is_current,
+                },
+
+                "payment_gateway": {
+                    "order_id": payment.gateway_order_id,
+                    "payment_id": payment.gateway_payment_id,
+                },
+
+                "created_at": payment.created_at,
+            }
+        )
+
+    return {
+        "student": {
+            "student_id": student.id,
+            "name": f"{student.first_name} {student.last_name}",
+        },
+        "total_payments": len(response),
+        "payments": response,
+    }

@@ -148,6 +148,7 @@ def get_self_signed_student_profile(
             # ✅ Now coming from SchoolClassSubject table
             "board": class_details.school_board.value if class_details else None,
             "class": class_details.class_name if class_details else None,
+            "class_id":class_details.id if class_details else None,
             "medium": class_details.school_medium.value if class_details else None,
 
             "pin": profile.pin,

@@ -5200,7 +5200,7 @@ def verify_payment(
     db.commit()
 
     return {"detail": "Payment verified and credit added successfully."}
-
+ 
 
 # @router.post("/school-credit/add/")
 # def add_school_credit(
@@ -5923,6 +5923,20 @@ def list_exams(
 
     for exam in exams:
         # Decide which class name to display
+        unique_students_count = (
+            db.query(
+                func.count(
+                    func.distinct(
+                        case(
+                            (StudentExamData.student_id != None, StudentExamData.student_id),
+                            else_=StudentExamData.self_signed_student_id,
+                        )
+                    )
+                )
+            )
+            .filter(StudentExamData.exam_id == exam.id)
+            .scalar()
+        )
         class_name = (
             exam.class_obj.name
             if exam.class_obj
@@ -5950,7 +5964,7 @@ def list_exams(
                 inactive_date=exam.inactive_date,
                 max_repeat=exam.max_repeat,
                 status=exam.status,
-                no_students_appeared=exam.no_students_appeared,
+                no_students_appeared=unique_students_count or 0,
                 created_by=(
                     f"{exam.teacher.first_name} {exam.teacher.last_name}"
                     if exam.teacher
@@ -5962,6 +5976,125 @@ def list_exams(
         )
 
     return pagination.format_response(response, total_count)
+
+@router.get("/exam/{exam_id}/students")
+def get_exam_students(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ==================================================
+    # ROLE VALIDATION
+    # ==================================================
+    if current_user.role not in [
+        UserRole.ADMIN,
+        UserRole.TEACHER,
+        UserRole.SCHOOL,
+    ]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # ==================================================
+    # GET EXAM
+    # ==================================================
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # ==================================================
+    # ROLE BASED ACCESS CONTROL
+    # ==================================================
+    if current_user.role == UserRole.TEACHER:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher or exam.created_by != teacher.id:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+    elif current_user.role == UserRole.SCHOOL:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school or exam.school_id != school.id:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+    elif current_user.role == UserRole.ADMIN:
+        if not exam.created_by_admin:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+    # ==================================================
+    # GET LATEST ATTEMPTS (IMPORTANT)
+    # ==================================================
+    subquery = (
+        db.query(
+            StudentExamData.exam_id,
+            StudentExamData.student_id,
+            StudentExamData.self_signed_student_id,
+            func.max(StudentExamData.attempt_no).label("max_attempt"),
+        )
+        .filter(StudentExamData.exam_id == exam_id)
+        .group_by(
+            StudentExamData.exam_id,
+            StudentExamData.student_id,
+            StudentExamData.self_signed_student_id,
+        )
+        .subquery()
+    )
+
+    attempts = (
+        db.query(StudentExamData)
+        .join(
+            subquery,
+            and_(
+                StudentExamData.exam_id == subquery.c.exam_id,
+                or_(
+                    StudentExamData.student_id == subquery.c.student_id,
+                    StudentExamData.self_signed_student_id
+                    == subquery.c.self_signed_student_id,
+                ),
+                StudentExamData.attempt_no == subquery.c.max_attempt,
+            ),
+        )
+        .options(
+            joinedload(StudentExamData.student),
+            joinedload(StudentExamData.self_signed_student),
+        )
+        .all()
+    )
+
+    # ==================================================
+    # BUILD RESPONSE
+    # ==================================================
+    response = []
+
+    for attempt in attempts:
+        # Handle normal student
+        if attempt.student:
+            student_name = f"{attempt.student.first_name} {attempt.student.last_name}"
+            student_class = (
+            attempt.student.classes.name if attempt.student.classes else None
+            )
+            student_id = attempt.student.id
+
+        # Handle self-signed student
+        else:
+            student_name = attempt.self_signed_student.name
+            student_class = None  # if you store class, add here
+            student_id = attempt.self_signed_student.id
+
+        response.append(
+            {
+                "student_id": student_id,
+                "student_name": student_name,
+                "class": student_class,
+                "attempt_no": attempt.attempt_no,
+                "marks_obtained": attempt.total_marks_obtained,
+                "percentage": attempt.percentage_scored,
+                "status": attempt.status.value if attempt.status else None,
+                "submitted_at": attempt.submitted_at,
+            }
+        )
+
+    return {
+        "exam_id": exam_id,
+        "total_students": len(response),
+        "students": response,
+    }
 
 
 @router.get("/exams/{exam_id}/", response_model=ExamDetailResponse)
