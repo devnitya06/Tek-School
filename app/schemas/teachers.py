@@ -193,3 +193,10 @@ class EmployeePaymentListResponse(BaseModel):
     model_config = {
         "from_attributes": True
     }
+
+class BankAccountSchema(BaseModel):
+    account_number: str = Field(..., description="Bank account number")
+    re_account_number: str = Field(..., description="Re-enter bank account number for confirmation")
+    account_holder_name: str = Field(..., description="Name of the account holder")
+    bank_name: str = Field(..., description="Name of the bank")
+    ifsc_code: str = Field(..., description="IFSC code of the bank")
