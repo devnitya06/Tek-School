@@ -163,3 +163,57 @@ class TeacherStaffPaymentTransaction(Base):
     staff = relationship("Staff")
     created_by_user = relationship("User")
             
+
+class TeacherWallet(Base):
+    __tablename__ = "teacher_wallets"
+
+    id = Column(Integer, primary_key=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"), unique=True)
+
+    total_earned = Column(Integer, default=0)
+    balance = Column(Integer, default=0)
+
+    level = Column(Integer, default=1)
+
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+class RewardTransaction(Base):
+    __tablename__ = "reward_transactions"
+
+    id = Column(Integer, primary_key=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"))
+
+    points = Column(Integer)
+    type = Column(String)  # EARN / REDEEM / WITHDRAW
+
+    exam_id = Column(String, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+class TeacherBankAccount(Base):
+    __tablename__ = "teacher_bank_accounts"
+
+    id = Column(Integer, primary_key=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"))
+
+    account_holder_name = Column(String)
+    account_number = Column(String)
+    ifsc_code = Column(String)
+    bank_name = Column(String)
+
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+class WithdrawalRequest(Base):
+    __tablename__ = "withdrawal_requests"
+
+    id = Column(Integer, primary_key=True)
+    teacher_id = Column(String, ForeignKey("teachers.id"))
+
+    amount = Column(Integer)
+    status = Column(String, default="PENDING")  # PENDING / SUCCESS / HOLD
+
+    bank_account_id = Column(Integer, ForeignKey("teacher_bank_accounts.id"))
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())

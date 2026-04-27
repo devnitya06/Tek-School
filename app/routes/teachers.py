@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
-from app.models.teachers import Teacher,TeacherClassSectionSubject,TeacherStaffPayment,TeacherStaffPaymentTransaction
+from app.models.teachers import *
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum
 from app.models.staff import Staff
 from app.schemas.users import UserRole
-from app.schemas.teachers import TeacherCreateRequest,TeacherResponse,TeacherUpdateRequest,TeacherStaffPaymentRequest,TeacherStaffPaymentTransactionResponse,PendingMonthResponse,BulkTeacherPaymentRequest,BulkPaymentResponse,FailedPaymentItem,BulkTeacherPaymentRequest,BulkPaymentResponse
+from app.schemas.teachers import *
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
@@ -1349,3 +1349,120 @@ def get_teacher_pending_months(
         ))
     
     return result
+
+@router.get("/wallet")
+def get_wallet(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    teacher_id = current_user.teacher.id
+
+    wallet = db.query(TeacherWallet).filter_by(teacher_id=teacher_id).first()
+
+    if not wallet:
+        return {"balance": 0, "total_earned": 0, "level": 1}
+
+    return wallet
+
+@router.get("/reward-history")
+def reward_history(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    teacher_id = current_user.teacher.id
+
+    data = db.query(RewardTransaction).filter_by(
+        teacher_id=teacher_id
+    ).order_by(RewardTransaction.created_at.desc()).all()
+
+    return data
+
+@router.post("/bank-account")
+def add_bank_account(
+    payload: BankAccountSchema,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    teacher_id = current_user.teacher.id
+
+    account = TeacherBankAccount(
+        teacher_id=teacher_id,
+        **payload.dict()
+    )
+
+    db.add(account)
+    db.commit()
+
+    return {"message": "Account added"}
+
+@router.post("/teacher/withdraw")
+def request_withdraw(
+    amount: int,
+    bank_account_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    teacher_id = current_user.teacher.id
+
+    wallet = db.query(TeacherWallet).filter_by(teacher_id=teacher_id).first()
+
+    if wallet.balance < amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    # deduct immediately
+    wallet.balance -= amount
+
+    withdraw = WithdrawalRequest(
+        teacher_id=teacher_id,
+        amount=amount,
+        bank_account_id=bank_account_id
+    )
+
+    db.add(withdraw)
+
+    db.add(RewardTransaction(
+        teacher_id=teacher_id,
+        points=amount,
+        type="WITHDRAW"
+    ))
+
+    db.commit()
+
+    return {"message": "Withdrawal request submitted"}
+
+@router.get("/admin/withdrawals")
+def get_withdrawals(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403)
+
+    data = db.query(WithdrawalRequest).order_by(
+        WithdrawalRequest.created_at.desc()
+    ).all()
+
+    return data
+
+@router.get("/admin/withdrawals/{withdraw_id}")
+def get_withdrawal_details(withdraw_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403)
+
+    withdraw = db.query(WithdrawalRequest).get(withdraw_id)
+
+    if not withdraw:
+        raise HTTPException(status_code=404)
+
+    return withdraw 
+
+@router.put("/admin/withdraw/{withdraw_id}")
+def update_withdraw_status(
+    withdraw_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    withdraw = db.query(WithdrawalRequest).get(withdraw_id)
+
+    if not withdraw:
+        raise HTTPException(status_code=404)
+
+    withdraw.status = status  # SUCCESS / HOLD
+
+    db.commit()
+
+    return {"message": f"Updated to {status}"}

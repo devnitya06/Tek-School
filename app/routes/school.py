@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import delete, exists, insert, extract, case, cast, String
 from app.db.session import get_db
 from app.core.dependencies import get_current_user, get_current_user_optional
+from app.services.teachers import reward_teacher_for_exam
 from app.utils.permission import (
     require_roles,
     require_roles_allow_listing_school,
@@ -6969,6 +6970,7 @@ def submit_exam(
 
     if not student_already_appeared:
         exam.no_students_appeared = (exam.no_students_appeared or 0) + 1
+    reward_teacher_for_exam(db, exam)
 
     db.commit()
 
@@ -10509,3 +10511,195 @@ def get_school_holidays(
         )
         for h in holidays
     ]
+
+#Mock Test analytics for students
+@router.get("/exams/mock-test-analysis/{exam_id}")
+def get_mock_attempts(
+    exam_id: str,
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    student_id_db = None
+    self_signed_student_id = None
+
+    # ✅ Case 1: Logged-in student
+    if current_user.role == UserRole.STUDENT:
+        student_id_db = current_user.student.id
+
+    # ✅ Case 2: Self-signed student
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        self_signed_student_id = current_user.self_signed_student.id
+
+    # ❌ Case 3: Admin/Teacher/School must pass student_id
+    else:
+        if not student_id:
+            raise HTTPException(
+                status_code=400,
+                detail="student_id is required for this role"
+            )
+
+        # Try normal student
+        student = db.query(Student).filter(Student.id == student_id).first()
+        if student:
+            student_id_db = student.id
+        else:
+            # Try self-signed student
+            self_student = db.query(SelfSignedStudent).filter(
+                SelfSignedStudent.id == student_id
+            ).first()
+
+            if not self_student:
+                raise HTTPException(status_code=404, detail="Student not found")
+
+            self_signed_student_id = self_student.id
+
+    # ✅ Build query
+    query = (
+        db.query(StudentExamData)
+        .join(Exam, StudentExamData.exam_id == Exam.id)
+        .filter(
+            StudentExamData.exam_id == exam_id,   # 🔥 FIX: exam-based
+            Exam.exam_type == ExamTypeEnum.MOCK,
+            StudentExamData.is_submitted == True
+        )
+    )
+
+    if student_id_db:
+        query = query.filter(StudentExamData.student_id == student_id_db)
+    else:
+        query = query.filter(
+            StudentExamData.self_signed_student_id == self_signed_student_id
+        )
+
+    attempts = query.order_by(StudentExamData.attempt_no.asc()).all()
+
+    if not attempts:
+        return {"message": "No mock attempts found for this exam"}
+
+    result = []
+    for attempt in attempts:
+        result.append({
+            "exam_id": attempt.exam_id,
+            "attempt_no": attempt.attempt_no,
+            "marks_obtained": attempt.total_marks_obtained,
+            "percentage": attempt.percentage_scored,
+            "status": attempt.status,
+            "submitted_at": attempt.submitted_at
+        })
+
+    return {
+        "exam_id": exam_id,
+        "total_attempts": len(result),
+        "attempts": result
+    }
+
+@router.get("/exams/rank-analysis/{exam_id}")
+def get_rank_analysis(
+    exam_id: str,
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    student_id_db = None
+    self_signed_student_id = None
+    school_id = None
+
+    # ✅ Role-based handling
+    if current_user.role == UserRole.STUDENT:
+        student_id_db = current_user.student.id
+        school_id = current_user.student.school_id
+
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        self_signed_student_id = current_user.self_signed_student.id
+        school_id = None  # 🔥 no school
+
+    else:
+        if not student_id:
+            raise HTTPException(
+                status_code=400,
+                detail="student_id is required"
+            )
+
+        # Try normal student
+        student = db.query(Student).filter(Student.id == student_id).first()
+        if student:
+            student_id_db = student.id
+            school_id = student.school_id
+        else:
+            # Try self-signed
+            self_student = db.query(SelfSignedStudent).filter(
+                SelfSignedStudent.id == student_id
+            ).first()
+
+            if not self_student:
+                raise HTTPException(status_code=404, detail="Student not found")
+
+            self_signed_student_id = self_student.id
+            school_id = None
+
+    # ✅ Get latest attempt
+    query = db.query(StudentExamData).filter(
+        StudentExamData.exam_id == exam_id,
+        StudentExamData.is_submitted == True
+    )
+
+    if student_id_db:
+        query = query.filter(StudentExamData.student_id == student_id_db)
+    else:
+        query = query.filter(
+            StudentExamData.self_signed_student_id == self_signed_student_id
+        )
+
+    attempt = query.order_by(StudentExamData.attempt_no.desc()).first()
+
+    if not attempt:
+        raise HTTPException(status_code=404, detail="No attempt found")
+
+    # ❌ Ensure rank exam
+    if attempt.exam.exam_type != ExamTypeEnum.RANK:
+        raise HTTPException(status_code=400, detail="Not a rank exam")
+
+    # ✅ Questions attempted
+    questions_attempted = (
+        db.query(func.count(StudentAnswer.id))
+        .filter(StudentAnswer.attempt_id == attempt.id)
+        .scalar()
+    )
+
+    # ✅ School Rank (ONLY if school exists)
+    school_rank = None
+    if school_id:
+        school_rank = (
+            db.query(StudentExamData)
+            .filter(
+                StudentExamData.exam_id == exam_id,
+                StudentExamData.school_id == school_id,
+                StudentExamData.is_submitted == True,
+                StudentExamData.total_marks_obtained > attempt.total_marks_obtained
+            )
+            .count()
+        ) + 1
+
+    # ✅ Global Rank (both types)
+    global_rank = (
+        db.query(StudentExamData)
+        .filter(
+            StudentExamData.exam_id == exam_id,
+            StudentExamData.is_submitted == True,
+            StudentExamData.total_marks_obtained > attempt.total_marks_obtained
+        )
+        .count()
+    ) + 1
+
+    is_external = attempt.exam.evaluation_scope == EvaluationScopeEnum.EXTERNAL
+
+    return {
+        "exam_id": exam_id,
+        "questions_attempted": questions_attempted,
+        "marks_obtained": attempt.total_marks_obtained,
+        "percentage": attempt.percentage_scored,
+        "school_rank": school_rank,  # 🔥 None for self-signed
+        "global_rank": global_rank if is_external else None,
+        "is_external_exam": is_external
+    }
