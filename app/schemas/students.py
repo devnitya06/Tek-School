@@ -100,6 +100,7 @@ class StudentCreateRequest(BaseModel):
     roll_no: int
     class_id: int
     section_id: int
+    select_class_id: Optional[int] = None
     is_transport: bool = True
     driver_id: Optional[int] = None
     pickup_point: Optional[str] = None
@@ -115,6 +116,7 @@ class StudentUpdateRequest(BaseModel):
     last_name: Optional[str] = None
     gender: Optional[str] = None
     dob: Optional[date] = None
+    select_class_id: Optional[int] = None
     class_id: Optional[int] = None
     section_id: Optional[int] = None
     is_transport: Optional[bool] = None

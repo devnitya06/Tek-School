@@ -40,6 +40,7 @@ class Student(Base):
     pickup_time = Column(String(50), nullable=True)
     drop_point = Column(String(150), nullable=True)
     drop_time = Column(String(50), nullable=True)
+    select_class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
 
     # Relationships
     classes = relationship("Class", back_populates="students")
@@ -57,8 +58,8 @@ class Student(Base):
     student_assignments = relationship("AssignmentStudent",back_populates="student",cascade="all, delete-orphan")
     # Each student's task completion statuses
     student_task_statuses = relationship("StudentTaskStatus",back_populates="student",cascade="all, delete-orphan")
-    # Student payment relationship (one student can have multiple payment records for different classes)
     payments = relationship("StudentPayment", back_populates="student", cascade="all, delete-orphan")
+    selected_class = relationship("SchoolClassSubject", backref="students")
 
 
 
@@ -147,7 +148,7 @@ class SelfSignedStudent(Base):
     exam_data = relationship("StudentExamData", back_populates="self_signed_student")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
     subscriptions = relationship("StudentSubscription", back_populates="student")
-    selected_class = relationship("SchoolClassSubject", backref="students")
+    selected_class = relationship("SchoolClassSubject", backref="self_signed_student")
 class StudentPayment(Base):
     __tablename__ = "student_payments"
     __table_args__ = (
