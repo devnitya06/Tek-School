@@ -3513,53 +3513,69 @@ def get_recharge_plans(
 
     query = db.query(RechargePlan).join(SchoolClassSubject)
 
+    plan_order = case(
+        (RechargePlan.duration == PlanDuration.MONTHLY, 1),
+        (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
+        (RechargePlan.duration == PlanDuration.YEARLY, 3),
+    )
+
+    # ---------------- ADMIN ----------------
     if current_user.role == UserRole.ADMIN:
         if class_name:
             query = query.filter(SchoolClassSubject.class_name == class_name)
 
-        plans = query.order_by(
-            case(
-                (RechargePlan.duration == PlanDuration.MONTHLY, 1),
-                (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
-                (RechargePlan.duration == PlanDuration.YEARLY, 3),
-            )
-        ).all()
+        plans = query.order_by(plan_order).all()
 
         if not plans:
             raise HTTPException(404, "No recharge plans found")
 
         return plans
 
-    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+    # ---------------- SELF SIGNED STUDENT ----------------
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
         student = (
             db.query(SelfSignedStudent)
             .filter(SelfSignedStudent.user_id == current_user.id)
             .first()
         )
+
         if not student or not student.select_class_id:
             raise HTTPException(400, "Student class not set")
 
-        plans = (
-            query.filter(
-                RechargePlan.class_id == student.select_class_id,
-                RechargePlan.is_active == True,
-            )
-            .order_by(
-                case(
-                    (RechargePlan.duration == PlanDuration.MONTHLY, 1),
-                    (RechargePlan.duration == PlanDuration.QUARTERLY, 2),
-                    (RechargePlan.duration == PlanDuration.YEARLY, 3),
-                )
-            )
-            .all()
+        class_id = student.select_class_id
+
+    # ---------------- NORMAL STUDENT ----------------
+    elif current_user.role == UserRole.STUDENT:
+
+        student = (
+            db.query(Student)
+            .filter(Student.user_id == current_user.id)
+            .first()
         )
 
-        if not plans:
-            raise HTTPException(404, "No recharge plans found for your class")
+        if not student or not student.select_class_id:
+            raise HTTPException(400, "Student class not set")
 
-        return plans
+        class_id = student.select_class_id
 
-    raise HTTPException(403, "Not authorized")
+    # ---------------- UNAUTHORIZED ----------------
+    else:
+        raise HTTPException(403, "Not authorized")
+
+    # ---------------- COMMON LOGIC ----------------
+    plans = (
+        query.filter(
+            RechargePlan.class_id == class_id,
+            RechargePlan.is_active == True,
+        )
+        .order_by(plan_order)
+        .all()
+    )
+
+    if not plans:
+        raise HTTPException(404, "No recharge plans found for your class")
+
+    return plans
 
 
 @router.post(
@@ -4262,14 +4278,22 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != UserRole.SELF_SIGNED_STUDENT:
+    # ✅ Allow both student types
+    if current_user.role not in [UserRole.SELF_SIGNED_STUDENT, UserRole.STUDENT]:
         raise HTTPException(status_code=403, detail="Only students allowed")
 
-    student = current_user.self_signed_student_profile
+    # ---------------- GET STUDENT ----------------
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        student = current_user.self_signed_student_profile
 
+    elif current_user.role == UserRole.STUDENT:
+        student = current_user.student_profile
+
+    # Safety check
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
+    # ---------------- GET PLAN ----------------
     plan = db.query(RechargePlan).filter(
         RechargePlan.id == plan_id,
         RechargePlan.is_active == True
@@ -4278,21 +4302,21 @@ def create_order(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # 🔥 Create Razorpay Order
+    # ---------------- CREATE RAZORPAY ORDER ----------------
     order_data = {
-        "amount": plan.amount * 100,  # paise
+        "amount": int(plan.amount * 100),  # paise (important: int)
         "currency": "INR",
         "payment_capture": 1
     }
 
     razorpay_order = razorpay_client.order.create(order_data)
 
-    # 🔥 Create subscription (temporary)
+    # ---------------- CREATE SUBSCRIPTION ----------------
     subscription = StudentSubscription(
         student_id=student.id,
         plan_id=plan.id,
         start_date=datetime.utcnow(),
-        end_date=datetime.utcnow(),  # will update later
+        end_date=datetime.utcnow(),  # will update after payment verify
         amount_paid=plan.amount,
         is_current=False,
     )
@@ -4300,7 +4324,7 @@ def create_order(
     db.commit()
     db.refresh(subscription)
 
-    # 🔥 Create payment entry
+    # ---------------- CREATE PAYMENT ----------------
     payment = Payment(
         student_id=student.id,
         subscription_id=subscription.id,
@@ -4311,6 +4335,7 @@ def create_order(
     db.add(payment)
     db.commit()
 
+    # ---------------- RESPONSE ----------------
     return {
         "order_id": razorpay_order["id"],
         "amount": plan.amount,
@@ -4323,8 +4348,6 @@ def verify_payment(
     payload: VerifyPaymentRequest,
     db: Session = Depends(get_db),
 ):
-    print("API HIT")
-
     try:
         razorpay_client.utility.verify_payment_signature({
             "razorpay_order_id": payload.razorpay_order_id,
@@ -4338,8 +4361,6 @@ def verify_payment(
     payment = db.query(Payment).filter(
         Payment.gateway_order_id == payload.razorpay_order_id
     ).first()
-
-    print("PAYMENT FOUND:", payment)
 
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
