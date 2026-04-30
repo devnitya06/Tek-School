@@ -3223,13 +3223,13 @@ def list_question_sets(
         if not student:
             raise HTTPException(status_code=404, detail="Student profile not found.")
 
-        if not student.select_class:
+        if not student.select_class_id:
             raise HTTPException(
                 status_code=400, detail="Student has not selected a class yet."
             )
 
         # Filter: student only sees question sets of their class
-        query = query.filter(QuestionSet.class_name == student.select_class)
+        query = query.filter(QuestionSet.class_name == student.selected_class.class_name.select_class)
 
     # Admin sees all sets → no filter applied
 
