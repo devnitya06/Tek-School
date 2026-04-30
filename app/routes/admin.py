@@ -3657,48 +3657,100 @@ def student_purchase_plan(
     }
 
 
-@router.get("/admin/students/")
-def admin_get_all_students(
-    class_name: Optional[str] = None,
-    school_name: Optional[str] = None,
-    district: Optional[str] = None,
-    status: Optional[StudentStatus] = None,
+@router.get("/admin/payment-history/")
+def get_payment_history(
+    student_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 🔐 Admin only
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admin can view student list")
+        raise HTTPException(status_code=403, detail="Only admin can view payment history")
 
-    query = db.query(SelfSignedStudent)
+    query = db.query(Payment).options(
+        joinedload(Payment.subscription)
+        .joinedload(StudentSubscription.plan)
+    )
 
-    # 🔎 Apply filters dynamically
-    if class_name:
-        query = query.filter(SelfSignedStudent.select_class == class_name)
+    # ✅ Only successful payments
+    query = query.filter(Payment.payment_status == PaymentStatus.SUCCESS)
 
-    if school_name:
-        query = query.filter(SelfSignedStudent.school_name.ilike(f"%{school_name}%"))
+    # ✅ Filter by type
+    if student_type == "self":
+        query = query.filter(Payment.self_signed_student_id.isnot(None))
+    elif student_type == "school":
+        query = query.filter(Payment.student_id.isnot(None))
 
-    if district:
-        query = query.filter(SelfSignedStudent.district.ilike(f"%{district}%"))
+    payments = query.order_by(Payment.created_at.desc()).all()
 
-    if status:
-        query = query.filter(SelfSignedStudent.status == status)
+    result = []
 
-    students = query.order_by(SelfSignedStudent.created_at.desc()).all()
+    for p in payments:
+        student_name = None
+        student_type_val = None
+        class_name = None
+        school_name = None
+        school_location = None
 
-    return [
-        {
-            "id": student.id,
-            "full_name": f"{student.first_name} {student.last_name}",
-            "select_class": student.select_class,
-            "school_name": student.school_name,
-            "school_location": student.school_location,
-            "status": student.status,
-            "created_at": student.created_at,
-        }
-        for student in students
-    ]
+        # ✅ Self-signed student
+        if p.self_signed_student:
+            s = p.self_signed_student
+
+            student_name = f"{s.first_name} {s.last_name}"
+            student_type_val = "self_signed"
+
+            class_name = (
+                s.selected_class.class_name
+                if s.selected_class else None
+            )
+
+            school_name = s.school_name
+            school_location = s.school_location
+
+        # ✅ School student
+        elif p.student:
+            s = p.student
+
+            student_name = f"{s.first_name} {s.last_name}"
+            student_type_val = "school_student"
+
+            # ⚠️ adjust based on your actual model
+            class_name = (
+                s.class_relation.class_name
+                if hasattr(s, "class_relation") and s.class_relation else None
+            )
+
+            school_name = (
+                s.school.name
+                if hasattr(s, "school") and s.school else None
+            )
+
+            school_location = (
+                s.school.location
+                if hasattr(s, "school") and s.school else None
+            )
+
+        result.append({
+            "payment_id": p.id,
+            "student_name": student_name,
+            "student_type": student_type_val,
+
+            "class_name": class_name,
+            "school_name": school_name,
+            "school_location": school_location,
+
+            "amount": p.amount,
+            "status": p.payment_status,
+
+            "plan_amount": p.subscription.plan.amount if p.subscription else None,
+            "plan_duration": p.subscription.plan.duration if p.subscription else None,
+
+            "start_date": p.subscription.start_date if p.subscription else None,
+            "end_date": p.subscription.end_date if p.subscription else None,
+
+            "payment_date": p.created_at,
+        })
+
+    return result
 
 
 @router.get("/admin/payments/analytics/")

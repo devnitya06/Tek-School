@@ -60,6 +60,11 @@ class Student(Base):
     student_task_statuses = relationship("StudentTaskStatus",back_populates="student",cascade="all, delete-orphan")
     payments = relationship("StudentPayment", back_populates="student", cascade="all, delete-orphan")
     selected_class = relationship("SchoolClassSubject", backref="students")
+    subscriptions = relationship(
+    "StudentSubscription",
+    back_populates="student",
+    foreign_keys="StudentSubscription.student_id"
+)
 
 
 
@@ -147,7 +152,11 @@ class SelfSignedStudent(Base):
     user = relationship("User", back_populates="self_signed_student_profile")
     exam_data = relationship("StudentExamData", back_populates="self_signed_student")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
-    subscriptions = relationship("StudentSubscription", back_populates="student")
+    subscriptions = relationship(
+    "StudentSubscription",
+    back_populates="self_signed_student",
+    foreign_keys="StudentSubscription.self_signed_student_id"
+)
     selected_class = relationship("SchoolClassSubject", backref="self_signed_student")
 class StudentPayment(Base):
     __tablename__ = "student_payments"
