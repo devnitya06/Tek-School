@@ -3229,7 +3229,7 @@ def list_question_sets(
             )
 
         # Filter: student only sees question sets of their class
-        query = query.filter(QuestionSet.class_name == student.selected_class.class_name.select_class)
+        query = query.filter(QuestionSet.class_name == student.selected_class.class_name)
 
     # Admin sees all sets → no filter applied
 
