@@ -474,8 +474,8 @@ class StudentSubscription(Base):
     __tablename__ = "student_subscriptions"
 
     id = Column(Integer, primary_key=True)
-
-    student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=False)
+    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
     plan_id = Column(Integer, ForeignKey("recharge_plans.id"), nullable=False)
 
     start_date = Column(DateTime, nullable=False)
@@ -486,7 +486,9 @@ class StudentSubscription(Base):
     created_at = Column(DateTime, default=func.now())
     plan = relationship("RechargePlan")
     # relationships
-    student = relationship("SelfSignedStudent", back_populates="subscriptions")
+    self_signed_student = relationship("SelfSignedStudent",back_populates="subscriptions",foreign_keys=[self_signed_student_id])
+
+    student = relationship("Student",back_populates="subscriptions",foreign_keys=[student_id])
     payments = relationship("Payment", back_populates="subscription")
 
 
@@ -495,7 +497,8 @@ class Payment(Base):
 
     id = Column(Integer, primary_key=True)
 
-    student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=False)
+    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
     subscription_id = Column(
         Integer, ForeignKey("student_subscriptions.id"), nullable=False
     )
@@ -507,6 +510,8 @@ class Payment(Base):
     gateway_payment_id = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=func.now())
+    self_signed_student = relationship("SelfSignedStudent")
+    student = relationship("Student")
     # relationships
     subscription = relationship("StudentSubscription", back_populates="payments")
 
