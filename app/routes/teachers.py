@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
 from app.models.users import User, Otp
 from app.models.teachers import *
-from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum
-from app.models.staff import Staff
+from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum, LeaveRequest, LeaveStatus
+from app.models.staff import Staff, DesignationCompensationTemplate
 from app.schemas.users import UserRole
 from app.schemas.teachers import *
 from sqlalchemy.exc import SQLAlchemyError
@@ -487,17 +487,92 @@ def get_teacher_profile(
             "total_salary": 0.0
         }
 
+    designation_template = None
+    if teacher.designation:
+        designation_template = (
+            db.query(DesignationCompensationTemplate)
+            .filter(
+                DesignationCompensationTemplate.school_id == teacher.school_id,
+                DesignationCompensationTemplate.designation == teacher.designation.strip(),
+            )
+            .first()
+        )
+
+    attendance_count = (
+        db.query(func.count(Attendance.id))
+        .filter(Attendance.teachers_id == teacher.id)
+        .scalar()
+    ) or 0
+
+    leave_total = (
+        db.query(func.count(LeaveRequest.id))
+        .filter(LeaveRequest.teacher_id == teacher.id)
+        .scalar()
+    ) or 0
+    leave_pending = (
+        db.query(func.count(LeaveRequest.id))
+        .filter(
+            LeaveRequest.teacher_id == teacher.id,
+            LeaveRequest.status == LeaveStatus.PENDING,
+        )
+        .scalar()
+    ) or 0
+    leave_approved = (
+        db.query(func.count(LeaveRequest.id))
+        .filter(
+            LeaveRequest.teacher_id == teacher.id,
+            LeaveRequest.status == LeaveStatus.APPROVED,
+        )
+        .scalar()
+    ) or 0
+    leave_declined = (
+        db.query(func.count(LeaveRequest.id))
+        .filter(
+            LeaveRequest.teacher_id == teacher.id,
+            LeaveRequest.status == LeaveStatus.DECLINED,
+        )
+        .scalar()
+    ) or 0
+
     return {
         "id": teacher.id,
         "school_id": teacher.school_id,
         "school_name": teacher.school.school_name if teacher.school else None,
+        "user_id": teacher.user_id,
         "profile_image": teacher.profile_image,
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
         "name": f"{teacher.first_name} {teacher.last_name}",
         "email": teacher.email,
         "phone": teacher.phone,
+        "highest_qualification": teacher.highest_qualification,
+        "university": teacher.university,
+        "start_duty": teacher.start_duty.isoformat() if teacher.start_duty else None,
+        "end_duty": teacher.end_duty.isoformat() if teacher.end_duty else None,
         "present_in": teacher.present_in,
         "teacher_type": teacher.teacher_type,
         "designation": teacher.designation,
+        "designation_details": {
+            "designation": teacher.designation,
+            "employee_grade": teacher.employee_grade,
+            "template_compensation": (
+                {
+                    "basic_salary": float(designation_template.basic_salary or 0),
+                    "hra": float(designation_template.hra or 0),
+                    "special_allowance": float(designation_template.special_allowance or 0),
+                    "travel_allowance": float(designation_template.travel_allowance or 0),
+                    "medical_allowance": float(designation_template.medical_allowance or 0),
+                    "employee_pf_contribution": float(designation_template.employee_pf_contribution or 0),
+                    "additional_benefits": bool(designation_template.additional_benefits),
+                    "extra_benefits": designation_template.extra_benefits,
+                    "max_salary": float(designation_template.max_salary or 0),
+                    "emergency_leave": designation_template.emergency_leave,
+                    "casual_leave": designation_template.casual_leave,
+                }
+                if designation_template
+                else None
+            ),
+        },
         "immidiate_boss": teacher.immidiate_boss,
         "super_boss": teacher.super_boss,
         "immidiate_boss_details": _staff_boss_details(teacher.immidiate_boss, db),
@@ -506,10 +581,23 @@ def get_teacher_profile(
         "mark_out_time": teacher.mark_out_time.isoformat() if teacher.mark_out_time else None,
         "employee_grade": teacher.employee_grade,
         "is_active_hr_service": teacher.is_active_hr_service,
+        "is_active": teacher.is_active,
         "created_at": teacher.created_at,
         "assignments": detailed_assignments,
         "status": "active" if teacher.is_active else "inactive",
         "salary": salary,
+        "hr_activities": {
+            "attendance_count": attendance_count,
+            "exam_conduct_count": exam_conduct_count or 0,
+            "assigned_class_count": len({a.class_id for a in assignments}),
+            "assigned_subject_count": len({a.subject_id for a in assignments}),
+            "leave_requests": {
+                "total": leave_total,
+                "pending": leave_pending,
+                "approved": leave_approved,
+                "declined": leave_declined,
+            },
+        },
         "exam_conduct_count": exam_conduct_count,
         "last_exam_conduct_date_time": last_exam_conduct_date_time,
         "last_exam_type": last_exam_type,
