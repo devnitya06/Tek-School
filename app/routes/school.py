@@ -8270,7 +8270,7 @@ def get_bank_accounts(
     )
 
 
-@router.get("/bank-accounts/{account_id}/", response_model=BankAccountResponse)
+@router.get("/bank-accounts/{account_id:int}/", response_model=BankAccountResponse)
 def get_bank_account(
     account_id: int,
     current_user: User = Depends(get_current_user),
@@ -8494,7 +8494,7 @@ def list_cash_deposit_transactions(
     return pagination.format_response(items, total_count)
 
 
-@router.put("/bank-accounts/{account_id}/", response_model=BankAccountResponse)
+@router.put("/bank-accounts/{account_id:int}/", response_model=BankAccountResponse)
 def update_bank_account(
     account_id: int,
     bank_data: BankAccountUpdate,
@@ -8615,7 +8615,7 @@ def update_bank_account(
     return bank_account
 
 
-@router.delete("/bank-accounts/{account_id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/bank-accounts/{account_id:int}/", status_code=status.HTTP_204_NO_CONTENT)
 def delete_bank_account(
     account_id: int,
     current_user: User = Depends(get_current_user),
