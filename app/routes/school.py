@@ -8445,11 +8445,34 @@ def create_cash_deposit_to_bank(
 @router.get("/bank-accounts/cash-deposit/", response_model=dict)
 def list_cash_deposit_transactions(
     pagination: PaginationParams = Depends(),
+    payment_id: Optional[int] = Query(
+        None,
+        description="Filter by cash deposit record id (primary key).",
+    ),
+    payment_title: Optional[str] = Query(
+        None,
+        description="Case-insensitive partial match on payment_title.",
+    ),
+    bank_account: Optional[int] = Query(
+        None,
+        description="Filter by bank account id (bank_accounts.id).",
+    ),
+    from_date: Optional[date] = Query(
+        None,
+        description="Include deposits with deposite_date on or after this date (inclusive).",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        description="Include deposits with deposite_date on or before this date (inclusive).",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     List cash-to-bank deposit transactions for school.
+
+    Optional filters: ``payment_id``, ``payment_title``, ``bank_account``,
+    ``from_date``, ``to_date`` (deposit date range, inclusive).
     """
     if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
         raise HTTPException(
@@ -8474,6 +8497,25 @@ def list_cash_deposit_transactions(
         .options(joinedload(CashDepositTransaction.bank_account))
         .filter(CashDepositTransaction.school_id == school_id)
     )
+
+    if payment_id is not None:
+        query = query.filter(CashDepositTransaction.id == payment_id)
+    if payment_title is not None and payment_title.strip():
+        query = query.filter(
+            CashDepositTransaction.payment_title.ilike(f"%{payment_title.strip()}%")
+        )
+    if bank_account is not None:
+        query = query.filter(CashDepositTransaction.bank_account_id == bank_account)
+    if from_date is not None:
+        query = query.filter(
+            CashDepositTransaction.deposite_date
+            >= datetime.combine(from_date, dt_time.min)
+        )
+    if to_date is not None:
+        query = query.filter(
+            CashDepositTransaction.deposite_date
+            <= datetime.combine(to_date, dt_time(23, 59, 59, 999999))
+        )
 
     total_count = query.count()
     rows = (
