@@ -12,6 +12,24 @@ from app.models.school import BankAccount, SchoolSettlementTransaction
 SETTLEMENT_CASH = "cash_offline"
 SETTLEMENT_BANK = "bank_account"
 
+# Student fee UI may send a default bank_account_id even when payment_method is cash;
+# settlement must follow payment_method so /school/bank-accounts/ cash bucket matches reality.
+_STUDENT_FEE_CASH_METHODS = frozenset({"cash_offline", "cash"})
+
+
+def resolve_student_fee_settlement_bank_account_id(
+    payment_method: Optional[str],
+    bank_account_id: Optional[int],
+) -> Optional[int]:
+    """
+    Bank account id for school settlement inflow (student fees).
+    Returns None to credit the virtual cash_offline bucket.
+    """
+    pm = (payment_method or "").strip().lower()
+    if pm in _STUDENT_FEE_CASH_METHODS:
+        return None
+    return bank_account_id
+
 
 def resolve_inflow_channel(bank_account_id: Optional[int]) -> Tuple[str, Optional[int]]:
     """Money received by school: bank row if student/school chose an account, else cash."""

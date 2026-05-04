@@ -36,7 +36,10 @@ from app.services.pagination import PaginationParams
 from app.models.admin import SchoolClassSubject,Chapter,ChapterVideo,ChapterImage,ChapterPDF,ChapterQnA,StudentChapterProgress
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
-from app.utils.school_settlement import record_student_fee_credit
+from app.utils.school_settlement import (
+    record_student_fee_credit,
+    resolve_student_fee_settlement_bank_account_id,
+)
 from app.utils.payment_calculations import calculate_installment_pending_amount, calculate_single_fee_installment_pending
 import asyncio
 from starlette.concurrency import run_in_threadpool
@@ -2302,10 +2305,16 @@ def create_payment_transaction(
             }
         )
 
-    if data.bank_account_id is not None:
+    settlement_bank_account_id = resolve_student_fee_settlement_bank_account_id(
+        data.payment_method, data.bank_account_id
+    )
+    if settlement_bank_account_id is not None:
         ba = (
             db.query(BankAccount)
-            .filter(BankAccount.id == data.bank_account_id, BankAccount.school_id == school_id)
+            .filter(
+                BankAccount.id == settlement_bank_account_id,
+                BankAccount.school_id == school_id,
+            )
             .first()
         )
         if not ba:
@@ -2347,7 +2356,7 @@ def create_payment_transaction(
         files=uploaded_file_urls if uploaded_file_urls else None,
         payment_method=data.payment_method,
         transaction_reference=data.transaction_reference,
-        bank_account_id=data.bank_account_id,
+        bank_account_id=settlement_bank_account_id,
         created_by=current_user.id
     )
     db.add(transaction)
@@ -2359,7 +2368,7 @@ def create_payment_transaction(
             record_student_fee_credit(
                 db,
                 school_id=school_id,
-                bank_account_id=data.bank_account_id,
+                bank_account_id=settlement_bank_account_id,
                 credited_amount=float(total_amount),
                 source_reference=f"student_payment_transaction:{transaction.id}",
                 description=f"Manual student payment student_id={student_id} class_id={class_id}",
@@ -3649,11 +3658,15 @@ def student_update_payment_transaction(
         if total_amount <= 0:
             raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0.")
 
-        if data.bank_account_id is not None:
+        effective_payment_method = data.payment_method or existing_transaction.payment_method
+        submit_settlement_bank_id = resolve_student_fee_settlement_bank_account_id(
+            effective_payment_method, data.bank_account_id
+        )
+        if submit_settlement_bank_id is not None:
             ba = (
                 db.query(BankAccount)
                 .filter(
-                    BankAccount.id == data.bank_account_id,
+                    BankAccount.id == submit_settlement_bank_id,
                     BankAccount.school_id == student.school_id,
                 )
                 .first()
@@ -3680,7 +3693,7 @@ def student_update_payment_transaction(
         existing_transaction.files = uploaded_file_urls if uploaded_file_urls else existing_transaction.files
         existing_transaction.payment_method = data.payment_method if data.payment_method else existing_transaction.payment_method
         existing_transaction.transaction_reference = data.transaction_reference if data.transaction_reference else existing_transaction.transaction_reference
-        existing_transaction.bank_account_id = data.bank_account_id
+        existing_transaction.bank_account_id = submit_settlement_bank_id
         existing_transaction.status = PaymentTransactionStatus.PAYMENT_UPDATE_BY_STUDENT.value  # Status changed to payment_update_by_student
 
         db.commit()
@@ -3925,10 +3938,15 @@ def verify_payment_transaction(
                 else:
                     credited_amount = float(transaction.amount or 0)
                 if credited_amount > 0:
+                    verify_settlement_bank_id = (
+                        resolve_student_fee_settlement_bank_account_id(
+                            transaction.payment_method, transaction.bank_account_id
+                        )
+                    )
                     record_student_fee_credit(
                         db,
                         school_id=school_id,
-                        bank_account_id=transaction.bank_account_id,
+                        bank_account_id=verify_settlement_bank_id,
                         credited_amount=credited_amount,
                         source_reference=f"student_payment_transaction:{transaction.id}",
                         description=(
