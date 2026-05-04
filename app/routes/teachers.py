@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status,Query
 from app.core.dependencies import get_current_user
+from app.models.students import Student
 from app.models.users import User, Otp
 from app.models.teachers import *
 from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum, LeaveRequest, LeaveStatus
@@ -233,7 +234,7 @@ def get_all_teachers_for_school(
     subject_name: str | None = Query(None, description="Filter by subject name"),
 ):
     # ✅ Allow both school (business only) and staff users
-    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF]:
+    if current_user.role not in [UserRole.SCHOOL, UserRole.STAFF,UserRole.STUDENT]:
         raise HTTPException(status_code=403, detail="Only schools and staff can access this resource.")
 
     # ✅ For SCHOOL users, verify business account access
@@ -252,6 +253,23 @@ def get_all_teachers_for_school(
         school = db.query(School).filter(School.id == staff.school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found for this staff member.")
+    elif current_user.role == UserRole.STUDENT:
+        student = (
+            db.query(Student)
+            .filter(Student.user_id == current_user.id)
+            .first()
+        )
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        if not student.class_id or not student.section_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Student class/section not assigned"
+            )
+
+        school = student.school
 
     # --- Subqueries ---
     attendance_subq = (
@@ -297,6 +315,19 @@ def get_all_teachers_for_school(
         .options(joinedload(Teacher.payment))
         .filter(Teacher.school_id == school.id)
     )
+    if current_user.role == UserRole.STUDENT:
+        base_query = (
+            base_query.join(
+                TeacherClassSectionSubject,
+                Teacher.id == TeacherClassSectionSubject.teacher_id
+            )
+            .filter(
+                TeacherClassSectionSubject.class_id == student.class_id,
+                TeacherClassSectionSubject.section_id == student.section_id,
+                TeacherClassSectionSubject.school_id == student.school_id
+            )
+            .distinct(Teacher.id)
+        )
 
     # --- Apply Filters ---
     if teacher_id is not None:

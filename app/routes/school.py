@@ -10567,7 +10567,7 @@ def get_mock_attempts(
 
     # ✅ Case 1: Logged-in student
     if current_user.role == UserRole.STUDENT:
-        student_id_db = current_user.student.id
+        student_id_db = current_user.student_profile.id
 
     # ✅ Case 2: Self-signed student
     elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
@@ -10649,8 +10649,8 @@ def get_rank_analysis(
 
     # ✅ Role-based handling
     if current_user.role == UserRole.STUDENT:
-        student_id_db = current_user.student.id
-        school_id = current_user.student.school_id
+        student_id_db = current_user.student_profile.id
+        school_id = current_user.student_profile.school_id
 
     elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
         self_signed_student_id = current_user.self_signed_student.id
