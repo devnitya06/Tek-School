@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException,status,Query,Body
 from app.models.users import User,Otp
-from app.models.students import Student,Parent,PresentAddress,PermanentAddress,StudentStatus,StudentPayment,InstallmentType,StudentPaymentTransaction,PaymentTransactionStatus
+from app.models.students import *
 from app.models.school import (
     School,
     Class,
@@ -16,7 +16,7 @@ from app.models.school import (
     class_subjects,
 )
 from app.models.staff import Staff
-from app.models.teachers import TeacherClassSectionSubject
+from app.models.teachers import TeacherClassSectionSubject,Teacher
 from app.schemas.users import UserRole
 from app.schemas.students import *
 from datetime import timezone
@@ -3998,4 +3998,409 @@ def verify_payment_transaction(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to verify payment: {str(e)}")
+
+@router.post("/doubt/create")
+def create_doubt(
+    payload: CreateDoubtRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    student = db.query(Student).filter(Student.user_id == current_user.id).first()
+
+    if not student:
+        raise HTTPException(404, "Student not found")
+
+    # ✅ max 5 teachers
+    if len(payload.teacher_ids) > 5:
+        raise HTTPException(400, "Max 5 teachers allowed")
+
+    # ✅ remove duplicates
+    teacher_ids = list(set(payload.teacher_ids))
+
+    # ✅ validate teachers in same school
+    teachers = db.query(Teacher).filter(
+        Teacher.id.in_(teacher_ids),
+        Teacher.school_id == student.school_id
+    ).all()
+
+    if len(teachers) != len(teacher_ids):
+        raise HTTPException(400, "Invalid teachers selected")
+
+    # ✅ create doubt
+    doubt = Doubt(
+        student_id=student.id,
+        school_id=student.school_id,
+        subject_id=payload.subject_id,
+        class_id=student.class_id,
+        section_id=student.section_id,
+        chapter_name=payload.chapter_name,
+        question=payload.question,
+        key_points=payload.key_points,
+        attachment=payload.attachment
+    )
+
+    db.add(doubt)
+    db.flush()
+
+    # ✅ assign teachers
+    for teacher_id in teacher_ids:
+        db.add(DoubtTeacher(doubt_id=doubt.id, teacher_id=teacher_id))
+
+    db.commit()
+
+    return {"message": "Doubt created"}
+
+@router.get("/doubt/dashboard")
+def student_dashboard(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+
+    student = db.query(Student).filter(Student.user_id == current_user.id).first()
+
+    if not student:
+        raise HTTPException(404, "Student not found")
+
+    total = db.query(func.count(Doubt.id)).filter(
+        Doubt.student_id == student.id
+    ).scalar()
+
+    solved = db.query(func.count(Doubt.id)).filter(
+        Doubt.student_id == student.id,
+        Doubt.status == DoubtStatus.SOLVED
+    ).scalar()
+
+    pending = db.query(func.count(Doubt.id)).filter(
+        Doubt.student_id == student.id,
+        Doubt.status == DoubtStatus.PENDING
+    ).scalar()
+
+    return {
+        "total": total,
+        "solved": solved,
+        "pending": pending,
+        "unsolved": total - solved
+    }
         
+@router.get("/teacher/doubt/dashboard")
+def teacher_dashboard(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+
+    teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+
+    if not teacher:
+        raise HTTPException(404, "Teacher not found")
+
+    total = db.query(func.count(DoubtTeacher.id)).filter(
+        DoubtTeacher.teacher_id == teacher.id
+    ).scalar()
+
+    responded = db.query(func.count(DoubtResponse.id)).filter(
+        DoubtResponse.teacher_id == teacher.id
+    ).scalar()
+
+    solved = db.query(func.count(DoubtResponse.id)).filter(
+        DoubtResponse.teacher_id == teacher.id,
+        DoubtResponse.action == ResponseAction.SOLVE
+    ).scalar()
+
+    return {
+        "total_doubts": total,
+        "responded": responded,
+        "solved": solved,
+        "solved_ratio": round((solved / total * 100), 2) if total else 0
+    }
+
+@router.post("/doubt/respond/{doubt_id}")
+def respond_doubt(
+    doubt_id: int,
+    payload: RespondDoubtRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    teacher = db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(404, "Teacher not found")
+
+    doubt = db.query(Doubt).filter(Doubt.id == doubt_id).first()
+
+    if not doubt:
+        raise HTTPException(404, "Doubt not found")
+
+    # ❗ Only one teacher can respond
+    existing_response = db.query(DoubtResponse).filter(
+        DoubtResponse.doubt_id == doubt_id
+    ).first()
+
+    if existing_response:
+        raise HTTPException(400, "Already handled")
+
+    # check assignment
+    assigned = db.query(DoubtTeacher).filter(
+        DoubtTeacher.doubt_id == doubt_id,
+        DoubtTeacher.teacher_id == teacher.id
+    ).first()
+
+    if not assigned:
+        raise HTTPException(403, "Not assigned")
+
+    # create response
+    response = DoubtResponse(
+        doubt_id=doubt_id,
+        teacher_id=teacher.id,
+        answer=payload.answer,
+        attachment=payload.attachment,
+        action=payload.action
+    )
+
+    db.add(response)
+
+    # update current teacher
+    assigned.status = TeacherDoubtStatus.RESPONDED
+
+    # lock others
+    db.query(DoubtTeacher).filter(
+        DoubtTeacher.doubt_id == doubt_id,
+        DoubtTeacher.teacher_id != teacher.id
+    ).update({"status": TeacherDoubtStatus.RESPONDED})
+
+    # update doubt status
+    doubt.status = DoubtStatus.SOLVED
+
+    db.commit()
+
+    return {"message": "Response submitted successfully"}
+
+@router.get("/student/doubts", response_model=list[StudentDoubtListResponse])
+def get_student_doubts(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    # ✅ Get student
+    student = db.query(Student).filter(Student.user_id == current_user.id).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # ✅ Fetch doubts with relations
+    doubts = (
+        db.query(Doubt)
+        .options(
+            joinedload(Doubt.subject),
+            joinedload(Doubt.teachers).joinedload(DoubtTeacher.teacher)
+        )
+        .filter(Doubt.student_id == student.id)
+        .order_by(Doubt.created_at.desc())
+        .all()
+    )
+
+    # ✅ Format response
+    result = []
+    for doubt in doubts:
+        teacher_list = [
+            {
+                "teacher_id": t.teacher.id,
+                "teacher_name": f"{t.teacher.first_name} {t.teacher.last_name}"
+            }
+            for t in doubt.teachers
+        ]
+
+        result.append({
+            "id": doubt.id,
+            "subject": doubt.subject.name if doubt.subject else None,
+            "chapter_name": doubt.chapter_name,
+            "question": doubt.question,
+            "teachers": teacher_list,
+            "status": doubt.status,
+            "created_at": doubt.created_at
+        })
+
+    return result
+
+@router.get("/student/doubt/{doubt_id}")
+def get_doubt_detail(
+    doubt_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    # get student
+    student = db.query(Student).filter(
+        Student.user_id == current_user.id
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # get doubt
+    doubt = db.query(Doubt).filter(
+        Doubt.id == doubt_id,
+        Doubt.student_id == student.id
+    ).first()
+
+    if not doubt:
+        raise HTTPException(status_code=404, detail="Doubt not found")
+
+    # assigned teachers
+    assigned_teachers = (
+        db.query(
+            Teacher.id,
+            Teacher.first_name,
+            Teacher.last_name,
+            DoubtTeacher.status
+        )
+        .join(DoubtTeacher, DoubtTeacher.teacher_id == Teacher.id)
+        .filter(DoubtTeacher.doubt_id == doubt.id)
+        .all()
+    )
+
+    # response (only one teacher can respond)
+    response = (
+        db.query(DoubtResponse, Teacher)
+        .join(Teacher, Teacher.id == DoubtResponse.teacher_id)
+        .filter(DoubtResponse.doubt_id == doubt.id)
+        .first()
+    )
+
+    response_data = None
+    if response:
+        doubt_response, teacher = response
+
+        response_data = {
+            "teacher_id": teacher.id,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+            "answer": doubt_response.answer,
+            "attachment": doubt_response.attachment,
+            "action": doubt_response.action.value,
+            "responded_at": doubt_response.created_at,
+        }
+
+    return {
+        "id": doubt.id,
+        "subject": doubt.subject.name if doubt.subject else None,
+        "chapter_name": doubt.chapter_name,
+        "question": doubt.question,
+        "key_points": doubt.key_points,
+        "attachment": doubt.attachment,
+        "status": doubt.status.value,
+        "created_at": doubt.created_at,
+
+        "assigned_teachers": [
+            {
+                "teacher_id": t.id,
+                "teacher_name": f"{t.first_name} {t.last_name}",
+                "status": t.status.value
+            }
+            for t in assigned_teachers
+        ],
+
+        "response": response_data
+    }
+
+@router.get("/teacher/doubts")
+def get_teacher_doubts(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    # ✅ get teacher
+    teacher = db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    # ✅ subquery → total doubts per student
+    student_doubt_count = (
+        db.query(
+            Doubt.student_id,
+            func.count(Doubt.id).label("total_doubts")
+        )
+        .group_by(Doubt.student_id)
+        .subquery()
+    )
+
+    # ✅ subquery → latest response per doubt
+    latest_response_subq = (
+        db.query(
+            DoubtResponse.doubt_id,
+            func.max(DoubtResponse.created_at).label("latest_time")
+        )
+        .group_by(DoubtResponse.doubt_id)
+        .subquery()
+    )
+
+    latest_response = (
+        db.query(DoubtResponse)
+        .join(
+            latest_response_subq,
+            (DoubtResponse.doubt_id == latest_response_subq.c.doubt_id) &
+            (DoubtResponse.created_at == latest_response_subq.c.latest_time)
+        )
+        .subquery()
+    )
+
+    # ✅ main query
+    query = (
+        db.query(
+            Doubt,
+            Student,
+            Class,
+            Section,
+            student_doubt_count.c.total_doubts,
+            latest_response.c.answer.label("last_answer"),
+            latest_response.c.action.label("last_action"),
+            latest_response.c.created_at.label("last_response_date"),
+        )
+        .join(DoubtTeacher, DoubtTeacher.doubt_id == Doubt.id)
+        .join(Student, Student.id == Doubt.student_id)
+        .join(Class, Class.id == Doubt.class_id)
+        .join(Section, Section.id == Doubt.section_id)
+        .outerjoin(student_doubt_count, student_doubt_count.c.student_id == Student.id)
+        .outerjoin(latest_response, latest_response.c.doubt_id == Doubt.id)
+        .filter(DoubtTeacher.teacher_id == teacher.id)
+        .order_by(Doubt.created_at.desc())
+    )
+
+    total_count = query.count()
+
+    results = query.offset(pagination.offset()).limit(pagination.limit()).all()
+
+    data = []
+    for index, (
+        doubt,
+        student,
+        class_,
+        section,
+        total_doubts,
+        last_answer,
+        last_action,
+        last_response_date 
+    ) in enumerate(results):
+
+        data.append({
+            "sl_no": index + 1 + pagination.offset(),
+
+            "doubt_id": doubt.id,
+
+            "student_name": f"{student.first_name} {student.last_name}",
+            "roll_no": student.roll_no,
+
+            "class_name": class_.name if class_ else None,
+            "section_name": section.name if section else None,
+
+            "total_requests_by_student": total_doubts or 0,
+
+            "chapter_name": doubt.chapter_name,
+            "question": doubt.question,
+
+            "last_response": {
+                "answer": last_answer,
+                "action": last_action.value if last_action else None,
+                "date": last_response_date.isoformat() if last_response_date else None
+            } if last_answer else None,
+
+            "status": doubt.status.value,
+            "created_at": doubt.created_at
+        })
+
+    return pagination.format_response(data, total_count)

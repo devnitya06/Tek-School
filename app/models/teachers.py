@@ -67,6 +67,8 @@ class Teacher(Base):
     leave_requests = relationship("LeaveRequest", back_populates="teacher", cascade="all, delete")
     home_assignments = relationship("HomeAssignment", back_populates="teacher", cascade="all, delete")
     payment = relationship("TeacherStaffPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
+    assigned_doubts = relationship("DoubtTeacher", back_populates="teacher")
+    responses = relationship("DoubtResponse", back_populates="teacher")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -93,6 +95,8 @@ class TeacherClassSectionSubject(Base):
     section = relationship("Section")
     subject = relationship("Subject")
     class_ = relationship("Class")
+    # assigned_doubts = relationship("DoubtTeacher", back_populates="teacher")
+    # responses = relationship("DoubtResponse", back_populates="teacher")
 
 
 class TeacherStaffPayment(Base):

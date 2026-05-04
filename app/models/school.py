@@ -695,7 +695,6 @@ class StudentExamData(Base):
     __tablename__ = "student_exam_data"
 
     id = Column(Integer, primary_key=True, index=True)
-
     student_id = Column(
         Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=True
     )

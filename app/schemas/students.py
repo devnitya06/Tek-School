@@ -2,7 +2,8 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import date, time
 from enum import Enum
-
+from datetime import datetime
+from app.models.students import DoubtStatus, ResponseAction
 class InstallmentTypeEnum(str, Enum):
     MONTHLY = "monthly"
     QUARTERLY = "quarterly"
@@ -213,3 +214,86 @@ class SelfSignedStudentUpdate(BaseModel):
     parent_email : Optional[EmailStr] = None
     occupation : Optional[str] = None
 
+class CreateDoubtRequest(BaseModel):
+    subject_id: int
+    chapter_name: str = Field(..., max_length=255)
+    question: str
+    key_points: Optional[str] = None
+    attachment: Optional[str] = None
+    teacher_ids: List[str]
+
+class RespondDoubtRequest(BaseModel):
+    answer: str
+    attachment: Optional[str] = None
+    action: ResponseAction
+
+class UpdateDoubtStatusRequest(BaseModel):
+    status: DoubtStatus
+
+class TeacherSelectionResponse(BaseModel):
+    teacher_id: str
+    name: str
+    type: str  # In-Class / In-School
+    subject: str
+    class_name: str
+    section_name: str
+    pending_doubt_count: int
+
+class DoubtListResponse(BaseModel):
+    id: int
+    subject: str
+    chapter_name: str
+    question: str
+    status: DoubtStatus
+    created_at: datetime
+
+class StudentDashboardResponse(BaseModel):
+    total_doubts: int
+    responses_received: int
+    solved_doubts: int
+    unsolved_doubts: int
+    pending_doubts: int
+
+class TeacherDashboardResponse(BaseModel):
+    total_doubts: int
+    responded_doubts: int
+    solved_ratio: float
+
+class StudentInfo(BaseModel):
+    name: str
+    class_name: str
+    section_name: str
+    school: str
+
+
+class DoubtDetailResponse(BaseModel):
+    id: int
+    student: StudentInfo
+    subject: str
+    chapter_name: str
+    question: str
+    key_points: Optional[str]
+    attachment: Optional[str]
+    status: DoubtStatus
+    created_at: datetime
+
+class TeacherResponseView(BaseModel):
+    teacher_name: str
+    answer: str
+    attachment: Optional[str]
+    action: ResponseAction
+    created_at: datetime
+
+class TeacherNameResponse(BaseModel):
+    teacher_id: str
+    teacher_name: str
+
+
+class StudentDoubtListResponse(BaseModel):
+    id: int
+    subject: str
+    chapter_name: str
+    question: str
+    teachers: List[TeacherNameResponse]
+    status: str
+    created_at: datetime

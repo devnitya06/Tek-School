@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date,DateTime,Enum,Float,UniqueConstraint,JSON
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date,DateTime,Enum,Float,UniqueConstraint,JSON,Text
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from sqlalchemy.sql import func
@@ -65,6 +65,7 @@ class Student(Base):
     back_populates="student",
     foreign_keys="StudentSubscription.student_id"
 )
+    doubts = relationship("Doubt", back_populates="student", cascade="all, delete-orphan")
 
 
 
@@ -239,3 +240,72 @@ class StudentPaymentTransaction(Base):
     created_by_user = relationship("User", foreign_keys=[created_by])
     verified_by_user = relationship("User", foreign_keys=[verified_by])
     bank_account = relationship("BankAccount", foreign_keys=[bank_account_id])
+
+class DoubtStatus(str, PyEnum):
+    PENDING = "PENDING"
+    SOLVED = "SOLVED"
+    UNSOLVED = "UNSOLVED"
+
+
+class TeacherDoubtStatus(str, PyEnum):
+    PENDING = "PENDING"
+    RESPONDED = "RESPONDED"
+
+
+class ResponseAction(str, PyEnum):
+    SOLVE = "SOLVE"
+    DISCUSS = "DISCUSS"
+class Doubt(Base):
+    __tablename__ = "doubts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    section_id = Column(Integer, ForeignKey("sections.id"), nullable=False)
+    chapter_name = Column(String(255), nullable=False)
+    question = Column(Text, nullable=False)
+    key_points = Column(Text, nullable=True)
+    attachment = Column(String, nullable=True)
+    status = Column(SQLEnum(DoubtStatus, name="doubt_status"),default=DoubtStatus.PENDING,nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    # ✅ relationships
+    student = relationship("Student", back_populates="doubts")
+    subject = relationship("Subject")
+    teachers = relationship("DoubtTeacher", back_populates="doubt", cascade="all, delete-orphan")
+    responses = relationship("DoubtResponse", back_populates="doubt", cascade="all, delete-orphan")
+
+class DoubtTeacher(Base):
+    __tablename__ = "doubt_teachers"
+    id = Column(Integer, primary_key=True)
+    doubt_id = Column(Integer, ForeignKey("doubts.id", ondelete="CASCADE"))
+    teacher_id = Column(String, ForeignKey("teachers.id"))
+    status = Column(SQLEnum(TeacherDoubtStatus, name="teacher_doubt_status"),default=TeacherDoubtStatus.PENDING,nullable=False)
+
+    # ✅ relationships
+    doubt = relationship("Doubt", back_populates="teachers")
+    teacher = relationship("Teacher", back_populates="assigned_doubts")
+
+    __table_args__ = (
+        UniqueConstraint("doubt_id", "teacher_id", name="unique_doubt_teacher"),
+    )
+
+class DoubtResponse(Base):
+    __tablename__ = "doubt_responses"
+
+    id = Column(Integer, primary_key=True)
+    doubt_id = Column(Integer, ForeignKey("doubts.id", ondelete="CASCADE"))
+    teacher_id = Column(String, ForeignKey("teachers.id"))
+    answer = Column(Text, nullable=False)
+    attachment = Column(String, nullable=True)
+    action = Column(SQLEnum(ResponseAction, name="response_action"),nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    # ✅ relationships
+    doubt = relationship("Doubt", back_populates="responses")
+    teacher = relationship("Teacher", back_populates="responses")
+    __table_args__ = (
+        UniqueConstraint("doubt_id", "teacher_id", name="unique_doubt_response"),
+    )
