@@ -19,6 +19,7 @@ from app.models.staff import Staff
 from app.models.teachers import TeacherClassSectionSubject,Teacher
 from app.schemas.users import UserRole
 from app.schemas.students import *
+from app.schemas.school import BankAccountResponse
 from datetime import timezone
 from sqlalchemy.orm import Session,joinedload,aliased
 from sqlalchemy import func, and_, or_, exists
@@ -1800,6 +1801,49 @@ def get_chapter_details(
     }
 
 # ==================== STUDENT PAYMENT APIs ====================
+
+@router.get(
+    "/students/bank-accounts/",
+    summary="Get student bank accounts",
+    description="Retrieve all bank accounts available for the student's school for payment purposes.",
+    response_model=List[BankAccountResponse]
+)
+def get_student_bank_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get all bank accounts for the student's school.
+    Students can use this to know which bank accounts they can pay into.
+    """
+    try:
+        # ✅ VALIDATION: Only STUDENT role can access this endpoint
+        if current_user.role != UserRole.STUDENT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only students can access bank account information."
+            )
+
+        # ✅ Get student profile to determine school_id
+        student = db.query(Student).filter(
+            Student.user_id == current_user.id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found.")
+
+        # ✅ Get all bank accounts for the student's school
+        bank_accounts = db.query(BankAccount).filter(
+            BankAccount.school_id == student.school_id
+        ).order_by(BankAccount.is_primary.desc(), BankAccount.created_at.desc()).all()
+
+        return bank_accounts
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve bank accounts: {str(e)}")
+
 
 @router.get(
     "/students/{student_id}/payments/",
@@ -3659,8 +3703,17 @@ def student_update_payment_transaction(
             raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0.")
 
         effective_payment_method = data.payment_method or existing_transaction.payment_method
+        effective_bank_account_id = data.bank_account_id if data.bank_account_id is not None else existing_transaction.bank_account_id
+
+        if effective_payment_method and effective_payment_method.strip().lower() not in ["cash", "cash_offline"]:
+            if not effective_bank_account_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="bank_account_id is required for bank payment methods."
+                )
+
         submit_settlement_bank_id = resolve_student_fee_settlement_bank_account_id(
-            effective_payment_method, data.bank_account_id
+            effective_payment_method, effective_bank_account_id
         )
         if submit_settlement_bank_id is not None:
             ba = (
@@ -3712,6 +3765,156 @@ def student_update_payment_transaction(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to submit payment: {str(e)}")
+
+
+@router.post(
+    "/students/{student_id}/payments/{class_id}/submit-manual-payment/",
+    summary="Student submit manual payment",
+    description="Student submits manual payment details (amount, method, reference, proof). Creates a new transaction with status 'payment_update_by_student' for school verification."
+)
+def student_submit_manual_payment(
+    student_id: int,
+    class_id: int,
+    data: StudentPaymentSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Student submits manual payment details.
+    Creates a new payment transaction with status 'payment_update_by_student'.
+    School will verify and approve or reject the payment.
+    """
+    try:
+        # ✅ VALIDATION: student_id and class_id must be positive
+        if student_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid student_id. Must be a positive integer.")
+        if class_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid class_id. Must be a positive integer.")
+
+        # ✅ VALIDATION: Only STUDENT role can submit manual payments
+        if current_user.role != UserRole.STUDENT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only students can submit manual payments."
+            )
+
+        # ✅ VALIDATION: Verify student exists and belongs to current user
+        student = db.query(Student).filter(
+            Student.id == student_id,
+            Student.user_id == current_user.id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found or not authorized.")
+
+        # ✅ VALIDATION: Verify class matches student's current class
+        if student.class_id != class_id:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Class ID does not match student's current class. Student is in class {student.class_id}."
+            )
+
+        # ✅ VALIDATION: Get payment record
+        payment = db.query(StudentPayment).filter(
+            StudentPayment.student_id == student_id,
+            StudentPayment.class_id == class_id
+        ).first()
+
+        if not payment:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Payment record not found for student {student_id} in class {class_id}."
+            )
+
+        # ✅ VALIDATION: At least one payment amount must be provided
+        if not any([
+            data.course_fee_amount,
+            data.transport_fee_amount,
+            data.tek_school_fee_amount
+        ]):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one payment amount must be provided (course_fee_amount, transport_fee_amount, or tek_school_fee_amount)."
+            )
+
+        # ✅ VALIDATION: Payment amounts must be positive if provided
+        if data.course_fee_amount and data.course_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="course_fee_amount must be greater than 0.")
+        if data.transport_fee_amount and data.transport_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="transport_fee_amount must be greater than 0.")
+        if data.tek_school_fee_amount and data.tek_school_fee_amount <= 0:
+            raise HTTPException(status_code=400, detail="tek_school_fee_amount must be greater than 0.")
+
+        # ✅ VALIDATION: Bank account is required for bank payment methods
+        if data.payment_method and data.payment_method.strip().lower() not in ["cash", "cash_offline"]:
+            if not data.bank_account_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="bank_account_id is required for bank payment methods."
+                )
+
+        # ✅ Calculate total amount
+        total_amount = sum([
+            data.course_fee_amount or 0,
+            data.transport_fee_amount or 0,
+            data.tek_school_fee_amount or 0
+        ])
+
+        # ✅ Create payment breakdown
+        payment_breakdown = {}
+        if data.course_fee_amount:
+            payment_breakdown["course_fee"] = data.course_fee_amount
+        if data.transport_fee_amount:
+            payment_breakdown["transport_fee"] = data.transport_fee_amount
+        if data.tek_school_fee_amount:
+            payment_breakdown["tek_school_fee"] = data.tek_school_fee_amount
+
+        # ✅ Upload files to S3 if provided
+        uploaded_files = []
+        if data.files:
+            for file_data in data.files:
+                try:
+                    file_url = upload_base64_to_s3(file_data, f"payments/student_{student_id}")
+                    uploaded_files.append(file_url)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to upload payment proof file: {str(e)}"
+                    )
+
+        # ✅ Create the transaction
+        new_transaction = StudentPaymentTransaction(
+            student_payment_id=payment.id,
+            amount=total_amount,
+            payment_type="manual",  # Since it's manual submission
+            payment_breakdown=payment_breakdown,
+            transaction_date=datetime.utcnow(),
+            description=data.description,
+            files=uploaded_files if uploaded_files else None,
+            payment_method=data.payment_method,
+            transaction_reference=data.transaction_reference,
+            bank_account_id=data.bank_account_id,
+            status=PaymentTransactionStatus.PAYMENT_UPDATE_BY_STUDENT.value,
+            created_by=current_user.id
+        )
+
+        db.add(new_transaction)
+        db.commit()
+        db.refresh(new_transaction)
+
+        return {
+            "detail": "Manual payment submitted successfully. Waiting for school verification.",
+            "transaction_id": new_transaction.id,
+            "amount": float(new_transaction.amount),
+            "status": new_transaction.status,
+            "payment_breakdown": new_transaction.payment_breakdown,
+            "message": "Your payment details have been submitted. School will verify and approve or reject the payment."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to submit manual payment: {str(e)}")
 
 
 @router.put(
@@ -3851,39 +4054,35 @@ def verify_payment_transaction(
                 old_transport_fee_paid = payment.transport_fee_paid
                 old_tek_school_fee_paid = payment.tek_school_fee_paid
 
+                applied_course_fee_amount = 0.0
+                applied_transport_fee_amount = 0.0
+                applied_tek_school_fee_amount = 0.0
+                overpayment_amount = 0.0
+
                 if transaction.payment_breakdown:
                     # Update based on payment breakdown
                     course_fee_amount = float(transaction.payment_breakdown.get("course_fee", 0))
                     transport_fee_amount = float(transaction.payment_breakdown.get("transport_fee", 0))
                     tek_school_fee_amount = float(transaction.payment_breakdown.get("tek_school_fee", 0))
 
-                    # ✅ VALIDATION: Verify amounts don't exceed remaining balances
+                    # ✅ Apply each amount up to the remaining fee balance
                     if course_fee_amount > 0:
                         remaining = round(payment.course_fee - payment.course_fee_paid, 2)
-                        if course_fee_amount > remaining:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Cannot verify: Course fee amount ({course_fee_amount}) exceeds remaining balance ({remaining:.2f})."
-                            )
-                        payment.course_fee_paid = round(payment.course_fee_paid + course_fee_amount, 2)
-                    
+                        applied_course_fee_amount = min(course_fee_amount, max(remaining, 0.0))
+                        payment.course_fee_paid = round(payment.course_fee_paid + applied_course_fee_amount, 2)
+                        overpayment_amount += max(course_fee_amount - applied_course_fee_amount, 0.0)
+
                     if transport_fee_amount > 0:
                         remaining = round(payment.transport_fee - payment.transport_fee_paid, 2)
-                        if transport_fee_amount > remaining:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Cannot verify: Transport fee amount ({transport_fee_amount}) exceeds remaining balance ({remaining:.2f})."
-                            )
-                        payment.transport_fee_paid = round(payment.transport_fee_paid + transport_fee_amount, 2)
-                    
+                        applied_transport_fee_amount = min(transport_fee_amount, max(remaining, 0.0))
+                        payment.transport_fee_paid = round(payment.transport_fee_paid + applied_transport_fee_amount, 2)
+                        overpayment_amount += max(transport_fee_amount - applied_transport_fee_amount, 0.0)
+
                     if tek_school_fee_amount > 0:
                         remaining = round(payment.tek_school_fee - payment.tek_school_fee_paid, 2)
-                        if tek_school_fee_amount > remaining:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Cannot verify: Tek School fee amount ({tek_school_fee_amount}) exceeds remaining balance ({remaining:.2f})."
-                            )
-                        payment.tek_school_fee_paid = round(payment.tek_school_fee_paid + tek_school_fee_amount, 2)
+                        applied_tek_school_fee_amount = min(tek_school_fee_amount, max(remaining, 0.0))
+                        payment.tek_school_fee_paid = round(payment.tek_school_fee_paid + applied_tek_school_fee_amount, 2)
+                        overpayment_amount += max(tek_school_fee_amount - applied_tek_school_fee_amount, 0.0)
                 else:
                     # Fallback: update based on primary payment type
                     if transaction.payment_type == "course_fee":
@@ -3937,7 +4136,15 @@ def verify_payment_transaction(
                     )
                 else:
                     credited_amount = float(transaction.amount or 0)
+                
                 if credited_amount > 0:
+                    if transaction.payment_method and transaction.payment_method.strip().lower() not in ["cash", "cash_offline"]:
+                        if not transaction.bank_account_id:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Bank account is required for bank payment methods when verifying a student payment."
+                            )
+
                     verify_settlement_bank_id = (
                         resolve_student_fee_settlement_bank_account_id(
                             transaction.payment_method, transaction.bank_account_id
