@@ -896,6 +896,9 @@ def create_class(
         tek_school_payment_annually=class_data.tek_school_payment_annually
         if class_data.tek_school_payment_annually is not None
         else 1000.0,
+        admission_fee=class_data.admission_fee
+        if class_data.admission_fee is not None
+        else 0.0,
         class_start_date=class_data.class_start_date,
         class_end_date=class_data.class_end_date,
     )
@@ -1049,6 +1052,9 @@ def update_class(
 
     if class_data.tek_school_payment_annually is not None:
         class_obj.tek_school_payment_annually = class_data.tek_school_payment_annually
+
+    if class_data.admission_fee is not None:
+        class_obj.admission_fee = class_data.admission_fee
 
     if class_data.class_start_date is not None:
         class_obj.class_start_date = class_data.class_start_date
@@ -1341,6 +1347,7 @@ def get_school_classes(
             "annual_course_fee": class_.annual_course_fee,
             "annual_transport_fee": class_.annual_transport_fee,
             "tek_school_payment_annually": class_.tek_school_payment_annually,
+            "admission_fee": class_.admission_fee,
             "class_start_date": class_.class_start_date.isoformat()
             if class_.class_start_date
             else None,
@@ -1458,6 +1465,7 @@ def get_classes(
                     "annual_course_fee": class_.annual_course_fee,
                     "annual_transport_fee": class_.annual_transport_fee,
                     "tek_school_payment_annually": class_.tek_school_payment_annually,
+                    "admission_fee": class_.admission_fee,
                     "class_start_date": class_.class_start_date.isoformat()
                     if class_.class_start_date
                     else None,
@@ -1642,6 +1650,7 @@ def get_class_details(
         "annual_course_fee": class_obj.annual_course_fee,
         "annual_transport_fee": class_obj.annual_transport_fee,
         "tek_school_payment_annually": class_obj.tek_school_payment_annually,
+        "admission_fee": class_obj.admission_fee,
         "class_start_date": class_obj.class_start_date.isoformat()
         if class_obj.class_start_date
         else None,

@@ -365,6 +365,7 @@ class Class(Base):
     annual_course_fee = Column(Float, default=10000.0)
     annual_transport_fee = Column(Float, default=3000.0)
     tek_school_payment_annually = Column(Float, default=1000.0)
+    admission_fee = Column(Float, default=0.0)
     class_start_date = Column(Date, nullable=False)
     class_end_date = Column(Date, nullable=False)
 

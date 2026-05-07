@@ -105,6 +105,7 @@ class ClassWithSubjectCreate(BaseModel):
     annual_course_fee: Optional[float] = 10000.0
     annual_transport_fee: Optional[float] = 3000.0
     tek_school_payment_annually: Optional[float] = 1000.0
+    admission_fee: Optional[float] = 0.0
     class_start_date: date
     class_end_date: date
 
@@ -119,6 +120,7 @@ class ClassWithSubjectUpdate(BaseModel):
     annual_course_fee: Optional[float] = None
     annual_transport_fee: Optional[float] = None
     tek_school_payment_annually: Optional[float] = None
+    admission_fee: Optional[float] = None
 
     class_start_date: Optional[date] = None
     class_end_date: Optional[date] = None
