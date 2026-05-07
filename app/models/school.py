@@ -139,6 +139,8 @@ class School(Base):
     school_medium = Column(SQLEnum(SchoolMedium), nullable=True)
     school_board = Column(SQLEnum(SchoolBoard), nullable=True)
     establishment_year = Column(Integer, nullable=True)
+    establishment_month = Column(Integer, nullable=True)
+    register_no = Column(String, nullable=True)
 
     # Address Information
     profile_pic_url = Column(String, nullable=True)

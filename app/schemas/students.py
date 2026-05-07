@@ -108,6 +108,11 @@ class StudentCreateRequest(BaseModel):
     pickup_time: Optional[str] = None
     drop_point: Optional[str] = None
     drop_time: Optional[str] = None
+    blood_group: Optional[str] = None
+    date_of_admission: Optional[date] = None
+    previous_class_marks_obtained: Optional[int] = None
+    previous_class_overall_percentage: Optional[float] = None
+    previous_class_final_grade: Optional[str] = None
     payment: StudentPaymentCreate
     # school_id: str
 
@@ -126,6 +131,11 @@ class StudentUpdateRequest(BaseModel):
     pickup_time: Optional[str] = None
     drop_point: Optional[str] = None
     drop_time: Optional[str] = None
+    blood_group: Optional[str] = None
+    date_of_admission: Optional[date] = None
+    previous_class_marks_obtained: Optional[int] = None
+    previous_class_overall_percentage: Optional[float] = None
+    previous_class_final_grade: Optional[str] = None
     payment: Optional[StudentPaymentCreate] = None  # Optional payment update
 
 class AddressBase(BaseModel):

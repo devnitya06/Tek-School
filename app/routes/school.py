@@ -182,6 +182,10 @@ async def update_school_profile(
             school.school_board = data.school_board
         if data.establishment_year is not None:
             school.establishment_year = data.establishment_year
+        if data.establishment_month is not None:
+            school.establishment_month = data.establishment_month
+        if data.register_no is not None:
+            school.register_no = data.register_no
 
         if data.pin_code is not None:
             school.pin_code = data.pin_code
@@ -285,6 +289,8 @@ async def update_school_profile(
             "school_logo": school.profile_pic_url,
             "school_banner": school.banner_pic_url,
             "establishment_year": school.establishment_year,
+            "establishment_month": school.establishment_month,
+            "register_no": school.register_no,
             "pin_code": school.pin_code,
             "block_division": school.block_division,
             "district": school.district,
@@ -684,6 +690,8 @@ async def get_school_profile(
         "school_logo": school.profile_pic_url,
         "school_banner": school.banner_pic_url,
         "establishment_year": school.establishment_year,
+        "establishment_month": school.establishment_month,
+        "register_no": school.register_no,
         "pin_code": school.pin_code,
         "block_division": school.block_division,
         "district": school.district,

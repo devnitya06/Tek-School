@@ -14,6 +14,8 @@ class SchoolProfileBase(BaseModel):
     school_medium: str
     school_board: str
     establishment_year: int
+    establishment_month: Optional[int] = None
+    register_no: Optional[str] = None
 
     # Address Information
     pin_code: str
@@ -56,6 +58,8 @@ class SchoolProfileUpdate(BaseModel):
     school_medium: Optional[str] = None
     school_board: Optional[str] = None
     establishment_year: Optional[int] = None
+    establishment_month: Optional[int] = None
+    register_no: Optional[str] = None
     pin_code: Optional[str] = None
     block_division: Optional[str] = None
     district: Optional[str] = None

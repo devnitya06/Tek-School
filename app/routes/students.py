@@ -158,6 +158,11 @@ def create_student(
             gender=data.gender,
             dob=data.dob,
             roll_no=data.roll_no,
+            blood_group=data.blood_group,
+            date_of_admission=data.date_of_admission,
+            previous_class_marks_obtained=data.previous_class_marks_obtained,
+            previous_class_overall_percentage=data.previous_class_overall_percentage,
+            previous_class_final_grade=data.previous_class_final_grade,
             class_id=data.class_id,
             section_id=data.section_id,
             is_transport=data.is_transport,
@@ -250,6 +255,11 @@ def create_student(
             "student_id": student.id,
             "user_id": user.id,
             "profile_pic_url": profile_pic_url,
+            "blood_group": student.blood_group,
+            "date_of_admission": student.date_of_admission,
+            "previous_class_marks_obtained": student.previous_class_marks_obtained,
+            "previous_class_overall_percentage": student.previous_class_overall_percentage,
+            "previous_class_final_grade": student.previous_class_final_grade,
             "email_sent": email_sent,
             "payment": {
                 "payment_id": student_payment.id,
@@ -1079,6 +1089,11 @@ def get_student(
         "last_name": student.last_name,
         "gender": student.gender,
         "dob": student.dob,
+        "blood_group": student.blood_group,
+        "date_of_admission": student.date_of_admission,
+        "previous_class_marks_obtained": student.previous_class_marks_obtained,
+        "previous_class_overall_percentage": student.previous_class_overall_percentage,
+        "previous_class_final_grade": student.previous_class_final_grade,
         "roll_no": student.roll_no,
         "class_id": student.class_id,
         "class_name": student.classes.name,
@@ -1214,10 +1229,17 @@ def update_student(
     if current_user.role == UserRole.SCHOOL:
         allowed_fields = [
             "first_name", "last_name", "gender", "dob",
+            "blood_group", "date_of_admission", "previous_class_marks_obtained",
+            "previous_class_overall_percentage", "previous_class_final_grade",
             "class_id", "section_id", "is_transport", "driver_id","pickup_point","pickup_time","drop_point","drop_time"
         ]
     else:
-        allowed_fields = ["first_name", "last_name", "gender", "dob", "class_id", "section_id"]
+        allowed_fields = [
+            "first_name", "last_name", "gender", "dob",
+            "blood_group", "date_of_admission", "previous_class_marks_obtained",
+            "previous_class_overall_percentage", "previous_class_final_grade",
+            "class_id", "section_id"
+        ]
 
     # Handle transport validation (school only - business account required)
     if current_user.role == UserRole.SCHOOL and data.is_transport is not None:
@@ -1450,6 +1472,11 @@ def get_own_student_profile(
         "board": student.school.school_board if student.school else None,
         "class_name": student.classes.name if student.classes else None,
         "section_name": student.section.name if student.section else None,
+        "blood_group": student.blood_group,
+        "date_of_admission": student.date_of_admission,
+        "previous_class_marks_obtained": student.previous_class_marks_obtained,
+        "previous_class_overall_percentage": student.previous_class_overall_percentage,
+        "previous_class_final_grade": student.previous_class_final_grade,
         "created_at": student.created_at,
         "total_attendance": len(student.attendances) if student.attendances else 0,
         "total_exams": len(student.exam_data) if student.exam_data else 0,

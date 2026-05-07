@@ -28,6 +28,11 @@ class Student(Base):
     class_id = Column(Integer, ForeignKey("classes.id"))  #3
     section_id = Column(Integer, ForeignKey("sections.id"))  #4
     roll_no = Column(Integer, nullable=False)       #5
+    blood_group = Column(String(20), nullable=True)
+    date_of_admission = Column(Date, nullable=True)
+    previous_class_marks_obtained = Column(Integer, nullable=True)
+    previous_class_overall_percentage = Column(Float, nullable=True)
+    previous_class_final_grade = Column(String(20), nullable=True)
     is_transport = Column(Boolean, default=True)
 
     driver_id = Column(Integer, ForeignKey("transports.id"), nullable=True)
