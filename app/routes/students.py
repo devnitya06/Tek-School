@@ -158,6 +158,7 @@ def create_student(
             gender=data.gender,
             dob=data.dob,
             roll_no=data.roll_no,
+            registration_no=data.registration_no,
             blood_group=data.blood_group,
             date_of_admission=data.date_of_admission,
             previous_class_marks_obtained=data.previous_class_marks_obtained,
@@ -255,6 +256,7 @@ def create_student(
             "student_id": student.id,
             "user_id": user.id,
             "profile_pic_url": profile_pic_url,
+            "registration_no": student.registration_no,
             "blood_group": student.blood_group,
             "date_of_admission": student.date_of_admission,
             "previous_class_marks_obtained": student.previous_class_marks_obtained,
@@ -331,6 +333,7 @@ def add_parent_and_address(
         phone=data.parent.phone,
         email=data.parent.email,
         occupation=data.parent.occupation,
+        education=data.parent.education,
         organization=data.parent.organization,
         student_id=student_id
     )
@@ -839,6 +842,7 @@ def get_students(
             "student_id": student.id,
             "student_name": f"{student.first_name} {student.last_name}",
             "roll_no": student.roll_no,
+            "registration_no": student.registration_no,
             "class_id": student.class_id,
             "class_name": student.classes.name,
             "section_name": student.section.name,
@@ -1089,6 +1093,7 @@ def get_student(
         "last_name": student.last_name,
         "gender": student.gender,
         "dob": student.dob,
+        "registration_no": student.registration_no,
         "blood_group": student.blood_group,
         "date_of_admission": student.date_of_admission,
         "previous_class_marks_obtained": student.previous_class_marks_obtained,
@@ -1115,6 +1120,7 @@ def get_student(
             "phone": student.parent.phone,
             "email": student.parent.email,
             "occupation": student.parent.occupation,
+            "education": student.parent.education,
             "organization": student.parent.organization
         } if student.parent else None,
         "last_appeared_exam": (
@@ -1229,14 +1235,14 @@ def update_student(
     if current_user.role == UserRole.SCHOOL:
         allowed_fields = [
             "first_name", "last_name", "gender", "dob",
-            "blood_group", "date_of_admission", "previous_class_marks_obtained",
+            "registration_no", "blood_group", "date_of_admission", "previous_class_marks_obtained",
             "previous_class_overall_percentage", "previous_class_final_grade",
             "class_id", "section_id", "is_transport", "driver_id","pickup_point","pickup_time","drop_point","drop_time"
         ]
     else:
         allowed_fields = [
             "first_name", "last_name", "gender", "dob",
-            "blood_group", "date_of_admission", "previous_class_marks_obtained",
+            "registration_no", "blood_group", "date_of_admission", "previous_class_marks_obtained",
             "previous_class_overall_percentage", "previous_class_final_grade",
             "class_id", "section_id"
         ]
@@ -1468,6 +1474,7 @@ def get_own_student_profile(
         "profile_image": student.profile_image,
         "student_name": f"{student.first_name} {student.last_name}",
         "roll_no": student.roll_no,
+        "registration_no": student.registration_no,
         "school_name": student.school.school_name if student.school else None,
         "board": student.school.school_board if student.school else None,
         "class_name": student.classes.name if student.classes else None,
@@ -1505,6 +1512,7 @@ def get_own_student_profile(
             "phone": student.parent.phone,
             "email": student.parent.email,
             "occupation": student.parent.occupation,
+            "education": student.parent.education,
             "organization": student.parent.organization
         } if student.parent else None,
 

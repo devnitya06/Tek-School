@@ -99,6 +99,7 @@ class StudentCreateRequest(BaseModel):
     dob: date
     email: EmailStr
     roll_no: int
+    registration_no: Optional[str] = None
     class_id: int
     section_id: int
     select_class_id: Optional[int] = None
@@ -160,6 +161,7 @@ class ParentCreate(BaseModel):
     phone: str
     email: EmailStr
     occupation: Optional[str] = None
+    education: Optional[str] = None
     organization: Optional[str] = None
 
 class ParentWithAddressCreate(BaseModel):
@@ -174,6 +176,7 @@ class ParentUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     occupation: Optional[str] = None
+    education: Optional[str] = None
     organization: Optional[str] = None
 
 # ---------------- Address Base ----------------

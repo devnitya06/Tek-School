@@ -28,6 +28,7 @@ class Student(Base):
     class_id = Column(Integer, ForeignKey("classes.id"))  #3
     section_id = Column(Integer, ForeignKey("sections.id"))  #4
     roll_no = Column(Integer, nullable=False)       #5
+    registration_no = Column(String(50), nullable=True)
     blood_group = Column(String(20), nullable=True)
     date_of_admission = Column(Date, nullable=True)
     previous_class_marks_obtained = Column(Integer, nullable=True)
@@ -83,6 +84,7 @@ class Parent(Base):
     phone = Column(String(15), nullable=False)
     email = Column(String(100), nullable=False, unique=True)
     occupation = Column(String(100), nullable=True)
+    education = Column(String(150), nullable=True)
     organization = Column(String(150), nullable=True)
 
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False, unique=True)
