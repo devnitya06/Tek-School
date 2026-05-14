@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks,Query
 from sqlalchemy.orm import Session
-from app.core.security import get_password_hash
-from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest,SignupType
+from app.core.security import get_password_hash, verify_password
+from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest,SignupType,ChangePasswordRequest
+from app.core.dependencies import get_current_user
 from app.models.school import SchoolAccountType
 from app.db.session import get_db
 from app.models.users import User,Otp
@@ -88,7 +89,8 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 first_name=user_data.first_name,
                 last_name=user_data.last_name,
                 phone=user_data.phone,
-                email=user_data.email
+                email=user_data.email,
+                status_expiry_date=datetime.utcnow() + timedelta(days=1)
             )
             db.add(student_profile)
 
@@ -225,4 +227,17 @@ def resend_otp(data:ResendOtpRequest, db: Session = Depends(get_db)):
         )
 
     return {"detail": "A new OTP has been sent to your email."}
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect old password")
     
+    current_user.hashed_password = get_password_hash(data.new_password)
+    db.commit()
+
+    return {"detail": "Password updated successfully."}

@@ -3617,7 +3617,7 @@ def student_purchase_plan(
 
     # Deactivate old subscription
     db.query(StudentSubscription).filter(
-        StudentSubscription.student_id == student.id,
+        StudentSubscription.self_signed_student_id == student.id,
         StudentSubscription.is_current == True,
     ).update({"is_current": False})
 
@@ -3625,7 +3625,7 @@ def student_purchase_plan(
     end_date = start_date + timedelta(days=plan.validity_days)
 
     subscription = StudentSubscription(
-        student_id=student.id,
+        self_signed_student_id=student.id,
         plan_id=plan.id,
         start_date=start_date,
         end_date=end_date,
@@ -3637,7 +3637,7 @@ def student_purchase_plan(
     db.flush()
 
     payment = Payment(
-        student_id=student.id,
+        self_signed_student_id=student.id,
         subscription_id=subscription.id,
         amount=plan.amount,
         payment_status=PaymentStatus.PENDING,
@@ -4365,25 +4365,33 @@ def create_order(
 
     # ---------------- CREATE SUBSCRIPTION ----------------
     subscription = StudentSubscription(
-        student_id=student.id,
         plan_id=plan.id,
         start_date=datetime.utcnow(),
         end_date=datetime.utcnow(),  # will update after payment verify
         amount_paid=plan.amount,
         is_current=False,
     )
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        subscription.self_signed_student_id = student.id
+    else:
+        subscription.student_id = student.id
+
     db.add(subscription)
     db.commit()
     db.refresh(subscription)
 
     # ---------------- CREATE PAYMENT ----------------
     payment = Payment(
-        student_id=student.id,
         subscription_id=subscription.id,
         amount=plan.amount,
         payment_status=PaymentStatus.PENDING,
         gateway_order_id=razorpay_order["id"],
     )
+    if current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        payment.self_signed_student_id = student.id
+    else:
+        payment.student_id = student.id
+
     db.add(payment)
     db.commit()
 
@@ -4429,9 +4437,23 @@ def verify_payment(
     start_date = datetime.utcnow()
     end_date = start_date + timedelta(days=plan.validity_days)
 
-    db.query(StudentSubscription).filter(
-        StudentSubscription.student_id == subscription.student_id
-    ).update({"is_current": False})
+    if subscription.student_id:
+        db.query(StudentSubscription).filter(
+            StudentSubscription.student_id == subscription.student_id
+        ).update({"is_current": False})
+        student = db.query(Student).filter(Student.id == subscription.student_id).first()
+        if student:
+            student.status = StudentStatus.ACTIVE
+            student.status_expiry_date = end_date
+
+    if subscription.self_signed_student_id:
+        db.query(StudentSubscription).filter(
+            StudentSubscription.self_signed_student_id == subscription.self_signed_student_id
+        ).update({"is_current": False})
+        self_signed_student = db.query(SelfSignedStudent).filter(SelfSignedStudent.id == subscription.self_signed_student_id).first()
+        if self_signed_student:
+            self_signed_student.status = StudentStatus.ACTIVE
+            self_signed_student.status_expiry_date = end_date
 
     subscription.start_date = start_date
     subscription.end_date = end_date
