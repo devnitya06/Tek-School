@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
+# pyrefly: ignore [missing-import]
 from sqlalchemy import func, and_, or_
 from app.db.session import get_db
 from app.models.admin import StudentAdminExamData, SchoolClassSubject, AdminExam, ExamType

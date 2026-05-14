@@ -1470,36 +1470,120 @@ def get_teacher_pending_months(
     return result
 
 @router.get("/wallet")
-def get_wallet(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    teacher_id = current_user.teacher.id
+def get_wallet(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # ✅ Step 1: Role validation
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers allowed")
 
+    # ✅ Step 2: Try relationship first
+    teacher = current_user.teacher_profile
+
+    # 🔥 Step 3: Fallback (VERY IMPORTANT)
+    if not teacher:
+        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+
+    # ❌ Still not found → real issue
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found. Please contact admin."
+        )
+
+    teacher_id = teacher.id
+
+    # ✅ Step 4: Get wallet
     wallet = db.query(TeacherWallet).filter_by(teacher_id=teacher_id).first()
 
+    # ✅ Step 5: Default response
     if not wallet:
-        return {"balance": 0, "total_earned": 0, "level": 1}
+        return {
+            "teacher_id": teacher_id,
+            "balance": 0,
+            "total_earned": 0,
+            "level": 1
+        }
 
-    return wallet
+    return {
+        "teacher_id": teacher_id,
+        "balance": wallet.balance,
+        "total_earned": wallet.total_earned,
+        "level": wallet.level
+    }
 
 @router.get("/reward-history")
-def reward_history(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    teacher_id = current_user.teacher.id
+def reward_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # ✅ Step 1: Role check
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers allowed")
 
-    data = db.query(RewardTransaction).filter_by(
-        teacher_id=teacher_id
-    ).order_by(RewardTransaction.created_at.desc()).all()
+    # ✅ Step 2: Try relationship
+    teacher = current_user.teacher_profile
 
-    return data
+    # ✅ Step 3: Fallback to DB (important)
+    if not teacher:
+        teacher = db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+    # ❌ Still missing → real issue
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found"
+        )
+
+    teacher_id = teacher.id
+
+    # ✅ Step 4: Fetch reward history
+    data = (
+        db.query(RewardTransaction)
+        .filter(RewardTransaction.teacher_id == teacher_id)
+        .order_by(RewardTransaction.created_at.desc())
+        .all()
+    )
+
+    # ✅ Optional: clean response
+    return {
+        "teacher_id": teacher_id,
+        "total_records": len(data),
+        "rewards": data
+    }
 
 @router.post("/bank-account")
 def add_bank_account(
     payload: BankAccountSchema,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    teacher_id = current_user.teacher.id
+    # ✅ Role check
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers allowed")
+
+    # ✅ Get teacher safely
+    teacher = current_user.teacher_profile or db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher profile not found")
+
+    # ✅ Optional: prevent duplicate accounts (recommended)
+    existing = db.query(TeacherBankAccount).filter_by(
+        teacher_id=teacher.id,
+        account_number=payload.account_number
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Bank account already exists")
 
     account = TeacherBankAccount(
-        teacher_id=teacher_id,
+        teacher_id=teacher.id,
         **payload.dict()
     )
 
@@ -1513,28 +1597,58 @@ def request_withdraw(
     amount: int,
     bank_account_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    teacher_id = current_user.teacher.id
+    # ✅ Role check
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403, detail="Only teachers allowed")
 
-    wallet = db.query(TeacherWallet).filter_by(teacher_id=teacher_id).first()
+    # ✅ Get teacher safely
+    teacher = current_user.teacher_profile or db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher profile not found")
+
+    # ✅ Validate amount
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid withdrawal amount")
+
+    # ✅ Validate wallet
+    wallet = db.query(TeacherWallet).filter_by(
+        teacher_id=teacher.id
+    ).first()
+
+    if not wallet:
+        raise HTTPException(status_code=404, detail="Wallet not found")
 
     if wallet.balance < amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    # deduct immediately
+    # ✅ Validate bank account belongs to teacher
+    bank_account = db.query(TeacherBankAccount).filter_by(
+        id=bank_account_id,
+        teacher_id=teacher.id
+    ).first()
+
+    if not bank_account:
+        raise HTTPException(status_code=404, detail="Invalid bank account")
+
+    # ✅ Deduct balance
     wallet.balance -= amount
 
+    # ✅ Create withdrawal request
     withdraw = WithdrawalRequest(
-        teacher_id=teacher_id,
+        teacher_id=teacher.id,
         amount=amount,
         bank_account_id=bank_account_id
     )
-
     db.add(withdraw)
 
+    # ✅ Track transaction
     db.add(RewardTransaction(
-        teacher_id=teacher_id,
+        teacher_id=teacher.id,
         points=amount,
         type="WITHDRAW"
     ))

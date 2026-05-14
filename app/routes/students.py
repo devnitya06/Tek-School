@@ -176,7 +176,7 @@ def create_student(
             school_id=school_id,
             profile_image=profile_pic_url,
             status=StudentStatus.TRIAL,
-            status_expiry_date=datetime.utcnow() + timedelta(days=15)
+            status_expiry_date=datetime.utcnow() + timedelta(days=1)
         )
 
         db.add(student)
