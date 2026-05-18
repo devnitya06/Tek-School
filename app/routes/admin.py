@@ -152,6 +152,38 @@ def create_platform_staff(
     )
 
 
+@router.get(
+    "/platform-staff/",
+    response_model=List[StaffResponseWithCompensation],
+    summary="Get all platform staff (no school)",
+    description="Admin or superadmin only. Fetches all platform staff (school_id is null).",
+)
+def get_all_platform_staff(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+) -> List[StaffResponseWithCompensation]:
+    staff_members = (
+        db.query(Staff)
+        .options(joinedload(Staff.compensation))
+        .filter(Staff.school_id == None)
+        .all()
+    )
+
+    result = []
+    for staff in staff_members:
+        base = StaffResponse.model_validate(staff)
+        out = base.model_dump()
+        out["designation"] = staff_designation_for_display(staff)
+        result.append(
+            StaffResponseWithCompensation(
+                **out,
+                employee_compensation=serialize_employee_compensation(staff.compensation),
+            )
+        )
+    return result
+
+
+
 @router.put("/platform-staff/{staff_id}/permissions")
 def assign_platform_staff_permissions(
     staff_id: str,
@@ -218,8 +250,19 @@ def get_platform_staff_permissions(
 @router.get("/platform-staff/permissions/my")
 def get_my_platform_staff_permissions(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.STAFF)),
+    current_user: User = Depends(require_roles(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPERADMIN)),
 ):
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        # Admins and superadmins have full permissions implicitly
+        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+        staff_id = staff.id if staff else f"ADM-{current_user.id}"
+        staff_name = f"{staff.first_name} {staff.last_name}" if staff else current_user.name
+        return {
+            "staff_id": staff_id,
+            "staff_name": staff_name,
+            "permissions": [p.value for p in StaffPermissionType],
+        }
+
     staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
     if not staff:
         raise HTTPException(status_code=404, detail="Staff profile not found.")
@@ -230,6 +273,7 @@ def get_my_platform_staff_permissions(
         "staff_name": f"{staff.first_name} {staff.last_name}",
         "permissions": get_staff_permissions(staff.id, db),
     }
+
 
 
 @router.post("/account-credit/configuration/")
