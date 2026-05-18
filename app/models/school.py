@@ -82,6 +82,12 @@ class ExamStatus(str, Enum):
     fail = "fail"
 
 
+class AchievementLevel(str, Enum):
+    STATE = "state"
+    NATIONAL = "national"
+    INTERNATIONAL = "international"
+
+
 class SchoolAccountTypeDecorator(TypeDecorator):
     """Custom type decorator to handle case-insensitive enum mapping"""
 
@@ -268,6 +274,12 @@ class School(Base):
     )
     support_plus = relationship(
         "SupportPlus", back_populates="school", cascade="all, delete-orphan"
+    )
+    communication_sections = relationship(
+        "CommunicationSection", back_populates="school", cascade="all, delete-orphan"
+    )
+    achievements = relationship(
+        "Achievement", back_populates="school", cascade="all, delete-orphan"
     )
 
     def __init__(self, **kwargs):
@@ -1043,7 +1055,6 @@ class Worker(Base):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.id:
-            # Generate ID based on role prefix
             role_prefix_map = {
                 "technician": "TEC",
                 "plumber": "PLU",
@@ -1055,12 +1066,60 @@ class Worker(Base):
                 "welder": "WEL",
                 "mechanic": "MEC",
             }
-            # Get prefix from role (case-insensitive)
             role_lower = self.role.lower() if self.role else "WRK"
-            prefix = role_prefix_map.get(
-                role_lower, "WRK"
-            )  # Default to WRK if role not found
+            prefix = role_prefix_map.get(role_lower, "WRK")
             self.id = f"{prefix}-{str(uuid.uuid4().int)[:6]}"
+
+
+class CommunicationSection(Base):
+    """Model for storing school communication/contact information."""
+    __tablename__ = "communication_sections"
+
+    id = Column(String, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    contact_person_name = Column(String(255), nullable=False)
+    contact_numbers = Column(ARRAY(String), nullable=False)  # Multiple phone numbers
+    contact_time = Column(String(255), nullable=True)  # Example: "10 AM – 6 PM"
+    working_days = Column(String(255), nullable=True)  # Example: "Monday – Saturday"
+    website_url = Column(String(500), nullable=True)
+    facebook_page_link = Column(String(500), nullable=True)
+    instagram_page = Column(String(500), nullable=True)
+    twitter_x_page = Column(String(500), nullable=True)
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="communication_sections")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            self.id = f"COMM-{str(uuid.uuid4().int)[:6]}"
+
+
+class Achievement(Base):
+    """Model for storing school achievements."""
+    __tablename__ = "achievements"
+
+    id = Column(String, primary_key=True, index=True)
+    school_id = Column(String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    achievement_name = Column(String(255), nullable=False)
+    achievement_level = Column(SQLEnum(AchievementLevel), nullable=False)
+    date_of_achievement = Column(Date, nullable=False)
+    description = Column(Text, nullable=True)  # Max 150 words
+    achievement_images = Column(ARRAY(String), nullable=True)  # URLs to images stored in S3
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    school = relationship("School", back_populates="achievements")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.id:
+            self.id = f"ACHV-{str(uuid.uuid4().int)[:6]}"
 
 
 class PaymentRecord(Base):

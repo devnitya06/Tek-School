@@ -1016,3 +1016,115 @@ class SchoolHolidayResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Communication Section Schemas
+class CommunicationSectionCreate(BaseModel):
+    contact_person_name: str = Field(..., max_length=255, description="Name of contact person")
+    contact_numbers: List[str] = Field(..., min_length=1, description="List of phone numbers")
+    contact_time: Optional[str] = Field(None, max_length=255, description="Contact hours, e.g., 10 AM – 6 PM")
+    working_days: Optional[str] = Field(None, max_length=255, description="Working days, e.g., Monday – Saturday")
+    website_url: Optional[HttpUrl] = Field(None, description="School website URL")
+    facebook_page_link: Optional[HttpUrl] = Field(None, description="Facebook page URL")
+    instagram_page: Optional[HttpUrl] = Field(None, description="Instagram page URL")
+    twitter_x_page: Optional[HttpUrl] = Field(None, description="Twitter/X page URL")
+
+    @field_validator("contact_numbers")
+    @classmethod
+    def validate_phone_numbers(cls, v):
+        if not v:
+            raise ValueError("At least one phone number is required")
+        return [str(phone).strip() for phone in v if phone]
+
+
+class CommunicationSectionUpdate(BaseModel):
+    contact_person_name: Optional[str] = Field(None, max_length=255)
+    contact_numbers: Optional[List[str]] = Field(None, min_length=1)
+    contact_time: Optional[str] = Field(None, max_length=255)
+    working_days: Optional[str] = Field(None, max_length=255)
+    website_url: Optional[HttpUrl] = None
+    facebook_page_link: Optional[HttpUrl] = None
+    instagram_page: Optional[HttpUrl] = None
+    twitter_x_page: Optional[HttpUrl] = None
+
+
+class CommunicationSectionResponse(BaseModel):
+    id: str
+    school_id: str
+    contact_person_name: str
+    contact_numbers: List[str]
+    contact_time: Optional[str] = None
+    working_days: Optional[str] = None
+    website_url: Optional[str] = None
+    facebook_page_link: Optional[str] = None
+    instagram_page: Optional[str] = None
+    twitter_x_page: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Achievement Schemas
+class AchievementCreate(BaseModel):
+    achievement_name: str = Field(..., max_length=255, description="Name of the achievement")
+    achievement_level: Literal["state", "national", "international"] = Field(
+        ..., description="Level of achievement"
+    )
+    date_of_achievement: date = Field(..., description="Date when achievement was received")
+    description: Optional[str] = Field(None, description="Description (max 150 words)")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v:
+            word_count = len(v.split())
+            if word_count > 150:
+                raise ValueError("Description must not exceed 150 words")
+        return v
+
+
+class AchievementUpdate(BaseModel):
+    achievement_name: Optional[str] = Field(None, max_length=255)
+    achievement_level: Optional[Literal["state", "national", "international"]] = None
+    date_of_achievement: Optional[date] = None
+    description: Optional[str] = Field(None)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v:
+            word_count = len(v.split())
+            if word_count > 150:
+                raise ValueError("Description must not exceed 150 words")
+        return v
+
+
+class AchievementResponse(BaseModel):
+    id: str
+    school_id: str
+    achievement_name: str
+    achievement_level: str
+    date_of_achievement: date
+    description: Optional[str] = None
+    achievement_images: Optional[List[str]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AchievementListResponse(BaseModel):
+    id: str
+    school_id: str
+    achievement_name: str
+    achievement_level: str
+    date_of_achievement: date
+    description: Optional[str] = None
+    achievement_images: Optional[List[str]] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
