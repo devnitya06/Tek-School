@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     "https://tek-school-admin.vercel.app",
     "https://tek-school-teacher.vercel.app",
     "https://vidya-wings.vercel.app",
-    "https://student.beingideal.com/signin"
+    "https://student.beingideal.com/signin",
     "*"
    ]
     class Config:
