@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers, exams, business_inquiry
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers, exams, business_inquiry, progress_reports, academic_results
 from app.core.config import settings
 from app.db.session import (
     create_tables,
@@ -14,6 +14,7 @@ from app.db.session import (
     ensure_staff_teacher_boss_columns,
     ensure_school_settlement_schema,
     ensure_worker_payment_settlement_columns,
+    ensure_academic_results_tables,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -38,6 +39,8 @@ app.include_router(workers.router, prefix="/worker", tags=["Workers"])
 app.include_router(selfsignedstudents.router, prefix="/api", tags=["SelfSignedStudents"])
 app.include_router(exams.router,prefix="/exam",tags=["Exam"])
 app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business Inquiry"])
+app.include_router(progress_reports.router, prefix="/progress-reports", tags=["Progress Reports"])
+app.include_router(academic_results.router, prefix="/academic-results", tags=["Academic Results"])
 
 @app.on_event("startup")
 def on_startup():
@@ -53,6 +56,7 @@ def on_startup():
         ensure_staff_teacher_boss_columns()
         ensure_school_settlement_schema()
         ensure_worker_payment_settlement_columns()
+        ensure_academic_results_tables()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 
