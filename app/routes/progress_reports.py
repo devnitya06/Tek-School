@@ -177,8 +177,8 @@ def list_student_progress_reports(
     
     query = db.query(ProgressReport).filter(ProgressReport.student_id == student_id)
     
-    # If student or parent, only show published reports
-    if current_user.role in [UserRole.STUDENT, UserRole.PARENT]:
+    # If student, only show published reports
+    if current_user.role == UserRole.STUDENT:
         query = query.filter(ProgressReport.status == ProgressReportStatus.PUBLISHED)
 
     return query.order_by(desc(ProgressReport.created_at)).all()
