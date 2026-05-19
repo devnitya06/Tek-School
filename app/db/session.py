@@ -124,6 +124,11 @@ def ensure_academic_results_tables():
     academic_result_sections.create(bind=engine, checkfirst=True)
     AcademicStudentResult.__table__.create(bind=engine, checkfirst=True)
 
+def ensure_progress_report_tables():
+    """Ensure progress report tables exist."""
+    from app.models.progress_reports import ProgressReport
+    ProgressReport.__table__.create(bind=engine, checkfirst=True)
+
 
 def ensure_attendance_verified_at_column():
     """Teacher/staff attendance approval timestamp (set when is_verified becomes true)."""
