@@ -221,6 +221,16 @@ async def update_school_profile(
             school.school_other_email = data.school_other_email
         if data.school_location is not None:
             school.school_location = data.school_location
+        if data.institution_categories is not None:
+            school.institution_categories = data.institution_categories
+        if data.have_digital_board is not None:
+            school.have_digital_board = data.have_digital_board
+        if data.have_cctv_in_campus is not None:
+            school.have_cctv_in_campus = data.have_cctv_in_campus
+        if data.have_scholarship_opportunities is not None:
+            school.have_scholarship_opportunities = data.have_scholarship_opportunities
+        if data.have_extra_curricular_activities is not None:
+            school.have_extra_curricular_activities = data.have_extra_curricular_activities
         if data.total_teachers is not None:
             school.total_teachers = data.total_teachers
         if data.total_students is not None:
@@ -311,6 +321,11 @@ async def update_school_profile(
             "created_at": school.created_at,
             "school_other_email": school.school_other_email,
             "school_location": school.school_location,
+            "institution_categories": school.institution_categories,
+            "have_digital_board": school.have_digital_board,
+            "have_cctv_in_campus": school.have_cctv_in_campus,
+            "have_scholarship_opportunities": school.have_scholarship_opportunities,
+            "have_extra_curricular_activities": school.have_extra_curricular_activities,
             "total_teachers": school.total_teachers,
             "total_students": school.total_students,
             "class_from": school.class_from,
@@ -712,6 +727,11 @@ async def get_school_profile(
         "created_at": school.created_at,
         "school_other_email": school.school_other_email,
         "school_location": school.school_location,
+        "institution_categories": school.institution_categories,
+        "have_digital_board": school.have_digital_board,
+        "have_cctv_in_campus": school.have_cctv_in_campus,
+        "have_scholarship_opportunities": school.have_scholarship_opportunities,
+        "have_extra_curricular_activities": school.have_extra_curricular_activities,
         "total_teachers": school.total_teachers,
         "total_students": school.total_students,
         "class_from": school.class_from,
@@ -9139,6 +9159,10 @@ def create_team_member(
     ),
     name: str = Form(..., description="Team member name"),
     designation: Optional[str] = Form(None),
+    phone_number: Optional[str] = Form(None),
+    email_id: Optional[str] = Form(None),
+    years_of_experience: Optional[int] = Form(None),
+    highest_qualification: Optional[str] = Form(None),
     member_story: Optional[str] = Form(None),
     profile_picture: Optional[UploadFile] = File(
         None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"
@@ -9176,6 +9200,10 @@ def create_team_member(
         school_id=school.id,
         name=name.strip(),
         designation=designation.strip() if designation else None,
+        phone_number=phone_number.strip() if phone_number else None,
+        email_id=email_id.strip() if email_id else None,
+        years_of_experience=years_of_experience,
+        highest_qualification=highest_qualification.strip() if highest_qualification else None,
         member_story=member_story.strip() if member_story else None,
         profile_picture=profile_picture_url,
     )
@@ -9277,14 +9305,17 @@ def get_team_member(
 
 @router.patch("/team-members/{id}/", response_model=SchoolTeamMemberResponse)
 @router.patch("/team-members/{id}", response_model=SchoolTeamMemberResponse)
-def update_team_member(
+async def update_team_member(
     id: int,
     name: Optional[str] = Form(None),
     designation: Optional[str] = Form(None),
+    phone_number: Optional[str] = Form(None),
+    email_id: Optional[str] = Form(None),
+    years_of_experience: Optional[int] = Form(None),
+    highest_qualification: Optional[str] = Form(None),
     member_story: Optional[str] = Form(None),
-    profile_picture: Optional[UploadFile] = File(
-        None, description="Profile picture image file (jpg, jpeg, png, gif, max 5MB)"
-    ),
+    profile_picture: Optional[UploadFile] = File(None),
+    request: Request = None,
     current_user: User = Depends(
         require_roles_allow_listing_school(
             UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
@@ -9292,34 +9323,97 @@ def update_team_member(
     ),
     db: Session = Depends(get_db),
 ):
-    """Update team member. School users can only update their own. Use multipart/form-data; send only fields to change; profile_picture is a file upload."""
     obj = db.query(SchoolTeamMember).filter(SchoolTeamMember.id == id).first()
+
     if not obj:
         raise HTTPException(status_code=404, detail="Team member not found.")
+
     if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
+
         if not school or obj.school_id != school.id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only update your own school's team members.",
-            )
+            raise HTTPException(status_code=403, detail="Permission denied")
+
+    def clean(v):
+        return v.strip() if isinstance(v, str) and v else None
+
+    updated_fields = []
 
     if name is not None:
-        obj.name = name.strip()
+        obj.name = clean(name)
+        updated_fields.append("name")
+
     if designation is not None:
-        obj.designation = designation.strip() if designation else None
+        obj.designation = clean(designation)
+        updated_fields.append("designation")
+
+    if email_id is not None:
+        obj.email_id = clean(email_id)
+        updated_fields.append("email_id")
+
     if member_story is not None:
-        obj.member_story = member_story.strip() if member_story else None
+        obj.member_story = clean(member_story)
+        updated_fields.append("member_story")
+
+    if phone_number is not None:
+        obj.phone_number = clean(phone_number)
+        updated_fields.append("phone_number")
+
+    if highest_qualification is not None:
+        obj.highest_qualification = clean(highest_qualification)
+        updated_fields.append("highest_qualification")
+
+    if years_of_experience is not None:
+        obj.years_of_experience = years_of_experience
+        updated_fields.append("years_of_experience")
+
+    if not updated_fields and request:
+        try:
+            payload = await request.json()
+
+            for key, value in payload.items():
+                if value is not None and key != "profile_picture":
+                    if key == "name":
+                        obj.name = clean(value)
+
+                    elif key == "designation":
+                        obj.designation = clean(value)
+
+                    elif key == "email_id":
+                        obj.email_id = clean(value)
+
+                    elif key == "phone_number":
+                        obj.phone_number = clean(value)
+
+                    elif key == "member_story":
+                        obj.member_story = clean(value)
+
+                    elif key == "highest_qualification":
+                        obj.highest_qualification = clean(value)
+
+                    elif key == "years_of_experience":
+                        obj.years_of_experience = value
+
+                    updated_fields.append(key)
+
+        except Exception:
+            pass
+
     if profile_picture and profile_picture.filename:
         try:
             obj.profile_picture = upload_to_s3(
-                profile_picture, f"schools/{obj.school_id}/team_members"
+                profile_picture,
+                f"schools/{obj.school_id}/team_members",
             )
+
+            updated_fields.append("profile_picture")
+
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     db.commit()
     db.refresh(obj)
+
     return obj
 
 
@@ -9369,6 +9463,8 @@ def create_excellent_student(
     class_name: Optional[str] = Form(None),
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
+    total_mark: Optional[float] = Form(None),
+    secured_percentage: Optional[float] = Form(None),
     student_photo: Optional[UploadFile] = File(
         None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"
     ),
@@ -9408,6 +9504,8 @@ def create_excellent_student(
         class_name=class_name.strip() if class_name else None,
         batch_of_student=batch_of_student.strip() if batch_of_student else None,
         secure_mark=secure_mark,
+        total_mark=total_mark,
+        secured_percentage=secured_percentage,
         student_photo=student_photo_url,
     )
     db.add(obj)
@@ -9513,6 +9611,8 @@ def update_excellent_student(
     class_name: Optional[str] = Form(None),
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
+    total_mark: Optional[float] = Form(None),
+    secured_percentage: Optional[float] = Form(None),
     student_photo: Optional[UploadFile] = File(
         None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"
     ),
@@ -9547,6 +9647,10 @@ def update_excellent_student(
         obj.batch_of_student = batch_of_student.strip() if batch_of_student else None
     if secure_mark is not None:
         obj.secure_mark = secure_mark
+    if total_mark is not None:
+        obj.total_mark = total_mark
+    if secured_percentage is not None:
+        obj.secured_percentage = secured_percentage
     if student_photo and student_photo.filename:
         try:
             obj.student_photo = upload_to_s3(
@@ -10772,7 +10876,13 @@ async def create_communication_section(
     data: CommunicationSectionCreate,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
+    ),
 ):
     """Create a new communication section for a school."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -10835,7 +10945,13 @@ def update_communication_section(
     data: CommunicationSectionUpdate,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
+    ),
 ):
     """Update communication section for a school."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -10879,7 +10995,13 @@ def update_communication_section(
 def delete_communication_section(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
+    ),
 ):
     """Delete communication section for a school."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -10922,7 +11044,11 @@ async def create_achievement(
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(UserRole.SCHOOL, UserRole.ADMIN)
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
     ),
 ):
     """
@@ -11077,17 +11203,29 @@ def list_achievements_by_school(
 
 @router.get("/achievements", response_model=List[AchievementListResponse])
 def list_achievements(
-    school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
+    school_id: Optional[str] = Query(None, description="School ID is optional"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
+    ),
 ):
-    """List all achievements for authenticated user's school. Auth required."""
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
-    
+    """List achievements for current user's school."""
+
+    if school_id:
+        target_school_id = school_id
+    else:
+        target_school_id = current_user.school[0].id
+
     achievements = db.query(Achievement).filter(
-        Achievement.school_id == school.id
-    ).order_by(Achievement.date_of_achievement.desc()).all()
-    
+        Achievement.school_id == target_school_id
+    ).order_by(
+        Achievement.date_of_achievement.desc()
+    ).all()
+
     return achievements
 
 
@@ -11108,12 +11246,19 @@ async def update_achievement(
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(UserRole.SCHOOL, UserRole.ADMIN)
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL,
+            UserRole.ADMIN,
+            UserRole.SUPERADMIN
+        )
     ),
 ):
     """
     Update an achievement.
-    Can replace achievement images.
+    Handles:
+    - Existing image retention
+    - Image deletion
+    - New image upload
     """
 
     # Get school
@@ -11147,16 +11292,24 @@ async def update_achievement(
             detail="Achievement not found."
         )
 
-    # Process images
+    # =====================================================
+    # IMAGE HANDLING
+    # =====================================================
+
+    # Existing images sent from frontend
+    final_images = parsed_data.existing_images or []
+
+    # Upload new files
     if images:
 
-        if len(images) > 10:
+        total_images = len(final_images) + len(images)
+
+        if total_images > 10:
             raise HTTPException(
                 status_code=400,
                 detail="Maximum 10 images allowed per achievement"
             )
 
-        uploaded_urls = []
         errors = []
 
         for image in images:
@@ -11173,13 +11326,13 @@ async def update_achievement(
                     )
                     continue
 
-                # Upload image
+                # Upload to S3
                 url = upload_to_s3(
                     image,
                     f"schools/{school.id}/achievements"
                 )
 
-                uploaded_urls.append(url)
+                final_images.append(url)
 
             except ValueError as e:
                 errors.append(
@@ -11191,12 +11344,21 @@ async def update_achievement(
                     f"Failed to upload {image.filename}: {str(e)}"
                 )
 
-        # Replace images
-        achievement.achievement_images = (
-            uploaded_urls if uploaded_urls else None
-        )
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail=errors
+            )
 
-    # Update fields
+    # Save final image list
+    achievement.achievement_images = (
+        final_images if final_images else None
+    )
+
+    # =====================================================
+    # UPDATE FIELDS
+    # =====================================================
+
     if parsed_data.achievement_name is not None:
         achievement.achievement_name = (
             parsed_data.achievement_name.strip()
@@ -11218,6 +11380,10 @@ async def update_achievement(
             if parsed_data.description
             else None
         )
+
+    # =====================================================
+    # SAVE
+    # =====================================================
 
     try:
         db.commit()
@@ -11244,7 +11410,11 @@ def delete_achievement(
     achievement_id: str,
     school_id: Optional[str] = Query(None, description="Required when accessing as admin"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+        )
+    ),
 ):
     """Delete an achievement."""
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -11262,6 +11432,6 @@ def delete_achievement(
         db.commit()
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Database error: {str(e.__cause__)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
     
     return None

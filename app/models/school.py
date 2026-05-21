@@ -186,6 +186,11 @@ class School(Base):
     created_at = Column(DateTime, default=func.now())
 
     school_other_email = Column(String, nullable=True)
+    institution_categories = Column(ARRAY(String), nullable=True)
+    have_digital_board = Column(Boolean, nullable=True, default=False)
+    have_cctv_in_campus = Column(Boolean, nullable=True, default=False)
+    have_scholarship_opportunities = Column(Boolean, nullable=True, default=False)
+    have_extra_curricular_activities = Column(Boolean, nullable=True, default=False)
     school_location = Column(String, nullable=True)
     total_teachers = Column(Integer, nullable=True)
     total_students = Column(Integer, nullable=True)
@@ -1204,6 +1209,10 @@ class SchoolTeamMember(Base):
     )
     name = Column(String(200), nullable=False)
     designation = Column(String(200), nullable=True)
+    phone_number = Column(String(20), nullable=True)
+    email_id = Column(String(255), nullable=True)
+    years_of_experience = Column(Integer, nullable=True)
+    highest_qualification = Column(String(255), nullable=True)
     member_story = Column(Text, nullable=True)
     profile_picture = Column(String(500), nullable=True)  # URL
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -1231,6 +1240,8 @@ class ExcellentStudent(Base):
     class_name = Column(String(100), nullable=True)
     batch_of_student = Column(String(100), nullable=True)
     secure_mark = Column(Float, nullable=True)
+    total_mark = Column(Float, nullable=True)
+    secured_percentage = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
