@@ -23,6 +23,8 @@ from app.models.teachers import *
 from app.models.students import *
 from app.models.admin import *
 from app.models.staff import *
+from app.models.progress_reports import *
+from app.models.academic_results import *
 
 def create_tables():
     """Create all tables that don't exist yet"""
@@ -114,6 +116,18 @@ def ensure_staff_compensation_tables():
     """
     EmployeeCompensation.__table__.create(bind=engine, checkfirst=True)
     DesignationCompensationTemplate.__table__.create(bind=engine, checkfirst=True)
+
+def ensure_academic_results_tables():
+    """Ensure academic results tables exist."""
+    from app.models.academic_results import AcademicResultDefinition, AcademicStudentResult, academic_result_sections
+    AcademicResultDefinition.__table__.create(bind=engine, checkfirst=True)
+    academic_result_sections.create(bind=engine, checkfirst=True)
+    AcademicStudentResult.__table__.create(bind=engine, checkfirst=True)
+
+def ensure_progress_report_tables():
+    """Ensure progress report tables exist."""
+    from app.models.progress_reports import ProgressReport
+    ProgressReport.__table__.create(bind=engine, checkfirst=True)
 
 
 def ensure_attendance_verified_at_column():
