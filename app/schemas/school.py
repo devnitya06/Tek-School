@@ -36,6 +36,11 @@ class SchoolProfileBase(BaseModel):
     principal_designation: Optional[str] = None
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
+    institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    have_digital_board: Optional[bool] = False
+    have_cctv_in_campus: Optional[bool] = False
+    have_scholarship_opportunities: Optional[bool] = False
+    have_extra_curricular_activities: Optional[bool] = False
 
 
 class SchoolProfileCreate(SchoolProfileBase):
@@ -48,6 +53,11 @@ class SchoolProfileOut(SchoolProfileBase):
     school_type: Optional[str] = None
     school_medium: Optional[str] = None
     school_board: Optional[str] = None
+    institution_categories: Optional[List[str]] = None
+    have_digital_board: Optional[bool] = None
+    have_cctv_in_campus: Optional[bool] = None
+    have_scholarship_opportunities: Optional[bool] = None
+    have_extra_curricular_activities: Optional[bool] = None
 
     model_config = {"from_attributes": True, "arbitrary_types_allowed": True}
 
@@ -73,6 +83,11 @@ class SchoolProfileUpdate(BaseModel):
     principal_designation: Optional[str] = None
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
+    institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    have_digital_board: Optional[bool] = None
+    have_cctv_in_campus: Optional[bool] = None
+    have_scholarship_opportunities: Optional[bool] = None
+    have_extra_curricular_activities: Optional[bool] = None
     school_other_email: Optional[str] = None
     school_location: Optional[str] = None
     total_teachers: Optional[int] = None
@@ -836,6 +851,10 @@ class SchoolTeamMemberCreate(BaseModel):
     designation: Optional[str] = None
     member_story: Optional[str] = None
     profile_picture: Optional[str] = None  # URL
+    phone_number: Optional[str] = None
+    email_id: Optional[str] = None
+    years_of_experience: Optional[int] = None
+    highest_qualification: Optional[str] = None
 
 
 class SchoolTeamMemberUpdate(BaseModel):
@@ -843,6 +862,10 @@ class SchoolTeamMemberUpdate(BaseModel):
     designation: Optional[str] = None
     member_story: Optional[str] = None
     profile_picture: Optional[str] = None
+    phone_number: Optional[str] = None
+    email_id: Optional[str] = None
+    years_of_experience: Optional[int] = None
+    highest_qualification: Optional[str] = None
 
 
 class SchoolTeamMemberResponse(BaseModel):
@@ -852,6 +875,10 @@ class SchoolTeamMemberResponse(BaseModel):
     designation: Optional[str] = None
     member_story: Optional[str] = None
     profile_picture: Optional[str] = None
+    phone_number: Optional[str] = None
+    email_id: Optional[str] = None
+    years_of_experience: Optional[int] = None
+    highest_qualification: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -868,6 +895,8 @@ class ExcellentStudentCreate(BaseModel):
     class_name: Optional[str] = None
     batch_of_student: Optional[str] = None
     secure_mark: Optional[float] = Field(None, ge=0, le=100)
+    total_mark: Optional[float] = None
+    secured_percentage: Optional[float] = Field(None, ge=0, le=100)
 
 
 class ExcellentStudentUpdate(BaseModel):
@@ -878,6 +907,8 @@ class ExcellentStudentUpdate(BaseModel):
     class_name: Optional[str] = None
     batch_of_student: Optional[str] = None
     secure_mark: Optional[float] = Field(None, ge=0, le=100)
+    total_mark: Optional[float] = None
+    secured_percentage: Optional[float] = Field(None, ge=0, le=100)
 
 
 class ExcellentStudentResponse(BaseModel):
@@ -891,6 +922,8 @@ class ExcellentStudentResponse(BaseModel):
     class_name: Optional[str] = None
     batch_of_student: Optional[str] = None
     secure_mark: Optional[float] = None
+    total_mark: Optional[float] = None
+    secured_percentage: Optional[float] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -1013,6 +1046,118 @@ class SchoolHolidayResponse(BaseModel):
     date: date
     file: Optional[str] = None
     description: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Communication Section Schemas
+class CommunicationSectionCreate(BaseModel):
+    contact_person_name: str = Field(..., max_length=255, description="Name of contact person")
+    contact_numbers: List[str] = Field(..., min_length=1, description="List of phone numbers")
+    contact_time: Optional[str] = Field(None, max_length=255, description="Contact hours, e.g., 10 AM – 6 PM")
+    working_days: Optional[str] = Field(None, max_length=255, description="Working days, e.g., Monday – Saturday")
+    website_url: Optional[HttpUrl] = Field(None, description="School website URL")
+    facebook_page_link: Optional[HttpUrl] = Field(None, description="Facebook page URL")
+    instagram_page: Optional[HttpUrl] = Field(None, description="Instagram page URL")
+    twitter_x_page: Optional[HttpUrl] = Field(None, description="Twitter/X page URL")
+
+    @field_validator("contact_numbers")
+    @classmethod
+    def validate_phone_numbers(cls, v):
+        if not v:
+            raise ValueError("At least one phone number is required")
+        return [str(phone).strip() for phone in v if phone]
+
+
+class CommunicationSectionUpdate(BaseModel):
+    contact_person_name: Optional[str] = Field(None, max_length=255)
+    contact_numbers: Optional[List[str]] = Field(None, min_length=1)
+    contact_time: Optional[str] = Field(None, max_length=255)
+    working_days: Optional[str] = Field(None, max_length=255)
+    website_url: Optional[HttpUrl] = None
+    facebook_page_link: Optional[HttpUrl] = None
+    instagram_page: Optional[HttpUrl] = None
+    twitter_x_page: Optional[HttpUrl] = None
+
+
+class CommunicationSectionResponse(BaseModel):
+    id: str
+    school_id: str
+    contact_person_name: str
+    contact_numbers: List[str]
+    contact_time: Optional[str] = None
+    working_days: Optional[str] = None
+    website_url: Optional[str] = None
+    facebook_page_link: Optional[str] = None
+    instagram_page: Optional[str] = None
+    twitter_x_page: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Achievement Schemas
+class AchievementCreate(BaseModel):
+    achievement_name: str = Field(..., max_length=255, description="Name of the achievement")
+    achievement_level: Literal["state", "national", "international"] = Field(
+        ..., description="Level of achievement"
+    )
+    date_of_achievement: date = Field(..., description="Date when achievement was received")
+    description: Optional[str] = Field(None, description="Description (max 150 words)")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v:
+            word_count = len(v.split())
+            if word_count > 150:
+                raise ValueError("Description must not exceed 150 words")
+        return v
+
+
+class AchievementUpdate(BaseModel):
+    achievement_name: Optional[str] = Field(None, max_length=255)
+    achievement_level: Optional[Literal["state", "national", "international"]] = None
+    date_of_achievement: Optional[date] = None
+    description: Optional[str] = Field(None)
+    existing_images: Optional[List[str]] = []
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v:
+            word_count = len(v.split())
+            if word_count > 150:
+                raise ValueError("Description must not exceed 150 words")
+        return v
+
+
+class AchievementResponse(BaseModel):
+    id: str
+    school_id: str
+    achievement_name: str
+    achievement_level: str
+    date_of_achievement: date
+    description: Optional[str] = None
+    achievement_images: Optional[List[str]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AchievementListResponse(BaseModel):
+    id: str
+    school_id: str
+    achievement_name: str
+    achievement_level: str
+    date_of_achievement: date
+    description: Optional[str] = None
+    achievement_images: Optional[List[str]] = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
