@@ -1555,147 +1555,813 @@ def reward_history(
         "rewards": data
     }
 
+
 @router.post("/bank-account")
-def add_bank_account(
+def add_teacher_bank_account(
     payload: BankAccountSchema,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Role check
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403, detail="Only teachers allowed")
 
-    # ✅ Get teacher safely
-    teacher = current_user.teacher_profile or db.query(Teacher).filter(
-        Teacher.user_id == current_user.id
-    ).first()
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(status_code=403)
+
+    teacher = current_user.teacher_profile
 
     if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher profile not found")
+        raise HTTPException(status_code=404)
 
-    # ✅ Optional: prevent duplicate accounts (recommended)
-    existing = db.query(TeacherBankAccount).filter_by(
-        teacher_id=teacher.id,
-        account_number=payload.account_number
+    if payload.account_number != payload.re_account_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Account numbers do not match"
+        )
+
+    existing = db.query(TeacherBankAccount).filter(
+        TeacherBankAccount.teacher_id == teacher.id,
+        TeacherBankAccount.account_number == payload.account_number
     ).first()
 
     if existing:
-        raise HTTPException(status_code=400, detail="Bank account already exists")
+        raise HTTPException(
+            status_code=400,
+            detail="Bank account already exists"
+        )
+
+    if payload.is_default:
+        db.query(TeacherBankAccount).filter(
+            TeacherBankAccount.teacher_id == teacher.id
+        ).update({"is_default": False})
 
     account = TeacherBankAccount(
         teacher_id=teacher.id,
-        **payload.dict()
+        account_holder_name=payload.account_holder_name,
+        account_number=payload.account_number,
+        ifsc_code=payload.ifsc_code,
+        bank_name=payload.bank_name,
+        is_default=payload.is_default
     )
 
     db.add(account)
     db.commit()
 
-    return {"message": "Account added"}
+    return {"message": "Bank account added successfully"}
 
-@router.post("/teacher/withdraw")
-def request_withdraw(
-    amount: int,
-    bank_account_id: int,
+@router.get("/bank-account/{account_id}")
+def get_bank_account(
+    account_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Role check
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403, detail="Only teachers allowed")
 
-    # ✅ Get teacher safely
+    # ✅ Only teachers allowed
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only teachers allowed"
+        )
+
+    # ✅ Get teacher
     teacher = current_user.teacher_profile or db.query(Teacher).filter(
         Teacher.user_id == current_user.id
     ).first()
 
     if not teacher:
-        raise HTTPException(status_code=404, detail="Teacher profile not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found"
+        )
 
-    # ✅ Validate amount
+    # ✅ Get account
+    account = db.query(TeacherBankAccount).filter(
+        TeacherBankAccount.id == account_id,
+        TeacherBankAccount.teacher_id == teacher.id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
+
+    return {
+        "message": "Bank account fetched successfully",
+        "data": {
+            "id": account.id,
+            "account_holder_name": account.account_holder_name,
+            "account_number": account.account_number,
+            "bank_name": account.bank_name,
+            "ifsc_code": account.ifsc_code,
+            "is_default": account.is_default,
+            "created_at": account.created_at
+        }
+    }
+
+
+# ==============================
+# GET ALL BANK ACCOUNTS
+# ==============================
+@router.get("/bank-accounts")
+def get_bank_account_list(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    # ✅ Only teachers allowed
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only teachers allowed"
+        )
+
+    # ✅ Get teacher
+    teacher = current_user.teacher_profile or db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found"
+        )
+
+    # ✅ Get all accounts
+    accounts = db.query(TeacherBankAccount).filter(
+        TeacherBankAccount.teacher_id == teacher.id
+    ).order_by(TeacherBankAccount.id.desc()).all()
+
+    return {
+        "message": "Bank accounts fetched successfully",
+        "total_accounts": len(accounts),
+        "data": [
+            {
+                "id": account.id,
+                "account_holder_name": account.account_holder_name,
+                "account_number": account.account_number,
+                "bank_name": account.bank_name,
+                "ifsc_code": account.ifsc_code,
+                "is_default": account.is_default,
+                "created_at": account.created_at
+            }
+            for account in accounts
+        ]
+    }
+
+@router.post("/withdraw")
+def request_withdraw(
+    payload: WithdrawRequestSchema,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    # =====================================
+    # ROLE CHECK
+    # =====================================
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only teachers allowed"
+        )
+
+    # =====================================
+    # GET TEACHER
+    # =====================================
+    teacher = current_user.teacher_profile or db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found"
+        )
+    amount = payload.amount
+    bank_account_id = payload.bank_account_id
+
+    # =====================================
+    # VALIDATE AMOUNT
+    # =====================================
     if amount <= 0:
-        raise HTTPException(status_code=400, detail="Invalid withdrawal amount")
+        raise HTTPException(
+            status_code=400,
+            detail="Withdrawal amount must be greater than 0"
+        )
 
-    # ✅ Validate wallet
-    wallet = db.query(TeacherWallet).filter_by(
-        teacher_id=teacher.id
+    # =====================================
+    # GET WALLET
+    # =====================================
+    wallet = db.query(TeacherWallet).filter(
+        TeacherWallet.teacher_id == teacher.id
     ).first()
 
     if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Wallet not found"
+        )
 
-    if wallet.balance < amount:
-        raise HTTPException(status_code=400, detail="Insufficient balance")
+    # =====================================
+    # CHECK AVAILABLE BALANCE
+    # =====================================
+    available_balance = wallet.balance or 0
 
-    # ✅ Validate bank account belongs to teacher
-    bank_account = db.query(TeacherBankAccount).filter_by(
-        id=bank_account_id,
-        teacher_id=teacher.id
+    if amount > available_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient balance. Available balance is {available_balance}"
+        )
+
+    # =====================================
+    # VALIDATE BANK ACCOUNT
+    # Ensure account belongs to teacher
+    # =====================================
+    bank_account = db.query(TeacherBankAccount).filter(
+        and_(
+            TeacherBankAccount.id == bank_account_id,
+            TeacherBankAccount.teacher_id == teacher.id
+        )
     ).first()
 
     if not bank_account:
-        raise HTTPException(status_code=404, detail="Invalid bank account")
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found for this teacher"
+        )
 
-    # ✅ Deduct balance
-    wallet.balance -= amount
-
-    # ✅ Create withdrawal request
+    # =====================================
+    # CREATE WITHDRAWAL REQUEST
+    # =====================================
     withdraw = WithdrawalRequest(
         teacher_id=teacher.id,
         amount=amount,
-        bank_account_id=bank_account_id
+        bank_account_id=bank_account.id,
+        status="PENDING"   # optional if you have status field
     )
+
     db.add(withdraw)
 
-    # ✅ Track transaction
-    db.add(RewardTransaction(
+    # =====================================
+    # DEDUCT WALLET BALANCE
+    # =====================================
+    wallet.balance = available_balance - amount
+
+    # =====================================
+    # ADD TRANSACTION HISTORY
+    # =====================================
+    transaction = RewardTransaction(
         teacher_id=teacher.id,
         points=amount,
         type="WITHDRAW"
-    ))
+    )
+
+    db.add(transaction)
+
+    # =====================================
+    # SAVE
+    # =====================================
+    db.commit()
+    db.refresh(withdraw)
+
+    return {
+        "message": "Withdrawal request submitted successfully",
+        "withdrawal_id": withdraw.id,
+    }
+
+@router.get("/withdrawals")
+def get_withdrawals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    # ==========================================
+    # ADMIN -> GET ALL WITHDRAWALS
+    # ==========================================
+    if current_user.role == UserRole.ADMIN:
+
+        withdrawals = db.query(WithdrawalRequest).order_by(
+            WithdrawalRequest.created_at.desc()
+        ).all()
+
+    # ==========================================
+    # TEACHER -> GET OWN WITHDRAWALS
+    # ==========================================
+    elif current_user.role == UserRole.TEACHER:
+
+        teacher = current_user.teacher_profile or db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+        if not teacher:
+            raise HTTPException(
+                status_code=404,
+                detail="Teacher profile not found"
+            )
+
+        withdrawals = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.teacher_id == teacher.id
+        ).order_by(
+            WithdrawalRequest.created_at.desc()
+        ).all()
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied"
+        )
+
+    return {
+        "message": "Withdrawal list fetched successfully",
+        "total_requests": len(withdrawals),
+        "data": [
+            {
+                "withdraw_id": withdraw.id,
+                "teacher_id": withdraw.teacher_id,
+                "amount": withdraw.amount,
+                "status": getattr(withdraw, "status", "PENDING"),
+                "created_at": withdraw.created_at,
+
+                "bank_account": {
+                    "id": withdraw.bank_account.id if withdraw.bank_account else None,
+                    "bank_name": withdraw.bank_account.bank_name if withdraw.bank_account else None,
+                    "account_holder_name": withdraw.bank_account.account_holder_name if withdraw.bank_account else None,
+                    "account_number": withdraw.bank_account.account_number if withdraw.bank_account else None,
+                }
+            }
+            for withdraw in withdrawals
+        ]
+    }
+
+@router.get("/withdrawals/{withdraw_id}")
+def get_withdrawal_details(
+    withdraw_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    # ==========================================
+    # ADMIN -> ACCESS ALL
+    # ==========================================
+    if current_user.role == UserRole.ADMIN:
+
+        withdraw = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.id == withdraw_id
+        ).first()
+
+    # ==========================================
+    # TEACHER -> ACCESS ONLY OWN
+    # ==========================================
+    elif current_user.role == UserRole.TEACHER:
+
+        teacher = current_user.teacher_profile or db.query(Teacher).filter(
+            Teacher.user_id == current_user.id
+        ).first()
+
+        if not teacher:
+            raise HTTPException(
+                status_code=404,
+                detail="Teacher profile not found"
+            )
+
+        withdraw = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.id == withdraw_id,
+            WithdrawalRequest.teacher_id == teacher.id
+        ).first()
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied"
+        )
+
+    # ==========================================
+    # NOT FOUND
+    # ==========================================
+    if not withdraw:
+        raise HTTPException(
+            status_code=404,
+            detail="Withdrawal request not found"
+        )
+
+    return {
+        "message": "Withdrawal details fetched successfully",
+        "data": {
+            "withdraw_id": withdraw.id,
+            "teacher_id": withdraw.teacher_id,
+            "amount": withdraw.amount,
+            "status": getattr(withdraw, "status", "PENDING"),
+            "created_at": withdraw.created_at,
+
+            "bank_account": {
+                "id": withdraw.bank_account.id if withdraw.bank_account else None,
+                "bank_name": withdraw.bank_account.bank_name if withdraw.bank_account else None,
+                "account_holder_name": withdraw.bank_account.account_holder_name if withdraw.bank_account else None,
+                "account_number": withdraw.bank_account.account_number if withdraw.bank_account else None,
+                "ifsc_code": withdraw.bank_account.ifsc_code if withdraw.bank_account else None,
+            }
+        }
+    }
+
+@router.post("/admin/bank-account")
+def add_admin_bank_account(
+    payload: AdminBankAccountSchema,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    # account match check
+    if payload.account_number != payload.re_account_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Account numbers do not match"
+        )
+
+    # duplicate check
+    existing = db.query(AdminBankAccount).filter(
+        AdminBankAccount.account_number == payload.account_number
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank account already exists"
+        )
+
+    # default handling
+    if payload.is_default:
+        db.query(AdminBankAccount).update({
+            "is_default": False
+        })
+
+    account = AdminBankAccount(
+        account_holder_name=payload.account_holder_name,
+        account_number=payload.account_number,
+        ifsc_code=payload.ifsc_code,
+        bank_name=payload.bank_name,
+        is_default=payload.is_default
+    )
+
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+
+    return {
+        "message": "Admin bank account added successfully",
+        "data": {
+            "id": account.id,
+            "account_holder_name": account.account_holder_name,
+            "account_number": account.account_number,
+            "bank_name": account.bank_name,
+            "ifsc_code": account.ifsc_code,
+            "is_default": account.is_default
+        }
+    }
+
+@router.get("/admin/bank-accounts")
+def get_admin_bank_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    accounts = db.query(AdminBankAccount).order_by(
+        AdminBankAccount.created_at.desc()
+    ).all()
+
+    return {
+        "message": "Admin bank accounts fetched successfully",
+        "total_accounts": len(accounts),
+        "data": [
+            {
+                "id": account.id,
+                "account_holder_name": account.account_holder_name,
+                "account_number": account.account_number,
+                "bank_name": account.bank_name,
+                "ifsc_code": account.ifsc_code,
+                "is_default": account.is_default,
+                "created_at": account.created_at
+            }
+            for account in accounts
+        ]
+    }
+
+@router.get("/admin/bank-accounts/{account_id}")
+def get_admin_bank_account_details(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    account = db.query(AdminBankAccount).filter(
+        AdminBankAccount.id == account_id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
+
+    return {
+        "message": "Bank account details fetched successfully",
+        "data": {
+            "id": account.id,
+            "account_holder_name": account.account_holder_name,
+            "account_number": account.account_number,
+            "bank_name": account.bank_name,
+            "ifsc_code": account.ifsc_code,
+            "is_default": account.is_default,
+            "created_at": account.created_at
+        }
+    }
+
+
+@router.put("/admin/bank-accounts/{account_id}")
+def update_admin_bank_account(
+    account_id: int,
+    payload: AdminBankAccountSchema,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    account = db.query(AdminBankAccount).filter(
+        AdminBankAccount.id == account_id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
+
+    if payload.account_number != payload.re_account_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Account numbers do not match"
+        )
+
+    # remove old default
+    if payload.is_default:
+        db.query(AdminBankAccount).update({
+            "is_default": False
+        })
+
+    account.account_holder_name = payload.account_holder_name
+    account.account_number = payload.account_number
+    account.bank_name = payload.bank_name
+    account.ifsc_code = payload.ifsc_code
+    account.is_default = payload.is_default
 
     db.commit()
 
-    return {"message": "Withdrawal request submitted"}
+    return {
+        "message": "Bank account updated successfully"
+    }
 
-@router.get("/admin/withdrawals")
-def get_withdrawals(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403)
-
-    data = db.query(WithdrawalRequest).order_by(
-        WithdrawalRequest.created_at.desc()
-    ).all()
-
-    return data
-
-@router.get("/admin/withdrawals/{withdraw_id}")
-def get_withdrawal_details(withdraw_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.delete("/admin/bank-accounts/{account_id}")
+def delete_admin_bank_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
 
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403)
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
 
-    withdraw = db.query(WithdrawalRequest).get(withdraw_id)
+    account = db.query(AdminBankAccount).filter(
+        AdminBankAccount.id == account_id
+    ).first()
 
-    if not withdraw:
-        raise HTTPException(status_code=404)
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
 
-    return withdraw 
+    db.delete(account)
+    db.commit()
+
+    return {
+        "message": "Bank account deleted successfully"
+    }
+
+@router.patch("/admin/bank-accounts/{account_id}/default")
+def set_default_admin_bank_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    account = db.query(AdminBankAccount).filter(
+        AdminBankAccount.id == account_id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
+
+    # remove existing default
+    db.query(AdminBankAccount).update({
+        "is_default": False
+    })
+
+    account.is_default = True
+
+    db.commit()
+
+    return {
+        "message": "Default bank account updated successfully"
+    }
+
+@router.post("/admin/wallet/add-balance")
+def add_admin_wallet_balance(
+    payload: AddBalanceSchema,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    wallet = db.query(AdminWallet).first()
+
+    if not wallet:
+        wallet = AdminWallet(
+            total_added=0,
+            available_balance=0
+        )
+
+        db.add(wallet)
+        db.flush()
+
+    wallet.total_added += payload.amount
+    wallet.available_balance += payload.amount
+
+    db.commit()
+
+    return {
+        "message": "Balance added successfully",
+        "data": {
+            "total_added": wallet.total_added,
+            "available_balance": wallet.available_balance
+        }
+    }
+@router.get("/admin/wallet")
+def get_admin_wallet(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    wallet = db.query(AdminWallet).first()
+
+    if not wallet:
+        raise HTTPException(
+            status_code=404,
+            detail="Admin wallet not found"
+        )
+
+    return {
+        "message": "Admin wallet fetched successfully",
+        "data": {
+            "total_added": wallet.total_added,
+            "available_balance": wallet.available_balance,
+            "updated_at": wallet.updated_at
+        }
+    }
 
 @router.put("/admin/withdraw/{withdraw_id}")
 def update_withdraw_status(
     withdraw_id: int,
-    status: str,
+    payload: WithdrawStatusSchema,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    withdraw = db.query(WithdrawalRequest).get(withdraw_id)
+
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin allowed"
+        )
+
+    allowed_status = ["SUCCESS", "HOLD"]
+
+    if payload.status not in allowed_status:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid status"
+        )
+
+    withdraw = db.query(WithdrawalRequest).filter(
+        WithdrawalRequest.id == withdraw_id
+    ).first()
 
     if not withdraw:
-        raise HTTPException(status_code=404)
+        raise HTTPException(
+            status_code=404,
+            detail="Withdrawal request not found"
+        )
 
-    withdraw.status = status  # SUCCESS / HOLD
+    if withdraw.status != "PENDING":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Already processed with status {withdraw.status}"
+        )
+
+    teacher_wallet = db.query(TeacherWallet).filter(
+        TeacherWallet.teacher_id == withdraw.teacher_id
+    ).first()
+
+    if not teacher_wallet:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher wallet not found"
+        )
+
+    # SUCCESS FLOW
+    if payload.status == "SUCCESS":
+
+        admin_wallet = db.query(AdminWallet).first()
+
+        if not admin_wallet:
+            raise HTTPException(
+                status_code=404,
+                detail="Admin wallet not found"
+            )
+
+        if admin_wallet.available_balance < withdraw.amount:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient admin balance"
+            )
+
+        admin_wallet.available_balance -= withdraw.amount
+
+        withdraw.status = "SUCCESS"
+
+    # HOLD FLOW
+    elif payload.status == "HOLD":
+
+        teacher_wallet.balance += withdraw.amount
+
+        withdraw.status = "HOLD"
+
+        refund_transaction = RewardTransaction(
+            teacher_id=withdraw.teacher_id,
+            points=withdraw.amount,
+            type="WITHDRAW_REFUND"
+        )
+
+        db.add(refund_transaction)
 
     db.commit()
 
-    return {"message": f"Updated to {status}"}
+    return {
+        "message": f"Withdrawal updated to {withdraw.status}",
+        "data": {
+            "withdraw_id": withdraw.id,
+            "amount": withdraw.amount,
+            "status": withdraw.status
+        }
+    }

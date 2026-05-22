@@ -221,3 +221,39 @@ class WithdrawalRequest(Base):
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
+    bank_account = relationship(
+        "TeacherBankAccount",
+        backref="withdrawal_requests"
+    )
+
+class AdminWallet(Base):
+    __tablename__ = "admin_wallets"
+
+    id = Column(Integer, primary_key=True)
+    total_added = Column(Integer, default=0)
+    available_balance = Column(Integer, default=0)
+
+    updated_at = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+# =====================================================
+# ADMIN BANK ACCOUNT
+# =====================================================
+class AdminBankAccount(Base):
+    __tablename__ = "admin_bank_accounts"
+
+    id = Column(Integer, primary_key=True)
+    account_holder_name = Column(String)
+    account_number = Column(String)
+    ifsc_code = Column(String)
+    bank_name = Column(String)
+    is_default = Column(Boolean, default=False)
+
+    created_at = Column(
+        DateTime,
+        server_default=func.now()
+    )

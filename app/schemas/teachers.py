@@ -194,9 +194,38 @@ class EmployeePaymentListResponse(BaseModel):
         "from_attributes": True
     }
 
+class WithdrawRequestSchema(BaseModel):
+    amount: int = Field(..., gt=0)
+    bank_account_id: int
+
 class BankAccountSchema(BaseModel):
-    account_number: str = Field(..., description="Bank account number")
-    re_account_number: str = Field(..., description="Re-enter bank account number for confirmation")
-    account_holder_name: str = Field(..., description="Name of the account holder")
-    bank_name: str = Field(..., description="Name of the bank")
-    ifsc_code: str = Field(..., description="IFSC code of the bank")
+    account_holder_name: str
+    account_number: str
+    re_account_number: str
+    ifsc_code: str
+    bank_name: str
+    is_default: bool = False
+
+
+class WithdrawStatusSchema(BaseModel):
+    status: str
+
+
+class AddBalanceSchema(BaseModel):
+    amount: int = Field(..., gt=0)
+
+class AdminBankAccountSchema(BaseModel):
+    account_holder_name: str
+    account_number: str
+    re_account_number: str
+    ifsc_code: str
+    bank_name: str
+    is_default: bool = False
+
+
+class AddBalanceSchema(BaseModel):
+    amount: int = Field(..., gt=0)
+
+
+class WithdrawStatusSchema(BaseModel):
+    status: str   # SUCCESS / HOLD
