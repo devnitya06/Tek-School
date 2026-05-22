@@ -2242,11 +2242,6 @@ def add_admin_wallet_balance(
             "available_balance": wallet.available_balance
         }
     }
-
-
-# =====================================================
-# ADMIN WALLET DETAILS
-# =====================================================
 @router.get("/admin/wallet")
 def get_admin_wallet(
     db: Session = Depends(get_db),
