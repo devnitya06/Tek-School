@@ -131,6 +131,7 @@ class SelfSignedStudent(Base):
     profile_image = Column(String, nullable=True)
     phone = Column(String(20), nullable=True)
     email = Column(String(255), nullable=False, unique=True)
+    self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=True)
 
     select_board = Column(String(50), nullable=True)
     select_medium = Column(String(50), nullable=True)
@@ -158,6 +159,7 @@ class SelfSignedStudent(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="self_signed_student_profile")
+    self_signed_teacher = relationship("SelfSignedTeacher", back_populates="students")
     exam_data = relationship("StudentExamData", back_populates="self_signed_student")
     admin_exam_data = relationship("StudentAdminExamData", back_populates="student")
     subscriptions = relationship(

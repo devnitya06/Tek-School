@@ -8,6 +8,17 @@ from app.core.dependencies import get_current_user
 from app.db.session import get_db
 
 
+def _normalize_role(role_value):
+    if isinstance(role_value, UserRole):
+        return role_value
+    if isinstance(role_value, str):
+        try:
+            return UserRole(role_value)
+        except ValueError:
+            return None
+    return None
+
+
 def require_roles(*roles: UserRole):
     """
     Returns a dependency that checks if the current user has one of the required roles.
@@ -19,7 +30,8 @@ def require_roles(*roles: UserRole):
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
     ) -> User:
-        if current_user.role not in roles:
+        current_role = _normalize_role(current_user.role)
+        if current_role not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to perform this action."
@@ -27,9 +39,51 @@ def require_roles(*roles: UserRole):
         
         # ✅ If SCHOOL role is required, verify business account access
         # This ensures business accounts are verified by super admin before accessing ANY APIs
-        if UserRole.SCHOOL in roles and current_user.role == UserRole.SCHOOL:
+        if UserRole.SCHOOL in roles and current_role == UserRole.SCHOOL:
             verify_school_business_access(current_user, db)
         
+        return current_user
+    return permission_dependency
+
+
+def require_self_signed_teacher_approved():
+    def permission_dependency(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        current_role = _normalize_role(current_user.role)
+        if current_role != UserRole.SELF_SIGNED_TEACHER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only self signed teachers can access this resource."
+            )
+        if current_user.verification_status != "approved":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Teacher account must be approved by admin before accessing this resource."
+            )
+        return current_user
+    return permission_dependency
+
+
+def require_self_signed_teacher_active():
+    def permission_dependency(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        current_role = _normalize_role(current_user.role)
+        if current_role != UserRole.SELF_SIGNED_TEACHER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only self signed teachers can access this resource."
+            )
+
+        if current_user.verification_status in ["blocked", "rejected"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Teacher account is blocked or rejected and cannot access this resource."
+            )
+
         return current_user
     return permission_dependency
 

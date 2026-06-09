@@ -71,8 +71,19 @@ def get_current_user(
     return user  # Now returns User model instance
 
 def role_required(role: UserRole):
+    def _normalize_role(role_value):
+        if isinstance(role_value, UserRole):
+            return role_value
+        if isinstance(role_value, str):
+            try:
+                return UserRole(role_value)
+            except ValueError:
+                return None
+        return None
+
     def role_checker(current_user: User = Depends(get_current_user)):
-        if current_user.role != role.value:
+        current_role = _normalize_role(current_user.role)
+        if current_role != role:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Operation not permitted for this user role",
@@ -85,6 +96,7 @@ admin_required = role_required(UserRole.ADMIN)
 school_required = role_required(UserRole.SCHOOL)
 teacher_required = role_required(UserRole.TEACHER)
 student_required = role_required(UserRole.STUDENT)
+self_signed_teacher_required = role_required(UserRole.SELF_SIGNED_TEACHER)
 
 async def handle_profile_picture_upload(
     user_id: str,

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Time, Enum as SQLEnum,UniqueConstraint,Boolean,Float, JSON
+from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey, Time, Enum as SQLEnum, UniqueConstraint, Boolean, Float, JSON
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship, synonym
 from app.db.session import Base
@@ -74,8 +74,74 @@ class Teacher(Base):
         super().__init__(**kwargs)
         if not self.id:
             self.id = f"TCH-{str(uuid.uuid4().int)[:6]}"
-            
-            
+
+
+class VerificationStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    BLOCKED = "blocked"
+    REJECTED = "rejected"
+
+
+class ProfileStatus(str, Enum):
+    DRAFT = "draft"
+    PROFILE_SUBMITTED = "profile_submitted"
+
+
+class SelfSignedTeacher(Base):
+    __tablename__ = "self_signed_teachers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    gender = Column(String(20), nullable=True)
+    dob = Column(Date, nullable=True)
+    profile_image = Column(String, nullable=True)
+    phone = Column(String(20), nullable=False)
+    email = Column(String(255), nullable=False, unique=True)
+    bio = Column(String(500), nullable=True)
+    qualification = Column(String(255), nullable=True)
+    university = Column(String(255), nullable=True)
+    institution_name = Column(String(255), nullable=True)
+    designation = Column(String(255), nullable=True)
+    institution_pin_code = Column(String(20), nullable=True)
+    division = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+    landmark = Column(String(255), nullable=True)
+    joining_date = Column(Date, nullable=True)
+    official_id_card = Column(String, nullable=True)
+    invite_code = Column(String(32), nullable=False, unique=True)
+    profile_status = Column(SQLEnum(ProfileStatus), default=ProfileStatus.DRAFT, nullable=False)
+    rejection_reason = Column(String(500), nullable=True)
+    blocked_reason = Column(String(500), nullable=True)
+    verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship(
+        "User",
+        back_populates="self_signed_teacher_profile",
+        foreign_keys=[user_id],
+    )
+    students = relationship("SelfSignedStudent", back_populates="self_signed_teacher", cascade="all, delete-orphan")
+
+    @property
+    def verification_status(self):
+        return self.user.verification_status if self.user else None
+
+    @property
+    def profile_completed(self):
+        return self.user.profile_completed if self.user else False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.invite_code:
+            self.invite_code = f"TCH-{uuid.uuid4().hex[:10]}"
+
+
 class TeacherClassSectionSubject(Base):
     __tablename__ = "teacher_class_section_subjects"
 
