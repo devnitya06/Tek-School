@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks,Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash, verify_password
 from app.schemas.users import UserCreate,UserRole,OtpVerify,SignupResponse,ResendOtpRequest,SignupType,ChangePasswordRequest
@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
 from app.models.students import SelfSignedStudent
+from app.models.teachers import SelfSignedTeacher
 from app.utils.email_utility import generate_otp,send_dynamic_email,generate_password
 from datetime import datetime,timezone,timedelta
 from app.core.security import verify_verification_token
@@ -24,7 +25,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 db.query(Otp)
                 .filter(
                     Otp.user_id == existing_user.id,
-                    Otp.is_verified == True
+                    Otp.is_verified,
                 )
                 .first()
             )
@@ -39,21 +40,23 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
             db.commit()
 
         # Detect signup type
+        role = user_data.role
         is_school_signup = all([user_data.name, user_data.location, user_data.phone, user_data.website])
         is_student_signup = all([user_data.first_name, user_data.last_name, user_data.phone, user_data.email])
 
-        if is_school_signup:
-            role = UserRole.SCHOOL
-        elif is_student_signup:
-            role = UserRole.SELF_SIGNED_STUDENT
-        else:
-            role = UserRole.ADMIN  # First user case or fallback
+        if role is None:
+            if is_school_signup:
+                role = UserRole.SCHOOL
+            elif is_student_signup:
+                role = UserRole.SELF_SIGNED_STUDENT
+            else:
+                role = UserRole.ADMIN  # First user case or fallback
 
         # Create User entry
         user = User(
             email=user_data.email,
             phone=user_data.phone,
-            name=user_data.name or f"{user_data.first_name} {user_data.last_name}",  # For student name
+            name=user_data.name or f"{user_data.first_name} {user_data.last_name}",  # For student/teacher name
             role=role,
         )
 
@@ -78,12 +81,14 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 school_phone=user_data.phone,
                 school_website=user_data.website,
                 school_location=user_data.location,
+                account_type=account_type,
+                is_business_approved=is_business_approved,
                 default_settlement_channel="cash_offline",
             )
             db.add(school_profile)
 
         # Create Student Profile (if student)
-        if role == UserRole.SELF_SIGNED_STUDENT :
+        if role == UserRole.SELF_SIGNED_STUDENT:
             student_profile = SelfSignedStudent(
                 user_id=user.id,
                 first_name=user_data.first_name,
@@ -93,6 +98,17 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
                 status_expiry_date=datetime.utcnow() + timedelta(days=1)
             )
             db.add(student_profile)
+
+        # Create Self-signed Teacher Profile (if teacher)
+        elif role == UserRole.SELF_SIGNED_TEACHER:
+            teacher_profile = SelfSignedTeacher(
+                user_id=user.id,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                phone=user_data.phone,
+                email=user_data.email,
+            )
+            db.add(teacher_profile)
 
         # OTP functionality
         otp = generate_otp()
@@ -240,4 +256,4 @@ def change_password(
     current_user.hashed_password = get_password_hash(data.new_password)
     db.commit()
 
-    return {"detail": "Password updated successfully."}
+    return {"detail": "Password updated successfully."}

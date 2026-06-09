@@ -24,10 +24,11 @@ from app.models.school import (
     BusinessInquiry,
 )
 from app.models.users import User
-from app.models.teachers import Teacher, TeacherClassSectionSubject
+from app.models.teachers import Teacher, TeacherClassSectionSubject, SelfSignedTeacher, VerificationStatus, ProfileStatus
 from app.models.students import Student, StudentStatus, SelfSignedStudent
 from app.models.staff import Staff, staff_permissions, StaffPermissionType
 from app.schemas.admin import *
+from app.schemas.selfsignedteachers import AdminSelfSignedTeacherResponse, VerificationActionRequest
 from app.schemas.school import (
     SchoolRatingCreate,
     SchoolRatingResponse,
@@ -245,6 +246,175 @@ def get_platform_staff_permissions(
         "staff_name": f"{staff.first_name} {staff.last_name}",
         "permissions": get_staff_permissions(staff.id, db),
     }
+
+
+@router.get(
+    "/self-signed-teachers/",
+    response_model=List[AdminSelfSignedTeacherResponse],
+    summary="List all self-signed teachers",
+    description="Admin or superadmin only. Returns all self-signed teacher profiles for review.",
+)
+def list_self_signed_teachers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    return db.query(SelfSignedTeacher).options(joinedload(SelfSignedTeacher.user)).all()
+
+
+@router.get(
+    "/self-signed-teachers/pending/",
+    response_model=List[AdminSelfSignedTeacherResponse],
+    summary="List pending self-signed teachers",
+    description="Admin or superadmin only. Returns self-signed teacher profiles pending verification.",
+)
+def list_pending_self_signed_teachers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    return (
+        db.query(SelfSignedTeacher)
+        .join(User)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(User.verification_status == VerificationStatus.PENDING.value)
+        .all()
+    )
+
+
+@router.get(
+    "/self-signed-teachers/{teacher_id}/",
+    response_model=AdminSelfSignedTeacherResponse,
+    summary="Get self-signed teacher profile",
+    description="Admin or superadmin only. Returns a self-signed teacher profile by ID.",
+)
+def get_self_signed_teacher(
+    teacher_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    teacher = (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(SelfSignedTeacher.id == teacher_id)
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Self-signed teacher not found.")
+    return teacher
+
+
+@router.put(
+    "/self-signed-teachers/{teacher_id}/approve/",
+    summary="Approve self-signed teacher",
+    description="Admin or superadmin only. Approves the teacher account and marks it verified.",
+)
+def approve_self_signed_teacher(
+    teacher_id: int,
+    data: VerificationActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    teacher = (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(SelfSignedTeacher.id == teacher_id)
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Self-signed teacher not found.")
+
+    teacher.user.verification_status = VerificationStatus.APPROVED.value
+    teacher.user.profile_completed = True
+    teacher.profile_status = ProfileStatus.PROFILE_SUBMITTED
+    teacher.verified_by = current_user.id
+    teacher.verified_at = datetime.utcnow()
+    teacher.rejection_reason = None
+    teacher.blocked_reason = None
+
+    db.commit()
+    return {"detail": "Self-signed teacher approved successfully."}
+
+
+@router.put(
+    "/self-signed-teachers/{teacher_id}/reject/",
+    summary="Reject self-signed teacher",
+    description="Admin or superadmin only. Rejects the teacher account with an optional reason.",
+)
+def reject_self_signed_teacher(
+    teacher_id: int,
+    data: VerificationActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    teacher = (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(SelfSignedTeacher.id == teacher_id)
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Self-signed teacher not found.")
+
+    teacher.user.verification_status = VerificationStatus.REJECTED.value
+    teacher.user.profile_completed = False
+    teacher.rejection_reason = data.reason or "Rejected by admin"
+    teacher.blocked_reason = None
+
+    db.commit()
+    return {"detail": "Self-signed teacher rejected successfully."}
+
+
+@router.put(
+    "/self-signed-teachers/{teacher_id}/block/",
+    summary="Block self-signed teacher",
+    description="Admin or superadmin only. Blocks the teacher account with an optional reason.",
+)
+def block_self_signed_teacher(
+    teacher_id: int,
+    data: VerificationActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    teacher = (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(SelfSignedTeacher.id == teacher_id)
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Self-signed teacher not found.")
+
+    teacher.user.verification_status = VerificationStatus.BLOCKED.value
+    teacher.blocked_reason = data.reason or "Account blocked by admin"
+
+    db.commit()
+    return {"detail": "Self-signed teacher blocked successfully."}
+
+
+@router.put(
+    "/self-signed-teachers/{teacher_id}/unblock/",
+    summary="Unblock self-signed teacher",
+    description="Admin or superadmin only. Restores a blocked teacher account to pending review.",
+)
+def unblock_self_signed_teacher(
+    teacher_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    teacher = (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .filter(SelfSignedTeacher.id == teacher_id)
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Self-signed teacher not found.")
+
+    teacher.user.verification_status = VerificationStatus.PENDING.value
+    teacher.blocked_reason = None
+    teacher.rejection_reason = None
+
+    db.commit()
+    return {"detail": "Self-signed teacher unblocked and moved back to pending review."}
 
 
 @router.get("/platform-staff/permissions/my")

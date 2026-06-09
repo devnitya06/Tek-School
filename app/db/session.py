@@ -241,6 +241,19 @@ def ensure_school_settlement_schema():
         )
 
 
+def ensure_self_signed_student_teacher_id_column():
+    """Ensure the nullable foreign key column exists for self-signed student teacher links."""
+    if column_exists("self_signed_students", "self_signed_teacher_id"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                'ALTER TABLE self_signed_students '
+                'ADD COLUMN IF NOT EXISTS "self_signed_teacher_id" INTEGER NULL'
+            )
+        )
+
+
 def ensure_worker_payment_settlement_columns():
     """
     Worker payments must track bank/cash source for settlement ledger alignment.

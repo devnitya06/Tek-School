@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, staff, workers, exams, business_inquiry, progress_reports, academic_results
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results
 from app.core.config import settings
 from app.db.session import (
     create_tables,
@@ -13,6 +13,7 @@ from app.db.session import (
     ensure_staff_school_id_nullable,
     ensure_staff_teacher_boss_columns,
     ensure_school_settlement_schema,
+    ensure_self_signed_student_teacher_id_column,
     ensure_worker_payment_settlement_columns,
     ensure_academic_results_tables,
     ensure_progress_report_tables,
@@ -38,6 +39,7 @@ app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(staff.router, prefix="/staff", tags=["Staff"])
 app.include_router(workers.router, prefix="/worker", tags=["Workers"])
 app.include_router(selfsignedstudents.router, prefix="/api", tags=["SelfSignedStudents"])
+app.include_router(selfsignedteachers.router, prefix="/api", tags=["SelfSignedTeachers"])
 app.include_router(exams.router,prefix="/exam",tags=["Exam"])
 app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business Inquiry"])
 app.include_router(progress_reports.router, prefix="/progress-reports", tags=["Progress Reports"])
@@ -57,6 +59,7 @@ def on_startup():
         ensure_staff_teacher_boss_columns()
         ensure_school_settlement_schema()
         ensure_worker_payment_settlement_columns()
+        ensure_self_signed_student_teacher_id_column()
         ensure_academic_results_tables()
         ensure_progress_report_tables()
     except Exception as e:

@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr,field_validator
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from enum import Enum
 
@@ -15,6 +15,7 @@ class UserRole(str,Enum):
     STUDENT  = "student" 
     STAFF = "staff"
     SELF_SIGNED_STUDENT = "self_signed_student"
+    SELF_SIGNED_TEACHER = "self_signed_teacher"
 
 class SignupType(str, Enum):
     BUSINESS_SCHOOL = "business_school_signup"
@@ -40,6 +41,11 @@ class UserBase(BaseModel):
 # Schema used when creating a new user (no password, role is handled later)
 class UserCreate(UserBase):
     signup_type: Optional[SignupType] = None  # For school signups: business_school_signup or listing_school_signup
+    role: Optional[UserRole] = Field(
+        default=None,
+        exclude=True,
+        description="Optional internal-only role field; not shown in public signup docs",
+    )
     
 class SignupResponse(BaseModel):
     detail: str
@@ -133,4 +139,4 @@ class TemplateResponse(TemplateBase):
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
-    new_password: str
+    new_password: str

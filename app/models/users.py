@@ -56,6 +56,8 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=True)
     role = Column(UserRoleEnum(), nullable=False)
+    verification_status = Column(String, default="pending", nullable=False)
+    profile_completed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
@@ -70,6 +72,13 @@ class User(Base):
     student_profile = relationship("Student", back_populates="user", uselist=False, cascade="all, delete-orphan")
     staff_profile = relationship("Staff", back_populates="user", uselist=False, cascade="all, delete-orphan")
     self_signed_student_profile = relationship("SelfSignedStudent", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    self_signed_teacher_profile = relationship(
+        "SelfSignedTeacher",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        foreign_keys="SelfSignedTeacher.user_id",
+    )
     
     # Add unique constraint for school name and location
     __table_args__ = (
