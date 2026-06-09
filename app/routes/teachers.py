@@ -1604,8 +1604,19 @@ def add_teacher_bank_account(
 
     db.add(account)
     db.commit()
+    db.refresh(account)
 
-    return {"message": "Bank account added successfully"}
+    return {
+        "message": "Bank account added successfully",
+        "data": {
+            "id": account.id,
+            "account_holder_name": account.account_holder_name,
+            "account_number": account.account_number,
+            "bank_name": account.bank_name,
+            "ifsc_code": account.ifsc_code,
+            "is_default": account.is_default
+        }
+    }
 
 @router.get("/bank-account/{account_id}")
 def get_bank_account(
@@ -1705,6 +1716,53 @@ def get_bank_account_list(
             }
             for account in accounts
         ]
+    }
+
+@router.patch("/bank-accounts/{account_id}/default")
+def set_default_teacher_bank_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    if current_user.role != UserRole.TEACHER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only teachers allowed"
+        )
+
+    teacher = current_user.teacher_profile or db.query(Teacher).filter(
+        Teacher.user_id == current_user.id
+    ).first()
+
+    if not teacher:
+        raise HTTPException(
+            status_code=404,
+            detail="Teacher profile not found"
+        )
+
+    account = db.query(TeacherBankAccount).filter(
+        TeacherBankAccount.id == account_id,
+        TeacherBankAccount.teacher_id == teacher.id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found"
+        )
+
+    # remove existing default
+    db.query(TeacherBankAccount).filter(
+        TeacherBankAccount.teacher_id == teacher.id
+    ).update({"is_default": False})
+
+    account.is_default = True
+
+    db.commit()
+
+    return {
+        "message": "Default bank account updated successfully"
     }
 
 @router.post("/withdraw")

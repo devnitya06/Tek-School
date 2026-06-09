@@ -6218,7 +6218,10 @@ def get_exam_detail(
             raise HTTPException(status_code=404, detail="Student not found")
 
         if (
-            exam.selected_class_id != student.select_class_id
+            (
+                exam.selected_class_id != student.select_class_id
+                and exam.class_id != student.select_class_id
+            )
             or exam.status != ExamStatusEnum.ACTIVE
         ):
             raise HTTPException(status_code=403, detail="Not allowed")
@@ -6236,7 +6239,7 @@ def get_exam_detail(
             db.query(StudentExamData)
             .filter(
                 StudentExamData.exam_id == exam.id,
-                StudentExamData.student_id == student.id,
+                StudentExamData.self_signed_student_id == student.id,
             )
             .order_by(StudentExamData.attempt_no.desc())
             .first()
@@ -6970,12 +6973,13 @@ def submit_exam(
         # DESCRIPTIVE / LONG
         # ==============================
 
-        elif question.question_type.value == "descriptive":
+        elif question.question_type.value == "long":
             answer_text = (ans.descriptive_answer or "").lower()
             keywords = question.answer_keywords or []
 
-            if all(keyword.lower() in answer_text for keyword in keywords):
-                marks_awarded = question.marks
+            if keywords:
+                matched = sum(1 for kw in keywords if kw.lower() in answer_text)
+                marks_awarded = round(question.marks * matched / len(keywords))
 
         obtained_marks += marks_awarded
 

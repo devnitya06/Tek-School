@@ -2441,6 +2441,27 @@ def create_payment_transaction(
     db.add(transaction)
     transactions_created = [transaction]
 
+    # Update student status to ACTIVE and set expiry date
+    if total_amount > 0:
+        validity_days = 90  # default
+        if payment and payment.installment_type:
+            inst_type = payment.installment_type.lower()
+            if inst_type == "monthly":
+                validity_days = 30
+            elif inst_type == "quarterly":
+                validity_days = 90
+            elif inst_type == "half_yearly":
+                validity_days = 180
+            elif inst_type == "yearly":
+                validity_days = 365
+
+        now = datetime.utcnow()
+        student.status = StudentStatus.ACTIVE
+        if student.status_expiry_date and student.status_expiry_date > now:
+            student.status_expiry_date = student.status_expiry_date + timedelta(days=validity_days)
+        else:
+            student.status_expiry_date = now + timedelta(days=validity_days)
+
     try:
         db.flush()
         if total_amount > 0:
@@ -4083,6 +4104,26 @@ def verify_payment_transaction(
                 transaction.verified_at = datetime.utcnow()
                 transaction.verified_by = current_user.id
                 transaction.rejection_reason = None
+
+                # Update student status to ACTIVE and set expiry date
+                validity_days = 90  # default
+                if payment and payment.installment_type:
+                    inst_type = payment.installment_type.lower()
+                    if inst_type == "monthly":
+                        validity_days = 30
+                    elif inst_type == "quarterly":
+                        validity_days = 90
+                    elif inst_type == "half_yearly":
+                        validity_days = 180
+                    elif inst_type == "yearly":
+                        validity_days = 365
+
+                now = datetime.utcnow()
+                student.status = StudentStatus.ACTIVE
+                if student.status_expiry_date and student.status_expiry_date > now:
+                    student.status_expiry_date = student.status_expiry_date + timedelta(days=validity_days)
+                else:
+                    student.status_expiry_date = now + timedelta(days=validity_days)
 
                 # ✅ Calculate and update payment amounts (ATOMIC OPERATION)
                 old_course_fee_paid = payment.course_fee_paid
