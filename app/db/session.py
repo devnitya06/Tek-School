@@ -254,6 +254,26 @@ def ensure_self_signed_student_teacher_id_column():
         )
 
 
+def ensure_self_signed_teacher_teaching_configuration_table():
+    """Ensure the self-signed teacher teaching configuration table exists."""
+    from app.models.teachers import SelfSignedTeacherTeachingConfiguration
+
+    SelfSignedTeacherTeachingConfiguration.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_self_signed_student_additional_columns():
+    """Ensure new self-signed student profile columns exist in the database."""
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "gender" VARCHAR(20) NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "dob" DATE NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "student_type" VARCHAR(20) NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "roll_number" VARCHAR(50) NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "previous_school_name" VARCHAR(255) NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "previous_class_marks_obtained" INTEGER NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "previous_class_overall_percentage" FLOAT NULL'))
+        conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "previous_class_final_grade" VARCHAR(20) NULL'))
+
+
 def ensure_worker_payment_settlement_columns():
     """
     Worker payments must track bank/cash source for settlement ledger alignment.
@@ -275,6 +295,25 @@ def ensure_worker_payment_settlement_columns():
                 """
             )
         )
+
+
+def ensure_studentstatus_pending_enum_value():
+    """Ensure studentstatus enum in PostgreSQL has the 'PENDING' value."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT e.enumlabel
+                FROM pg_type t
+                JOIN pg_enum e ON t.oid = e.enumtypid
+                WHERE t.typname = 'studentstatus'
+            """)).fetchall()
+            labels = [r[0] for r in result]
+            
+        if 'PENDING' not in labels:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("ALTER TYPE studentstatus ADD VALUE 'PENDING'"))
+    except Exception as e:
+        print(f"Skipping or failed to alter studentstatus enum (likely not PostgreSQL): {e}")
 
 
 # Dependency to get DB session

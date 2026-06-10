@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import Optional
+from typing import List, Optional
 from enum import Enum
 from pydantic import BaseModel, EmailStr, Field
 
@@ -65,6 +65,7 @@ class SelfSignedTeacherProfileResponse(BaseModel):
     profile_completed: bool
     created_at: datetime
     updated_at: Optional[datetime]
+    role: Optional[str] = None
 
     model_config = {
         "from_attributes": True
@@ -81,18 +82,31 @@ class VerificationStatusResponse(BaseModel):
     verified_at: Optional[datetime] = None
 
 
+class StudentType(str, Enum):
+    INTERNAL = "internal"
+    EXTERNAL = "external"
+
+
 class SelfSignedTeacherStudentCreateRequest(BaseModel):
     """Schema for Self Sign Teacher creating a student"""
     first_name: str
     last_name: str
-    email: EmailStr
+    gender: str
+    student_type: StudentType
     phone: str
-    select_board: Optional[str] = None
-    select_medium: Optional[str] = None
-    select_class_id: Optional[int] = None
-    school_name: Optional[str] = None
-    school_location: Optional[str] = None
+    email: EmailStr
+    select_board: str
+    select_class_id: int
+    school_name: str
+    school_location: str
     profile_image: Optional[str] = None
+    dob: Optional[date] = None
+    roll_number: Optional[str] = None
+    previous_school_name: Optional[str] = None
+    previous_class_marks_obtained: Optional[int] = None
+    previous_class_overall_percentage: Optional[float] = None
+    previous_class_final_grade: Optional[str] = None
+    select_medium: Optional[str] = None
     pin: Optional[int] = None
     division: Optional[str] = None
     district: Optional[str] = None
@@ -149,6 +163,8 @@ class SelfSignedTeacherStudentResponse(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
+    gender: str
+    student_type: StudentType
     phone: Optional[str] = None
     profile_image: Optional[str] = None
     select_board: Optional[str] = None
@@ -156,6 +172,12 @@ class SelfSignedTeacherStudentResponse(BaseModel):
     select_class_id: Optional[int] = None
     school_name: Optional[str] = None
     school_location: Optional[str] = None
+    dob: Optional[date] = None
+    roll_number: Optional[str] = None
+    previous_school_name: Optional[str] = None
+    previous_class_marks_obtained: Optional[int] = None
+    previous_class_overall_percentage: Optional[float] = None
+    previous_class_final_grade: Optional[str] = None
     pin: Optional[int] = None
     division: Optional[str] = None
     district: Optional[str] = None
@@ -169,6 +191,54 @@ class SelfSignedTeacherStudentResponse(BaseModel):
     parent_email: Optional[str] = None
     occupation: Optional[str] = None
     created_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class TeachingConfigurationCreateRequest(BaseModel):
+    board_id: str
+    class_id: int
+    subject_ids: List[int]
+    is_active: Optional[bool] = True
+
+
+class TeachingConfigurationUpdateRequest(BaseModel):
+    board_id: Optional[str] = None
+    class_id: Optional[int] = None
+    subject_ids: Optional[List[int]] = None
+    is_active: Optional[bool] = None
+
+
+class TeachingConfigurationResponse(BaseModel):
+    id: int
+    board_id: str
+    class_id: int
+    subject_ids: List[int]
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class TeachingConfigurationSubjectDetail(BaseModel):
+    id: int
+    subject_name: str
+
+
+class TeachingConfigurationDetailResponse(BaseModel):
+    id: int
+    board_id: str
+    class_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    class_name: Optional[str]
+    subject_details: List[TeachingConfigurationSubjectDetail]
 
     model_config = {
         "from_attributes": True

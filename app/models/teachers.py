@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey, Time, Enum as SQLEnum, UniqueConstraint, Boolean, Float, JSON
+from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey, Time, Enum as SQLEnum, UniqueConstraint, Boolean, Float
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship, synonym
 from app.db.session import Base
@@ -127,6 +127,11 @@ class SelfSignedTeacher(Base):
         foreign_keys=[user_id],
     )
     students = relationship("SelfSignedStudent", back_populates="self_signed_teacher", cascade="all, delete-orphan")
+    teaching_configurations = relationship(
+        "SelfSignedTeacherTeachingConfiguration",
+        back_populates="teacher",
+        cascade="all, delete-orphan"
+    )
 
     @property
     def verification_status(self):
@@ -140,6 +145,21 @@ class SelfSignedTeacher(Base):
         super().__init__(**kwargs)
         if not self.invite_code:
             self.invite_code = f"TCH-{uuid.uuid4().hex[:10]}"
+
+
+class SelfSignedTeacherTeachingConfiguration(Base):
+    __tablename__ = "self_signed_teacher_teaching_configurations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=False)
+    board_id = Column(String(50), nullable=False)
+    class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=False)
+    subject_ids = Column(ARRAY(Integer), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    teacher = relationship("SelfSignedTeacher", back_populates="teaching_configurations")
 
 
 class TeacherClassSectionSubject(Base):
