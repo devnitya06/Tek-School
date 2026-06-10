@@ -7,7 +7,7 @@ from app.models.school import SchoolAccountType
 from app.db.session import get_db
 from app.models.users import User,Otp
 from app.models.school import School
-from app.models.students import SelfSignedStudent
+from app.models.students import SelfSignedStudent, StudentStatus
 from app.models.teachers import SelfSignedTeacher
 from app.utils.email_utility import generate_otp,send_dynamic_email,generate_password
 from datetime import datetime,timezone,timedelta
@@ -167,6 +167,16 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
     user.is_verified = True
     otp_entry.is_verified = True
 
+    # 🔹 Update SelfSignedStudent status to TRIAL
+    student_profile = db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == user.id).first()
+    print(f"[verify_otp] student_profile={student_profile}, status={student_profile.status if student_profile else 'NOT FOUND'}, type={type(student_profile.status) if student_profile else None}")
+    if student_profile:
+        current = str(student_profile.status)  # handles both enum obj and string
+        if current in ("PENDING", "StudentStatus.PENDING"):
+            student_profile.status = StudentStatus.TRIAL.value
+            student_profile.status_expiry_date = datetime.utcnow() + timedelta(days=30)
+            print(f"[verify_otp] ✅ Status updated to TRIAL for user_id={user.id}")
+
     db.commit()
 
     # 🔹 Send credentials
@@ -188,26 +198,39 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
 
 @router.get("/verify-account")
 def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
-    user_id = verify_verification_token(token,settings.SECRET_KEY,settings.ALGORITHM)
+    user_id = verify_verification_token(token, settings.SECRET_KEY, settings.ALGORITHM)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=400, detail="Invalid or expired token.")
 
+    # 🔹 Always update SelfSignedStudent status to TRIAL if still PENDING
+    student_profile = db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == user.id).first()
+    print(f"[verify_account] student_profile={student_profile}, status={student_profile.status if student_profile else 'NOT FOUND'}, type={type(student_profile.status) if student_profile else None}")
+    if student_profile:
+        current = str(student_profile.status)  # handles both enum obj and string
+        if current in ("PENDING", "StudentStatus.PENDING"):
+            student_profile.status = StudentStatus.TRIAL.value
+            student_profile.status_expiry_date = datetime.utcnow() + timedelta(days=30)
+            print(f"[verify_account] ✅ Status updated to TRIAL for user_id={user.id}")
+
     if user.is_verified:
+        db.commit()
         return {"detail": "Account is already verified."}
+
     raw_password = generate_password()
     user.hashed_password = get_password_hash(raw_password)
     user.is_verified = True
+
     db.commit()
     send_dynamic_email(
         context_key="credential.html",
         subject="Your Credentials",
         recipient_email=user.email,
         context_data={
-                "email": user.email,
-                "password": raw_password,
-            },
-            db=db
+            "email": user.email,
+            "password": raw_password,
+        },
+        db=db
     )
 
     return {"detail": "Account verified. Password sent to registered email."}    
@@ -257,3 +280,4 @@ def change_password(
     db.commit()
 
     return {"detail": "Password updated successfully."}
+

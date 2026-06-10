@@ -14,9 +14,12 @@ from app.db.session import (
     ensure_staff_teacher_boss_columns,
     ensure_school_settlement_schema,
     ensure_self_signed_student_teacher_id_column,
+    ensure_self_signed_teacher_teaching_configuration_table,
+    ensure_self_signed_student_additional_columns,
     ensure_worker_payment_settlement_columns,
     ensure_academic_results_tables,
     ensure_progress_report_tables,
+    ensure_studentstatus_pending_enum_value,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -50,6 +53,7 @@ def on_startup():
     # Always ensure attendance mark-in/out columns exist.
     # Prevents runtime failures when code is updated before a manual migration.
     try:
+        ensure_studentstatus_pending_enum_value()
         ensure_attendance_mark_columns()
         ensure_attendance_verified_at_column()
         ensure_attendance_qr_source_columns()
@@ -60,6 +64,8 @@ def on_startup():
         ensure_school_settlement_schema()
         ensure_worker_payment_settlement_columns()
         ensure_self_signed_student_teacher_id_column()
+        ensure_self_signed_teacher_teaching_configuration_table()
+        ensure_self_signed_student_additional_columns()
         ensure_academic_results_tables()
         ensure_progress_report_tables()
     except Exception as e:

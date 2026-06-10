@@ -6,6 +6,7 @@ from enum import Enum as PyEnum
 from sqlalchemy import Enum as SQLEnum
 
 class StudentStatus(PyEnum):
+    PENDING = "PENDING"
     TRIAL = "TRIAL"
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -133,11 +134,19 @@ class SelfSignedStudent(Base):
     email = Column(String(255), nullable=False, unique=True)
     self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=True)
 
+    gender = Column(String(20), nullable=False)
+    dob = Column(Date, nullable=True)
+    student_type = Column(String(20), nullable=False)
     select_board = Column(String(50), nullable=True)
     select_medium = Column(String(50), nullable=True)
     select_class_id = Column(Integer, ForeignKey("school_classes_subjects.id"), nullable=True)
     school_name = Column(String(255), nullable=True)
     school_location = Column(String(255), nullable=True)
+    roll_number = Column(String(50), nullable=True)
+    previous_school_name = Column(String(255), nullable=True)
+    previous_class_marks_obtained = Column(Integer, nullable=True)
+    previous_class_overall_percentage = Column(Float, nullable=True)
+    previous_class_final_grade = Column(String(20), nullable=True)
 
     pin = Column(Integer, nullable=True)
     division = Column(String(100), nullable=True)
@@ -145,7 +154,7 @@ class SelfSignedStudent(Base):
     state = Column(String(100), nullable=True)
 
     plot = Column(String(255), nullable=True)
-    status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False)
+    status = Column(Enum(StudentStatus), default=StudentStatus.PENDING.value, nullable=False)
     status_expiry_date = Column(DateTime, nullable=True)
 
     #parent details
