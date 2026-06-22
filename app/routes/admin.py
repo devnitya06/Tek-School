@@ -2099,7 +2099,7 @@ def get_class_subjects(
     school_medium: str | None = None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT)),
+    current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT, UserRole.SELF_SIGNED_TEACHER)),
 ):
     try:
         query = db.query(
