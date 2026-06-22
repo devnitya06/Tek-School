@@ -2296,6 +2296,7 @@ def get_all_classes(
             UserRole.TEACHER,
             UserRole.STUDENT,
             UserRole.SELF_SIGNED_STUDENT,
+            UserRole.SELF_SIGNED_TEACHER,
         )
     ),
 ):
