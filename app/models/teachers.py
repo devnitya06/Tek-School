@@ -1,6 +1,6 @@
 from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey, Time, Enum as SQLEnum, UniqueConstraint, Boolean, Float
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import relationship, synonym
+from sqlalchemy.orm import relationship, synonym, foreign, remote
 from app.db.session import Base
 from enum import Enum
 import uuid
@@ -69,6 +69,16 @@ class Teacher(Base):
     payment = relationship("TeacherStaffPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
     assigned_doubts = relationship("DoubtTeacher", back_populates="teacher")
     responses = relationship("DoubtResponse", back_populates="teacher")
+    assignments = relationship("Assignment", back_populates="created_by_teacher")
+    ratings = relationship(
+        "TeacherRating",
+        back_populates="teacher",
+        cascade="all, delete-orphan",
+        primaryjoin="Teacher.user_id == foreign(TeacherRating.teacher_user_id)",
+        remote_side="Teacher.user_id",
+    )
+    avg_rating = Column(Float, default=0.0)
+    rating_count = Column(Integer, default=0)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -176,7 +186,7 @@ class TeacherClassSectionSubject(Base):
         UniqueConstraint("teacher_id", "class_id", "section_id", "subject_id", name="unique_teacher_assignment"),
     )
 
-    teacher = relationship("Teacher", backref="assignments")
+    teacher = relationship("Teacher", backref="class_section_subjects")
     school = relationship("School", backref="teacher_assignments")
     section = relationship("Section")
     subject = relationship("Subject")

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results
+from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.core.config import settings
 from app.db.session import (
     create_tables,
@@ -16,6 +17,7 @@ from app.db.session import (
     ensure_self_signed_student_teacher_id_column,
     ensure_self_signed_teacher_teaching_configuration_table,
     ensure_self_signed_student_additional_columns,
+    ensure_assignment_tables,
     ensure_worker_payment_settlement_columns,
     ensure_academic_results_tables,
     ensure_progress_report_tables,
@@ -47,6 +49,7 @@ app.include_router(exams.router,prefix="/exam",tags=["Exam"])
 app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business Inquiry"])
 app.include_router(progress_reports.router, prefix="/progress-reports", tags=["Progress Reports"])
 app.include_router(academic_results.router, prefix="/academic-results", tags=["Academic Results"])
+app.include_router(assignment_routes, tags=["Assignments"])
 
 @app.on_event("startup")
 def on_startup():
@@ -54,6 +57,9 @@ def on_startup():
     # Prevents runtime failures when code is updated before a manual migration.
     try:
         ensure_studentstatus_pending_enum_value()
+        # Ensure assignmentstatus enum labels include required values used by the code
+        from app.db.session import ensure_assignmentstatus_enum_values
+        ensure_assignmentstatus_enum_values()
         ensure_attendance_mark_columns()
         ensure_attendance_verified_at_column()
         ensure_attendance_qr_source_columns()
@@ -66,6 +72,7 @@ def on_startup():
         ensure_self_signed_student_teacher_id_column()
         ensure_self_signed_teacher_teaching_configuration_table()
         ensure_self_signed_student_additional_columns()
+        ensure_assignment_tables()
         ensure_academic_results_tables()
         ensure_progress_report_tables()
     except Exception as e:
