@@ -1,7 +1,9 @@
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
+import time
 
 
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
@@ -16,11 +18,47 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+
+def retry_db_operation(operation, retries=3, delay=1):
+    last_exception = None
+    for attempt in range(retries):
+        try:
+            return operation()
+        except OperationalError as exc:
+            last_exception = exc
+            engine.dispose()
+            time.sleep(delay)
+    raise last_exception
+
+
+def inspect_engine():
+    return retry_db_operation(lambda: inspect(engine))
+
 # Import all models to ensure they're registered with Base
 from app.models.users import *
 from app.models.school import *
 from app.models.teachers import *
 from app.models.students import *
+from app.models.assignments.assignment import (
+    Assignment,
+    AssignmentActivityTask,
+    StudentAssignmentProgress,
+    AssignmentActivityTaskStatus,
+    AssignmentKeyPoint,
+    AssignmentQuestion,
+    AssignmentImage,
+    AssignmentPDF,
+    AssignmentVideoLink,
+    AssignmentMediaBanner,
+    PublishConfiguration,
+    StudentAssignmentAttempt,
+    ChapterFeedback,
+    TeacherRating,
+    AssignmentView,
+    AssignmentDoubt,
+    DoubtReply,
+    AssignmentReport,
+)
 from app.models.admin import *
 from app.models.staff import *
 from app.models.progress_reports import *
@@ -32,7 +70,7 @@ def create_tables():
 
 def column_exists(table_name, column_name):
     """Check if a column exists in a table"""
-    inspector = inspect(engine)
+    inspector = inspect_engine()
     if not inspector.has_table(table_name):
         return False
     columns = inspector.get_columns(table_name)
@@ -40,7 +78,7 @@ def column_exists(table_name, column_name):
 
 def add_missing_columns():
     """Add missing columns to existing tables"""
-    inspector = inspect(engine)
+    inspector = inspect_engine()
     
     for table_name in Base.metadata.tables.keys():
         if inspector.has_table(table_name):
@@ -72,7 +110,7 @@ def add_missing_columns():
                         
                         conn.execute(text(alter_stmt))
 def drop_extra_columns():
-    inspector = inspect(engine)
+    inspector = inspect_engine()
     
     for table_name in Base.metadata.tables.keys():
         if inspector.has_table(table_name):
@@ -99,7 +137,7 @@ def ensure_attendance_qr_token_columns():
 
 def ensure_staff_school_id_nullable():
     """Allow platform staff (admin/superadmin) with no school."""
-    inspector = inspect(engine)
+    inspector = inspect_engine()
     if not inspector.has_table("staff"):
         return
     for col in inspector.get_columns("staff"):
@@ -274,6 +312,97 @@ def ensure_self_signed_student_additional_columns():
         conn.execute(text('ALTER TABLE self_signed_students ADD COLUMN IF NOT EXISTS "previous_class_final_grade" VARCHAR(20) NULL'))
 
 
+def ensure_assignment_activity_tables():
+    """Ensure assignment activity tables exist even when RUN_SCHEMA_SYNC is disabled."""
+    # assignment_activity models merged into assignments module; no-op maintained for compatibility.
+    return
+
+
+def ensure_assignment_tables():
+    """Ensure core assignment module tables exist even when RUN_SCHEMA_SYNC is disabled."""
+    from app.models.assignments.assignment import (
+        Assignment,
+        AssignmentActivityTask,
+        StudentAssignmentProgress,
+        AssignmentActivityTaskStatus,
+        AssignmentKeyPoint,
+        AssignmentQuestion,
+        AssignmentImage,
+        AssignmentPDF,
+        AssignmentVideoLink,
+        AssignmentMediaBanner,
+        PublishConfiguration,
+        StudentAssignmentAttempt,
+        ChapterFeedback,
+        TeacherRating,
+        AssignmentView,
+        AssignmentDoubt,
+        DoubtReply,
+        AssignmentReport,
+    )
+
+    Assignment.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect(engine)
+    if inspector.has_table("assignments"):
+        if not column_exists("assignments", "created_by_teacher_id"):
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE assignments ADD COLUMN IF NOT EXISTS created_by_teacher_id VARCHAR NULL'))
+        if not column_exists("assignments", "created_by_self_signed_teacher_id"):
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE assignments ADD COLUMN IF NOT EXISTS created_by_self_signed_teacher_id INTEGER NULL'))
+        if not column_exists("assignments", "activity_type"):
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE assignments ADD COLUMN IF NOT EXISTS activity_type VARCHAR(255) NOT NULL DEFAULT 'Academic'"))
+        for col_name, col_type in [
+            ("class_id", "INTEGER"),
+            ("subject_id", "INTEGER"),
+            ("chapter_id", "INTEGER"),
+            ("chapter_ids", "INTEGER[]"),
+        ]:
+            if not column_exists("assignments", col_name):
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE assignments ADD COLUMN IF NOT EXISTS {col_name} {col_type} NULL"))
+
+        # Ensure key point image_url column exists when table already present
+        if inspector.has_table("assignment_key_points"):
+            if not column_exists("assignment_key_points", "image_url"):
+                with engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE assignment_key_points ADD COLUMN IF NOT EXISTS image_url VARCHAR NULL'))
+
+    # Create merged activity-related tables as part of assignments
+    AssignmentActivityTask.__table__.create(bind=engine, checkfirst=True)
+    StudentAssignmentProgress.__table__.create(bind=engine, checkfirst=True)
+    AssignmentActivityTaskStatus.__table__.create(bind=engine, checkfirst=True)
+    AssignmentKeyPoint.__table__.create(bind=engine, checkfirst=True)
+    AssignmentQuestion.__table__.create(bind=engine, checkfirst=True)
+    AssignmentImage.__table__.create(bind=engine, checkfirst=True)
+    AssignmentPDF.__table__.create(bind=engine, checkfirst=True)
+    AssignmentVideoLink.__table__.create(bind=engine, checkfirst=True)
+    AssignmentMediaBanner.__table__.create(bind=engine, checkfirst=True)
+    PublishConfiguration.__table__.create(bind=engine, checkfirst=True)
+    StudentAssignmentAttempt.__table__.create(bind=engine, checkfirst=True)
+    ChapterFeedback.__table__.create(bind=engine, checkfirst=True)
+    TeacherRating.__table__.create(bind=engine, checkfirst=True)
+    AssignmentView.__table__.create(bind=engine, checkfirst=True)
+    AssignmentDoubt.__table__.create(bind=engine, checkfirst=True)
+    DoubtReply.__table__.create(bind=engine, checkfirst=True)
+    AssignmentReport.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_assignment_activity_chapter_ids_column():
+    """Ensure assignment activities can store multiple chapter/topic IDs."""
+    # Ensure assignments table has chapter_ids column (merged from assignment_activities)
+    if not inspector.has_table("assignments"):
+        return
+
+    if column_exists("assignments", "chapter_ids"):
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE assignments ADD COLUMN IF NOT EXISTS chapter_ids INTEGER[] NULL'))
+
+
 def ensure_worker_payment_settlement_columns():
     """
     Worker payments must track bank/cash source for settlement ledger alignment.
@@ -314,6 +443,41 @@ def ensure_studentstatus_pending_enum_value():
                 conn.execute(text("ALTER TYPE studentstatus ADD VALUE 'PENDING'"))
     except Exception as e:
         print(f"Skipping or failed to alter studentstatus enum (likely not PostgreSQL): {e}")
+
+
+def ensure_assignmentstatus_enum_values():
+    """Ensure the PostgreSQL enum `assignmentstatus` contains the values we use in code.
+
+    Adds any missing lowercase labels (e.g. 'draft','published','unpublished','in_progress','completed').
+    Safe-noop on non-Postgres backends or when the type doesn't exist.
+    """
+    required = [
+        'draft',
+        'published',
+        'unpublished',
+        'in_progress',
+        'completed',
+    ]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT e.enumlabel FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid WHERE t.typname = 'assignmentstatus'"))
+            labels = [r[0] for r in result.fetchall()]
+
+        missing = [v for v in required if v not in labels]
+        if not missing:
+            return
+
+        # ALTER TYPE ... ADD VALUE must run in its own transaction/autocommit
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            for v in missing:
+                try:
+                    conn.execute(text(f"ALTER TYPE assignmentstatus ADD VALUE '{v}'"))
+                except Exception:
+                    # If adding a value fails (concurrent change or missing type), ignore and continue
+                    pass
+    except Exception as e:
+        # Non-Postgres or other error; log and continue
+        print(f"Skipping or failed to ensure assignmentstatus enum values: {e}")
 
 
 # Dependency to get DB session

@@ -315,6 +315,8 @@ class Chapter(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    original_book_content = Column(Text, nullable=True)
+    summarized_content = Column(Text, nullable=True)
 
     school_class_subject_id = Column(
         Integer, ForeignKey("school_classes_subjects.id", ondelete="CASCADE")

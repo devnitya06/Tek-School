@@ -87,6 +87,9 @@ class ChapterKeyPointBase(BaseModel):
 class ChapterCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    # Business rule: Original book content is mandatory for chapters
+    original_book_content: str
+    summarized_content: Optional[str] = None
     videos: Optional[List[ChapterContentBase]] = []
     images: Optional[List[ChapterContentBase]] = []
     pdfs: Optional[List[ChapterContentBase]] = []

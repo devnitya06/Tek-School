@@ -2099,7 +2099,7 @@ def get_class_subjects(
     school_medium: str | None = None,
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT)),
+    current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT, UserRole.SELF_SIGNED_TEACHER)),
 ):
     try:
         query = db.query(
@@ -2168,13 +2168,13 @@ def get_class_subjects(
 def create_class_subjects(
     payload: SchoolClassSubjectBase,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
+    current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
 ):
     # Access control
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin account is allowed to create class subjects.",
+            detail="Only admin or superadmin accounts are allowed to create class subjects.",
         )
 
     try:
@@ -2296,6 +2296,7 @@ def get_all_classes(
             UserRole.TEACHER,
             UserRole.STUDENT,
             UserRole.SELF_SIGNED_STUDENT,
+            UserRole.SELF_SIGNED_TEACHER,
         )
     ),
 ):

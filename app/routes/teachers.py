@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status,Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from app.core.dependencies import get_current_user
 from app.models.students import Student
 from app.models.users import User, Otp
 from app.models.teachers import *
-from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum, LeaveRequest, LeaveStatus
+from app.models.school import School,Attendance,Class,Section,Subject,Exam,class_subjects,ExamTypeEnum, LeaveRequest, LeaveStatus, SchoolBoard, SchoolMedium
 from app.models.staff import Staff, DesignationCompensationTemplate
 from app.schemas.users import UserRole
 from app.schemas.teachers import *
@@ -13,15 +13,18 @@ from app.db.session import get_db
 from app.utils.email_utility import generate_otp
 from datetime import datetime, timedelta, date
 from calendar import month_name
+import json
 from typing import List
 from sqlalchemy import func, and_ ,desc
 from app.core.security import create_verification_token
 from app.utils.email_utility import send_dynamic_email
-from app.utils.s3 import upload_base64_to_s3
 from app.services.pagination import PaginationParams
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 from app.models.admin import Chapter
+from app.models.admin import ChapterVideo, ChapterImage, ChapterPDF, ChapterQnA, ChapterKeyPoint, SchoolClassSubject
+from app.models.teachers import TeacherClassSectionSubject
+from app.schemas.admin import ChapterCreate
 from app.utils.permission import verify_school_business_access
 from app.utils.school_settlement import record_school_salary_payout
 
@@ -221,6 +224,7 @@ def create_teacher(
     except SQLAlchemyError as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 
 @router.get("/all-teacher/")
 def get_all_teachers_for_school(
