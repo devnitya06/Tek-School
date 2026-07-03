@@ -249,6 +249,8 @@ def ensure_staff_teacher_boss_columns():
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "mark_out_time" TIME NULL'))
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "employee_grade" VARCHAR(100) NULL'))
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "is_active_hr_service" BOOLEAN NULL'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "avg_rating" FLOAT DEFAULT 0.0'))
+        conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "rating_count" INTEGER DEFAULT 0'))
         conn.execute(
             text(
                 """
