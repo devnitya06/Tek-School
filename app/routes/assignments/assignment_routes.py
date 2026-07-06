@@ -24,6 +24,9 @@ from app.schemas.assignments.assignment import (
     AssignmentReportCreate,
     AssignmentReportResponse,
     TeacherProfileResponse,
+    FavoriteTeacherCreate,
+    FavoriteTeacherResponse,
+    FavoriteTeacherListResponse,
 )
 from app.models.assignments.assignment import (
     Assignment,
@@ -42,6 +45,7 @@ from app.models.assignments.assignment import (
     AssignmentDoubt,
     DoubtReply,
     AssignmentReport,
+    FavoriteTeacher,
 )
 from app.models.users import User
 from app.models.teachers import Teacher, SelfSignedTeacher, SelfSignedTeacherTeachingConfiguration, TeacherClassSectionSubject
@@ -61,6 +65,14 @@ def _get_teacher_for_user(db: Session, user: User):
     return None
 
 
+def _get_student_for_user(db: Session, user: User):
+    if user.role == UserRole.STUDENT:
+        return db.query(Student).filter(Student.user_id == user.id).first()
+    if user.role == UserRole.SELF_SIGNED_STUDENT:
+        return db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == user.id).first()
+    return None
+
+
 def _build_self_signed_teacher_school_info(teacher_obj: SelfSignedTeacher) -> dict:
     school_name = teacher_obj.institution_name or None
     address_parts = [
@@ -75,6 +87,154 @@ def _build_self_signed_teacher_school_info(teacher_obj: SelfSignedTeacher) -> di
         "school_name": school_name,
         "school_address": school_address,
     }
+
+
+def _resolve_teacher_profile_by_id(db: Session, teacher_id: str):
+    teacher_obj = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+    if teacher_obj:
+        return teacher_obj, "teacher"
+
+    if teacher_id.isdigit():
+        self_signed_teacher = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.id == int(teacher_id)).first()
+        if self_signed_teacher:
+            return self_signed_teacher, "self_signed_teacher"
+
+    return None, None
+
+
+def _get_teacher_display_name(db: Session, teacher_id: str, teacher_type: str) -> Optional[str]:
+    if teacher_type == "teacher":
+        teacher_obj = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+        if teacher_obj:
+            return f"{teacher_obj.first_name} {teacher_obj.last_name}".strip()
+    elif teacher_type == "self_signed_teacher" and teacher_id.isdigit():
+        teacher_obj = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.id == int(teacher_id)).first()
+        if teacher_obj:
+            return f"{teacher_obj.first_name} {teacher_obj.last_name}".strip()
+    return None
+
+
+def _get_favorite_teacher_count(db: Session, teacher_id: str, teacher_type: str) -> int:
+    return (
+        db.query(func.count(FavoriteTeacher.id))
+        .filter(FavoriteTeacher.teacher_id == str(teacher_id))
+        .filter(FavoriteTeacher.teacher_type == teacher_type)
+        .scalar()
+        or 0
+    )
+
+
+@router.post("/my/favorite-teachers", response_model=FavoriteTeacherResponse)
+def add_favorite_teacher(
+    data: FavoriteTeacherCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students may manage favorite teachers.")
+
+    teacher_obj, teacher_type = _resolve_teacher_profile_by_id(db, data.teacher_id)
+    if not teacher_obj:
+        raise HTTPException(status_code=404, detail="Teacher not found.")
+
+    favorite = (
+        db.query(FavoriteTeacher)
+        .filter(FavoriteTeacher.student_user_id == current_user.id)
+        .filter(FavoriteTeacher.teacher_id == str(data.teacher_id))
+        .filter(FavoriteTeacher.teacher_type == teacher_type)
+        .first()
+    )
+    if favorite:
+        return FavoriteTeacherResponse(teacher_id=str(data.teacher_id), is_favorite=True)
+
+    favorite = FavoriteTeacher(
+        student_user_id=current_user.id,
+        teacher_id=str(data.teacher_id),
+        teacher_type=teacher_type,
+    )
+    db.add(favorite)
+    db.commit()
+    db.refresh(favorite)
+    return FavoriteTeacherResponse(teacher_id=str(data.teacher_id), is_favorite=True)
+
+
+@router.get("/my/favorite-teachers", response_model=List[FavoriteTeacherListResponse])
+def list_favorite_teachers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students may view favorite teachers.")
+
+    favorites = (
+        db.query(FavoriteTeacher)
+        .filter(FavoriteTeacher.student_user_id == current_user.id)
+        .all()
+    )
+
+    results = []
+    for fav in favorites:
+        results.append(
+            FavoriteTeacherListResponse(
+                teacher_id=fav.teacher_id,
+                teacher_name=_get_teacher_display_name(db, fav.teacher_id, fav.teacher_type),
+                teacher_type=fav.teacher_type,
+                is_favorite=True,
+            )
+        )
+    return results
+
+
+@router.get("/my/favorite-teachers/{teacher_id}", response_model=FavoriteTeacherResponse)
+def check_favorite_teacher(
+    teacher_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students may view favorite teachers.")
+
+    teacher_obj, teacher_type = _resolve_teacher_profile_by_id(db, teacher_id)
+    if not teacher_obj:
+        raise HTTPException(status_code=404, detail="Teacher not found.")
+
+    favorite_exists = (
+        db.query(FavoriteTeacher)
+        .filter(FavoriteTeacher.student_user_id == current_user.id)
+        .filter(FavoriteTeacher.teacher_id == str(teacher_id))
+        .filter(FavoriteTeacher.teacher_type == teacher_type)
+        .first()
+    ) is not None
+
+    return FavoriteTeacherResponse(teacher_id=str(teacher_id), is_favorite=favorite_exists)
+
+
+@router.delete("/my/favorite-teachers/{teacher_id}", response_model=FavoriteTeacherResponse)
+def remove_favorite_teacher(
+    teacher_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students may manage favorite teachers.")
+
+    teacher_obj, teacher_type = _resolve_teacher_profile_by_id(db, teacher_id)
+    if not teacher_obj:
+        raise HTTPException(status_code=404, detail="Teacher not found.")
+
+    favorite = (
+        db.query(FavoriteTeacher)
+        .filter(FavoriteTeacher.student_user_id == current_user.id)
+        .filter(FavoriteTeacher.teacher_id == str(teacher_id))
+        .filter(FavoriteTeacher.teacher_type == teacher_type)
+        .first()
+    )
+    if not favorite:
+        raise HTTPException(status_code=404, detail="Favorite teacher not found.")
+
+    db.delete(favorite)
+    db.commit()
+    return FavoriteTeacherResponse(teacher_id=str(teacher_id), is_favorite=False)
 
 
 @router.get("/assignments/catalog", response_model=List[AssignmentResponse])
@@ -575,7 +735,7 @@ def get_all_assignments(
         student_obj = _get_student_for_user(db, current_user)
         if not student_obj:
             raise HTTPException(status_code=404, detail="Student profile not found.")
-        
+
         class_group = None
         if getattr(student_obj, "select_class_id", None):
             class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
@@ -621,13 +781,6 @@ def get_all_assignments(
         "skip": skip,
         "limit": limit,
     }
-
-
-    if user.role == UserRole.STUDENT:
-        return db.query(Student).filter(Student.user_id == user.id).first()
-    if user.role == UserRole.SELF_SIGNED_STUDENT:
-        return db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == user.id).first()
-    return None
 
 
 def _build_teacher_school_denorm(teacher_obj):
@@ -750,15 +903,17 @@ def _validate_pdf_file(file: UploadFile) -> str:
 
 def _validate_video_urls(video_urls: Optional[List[str]]) -> List[str]:
     """Validate video URLs: max 3, HTTPS only. Raise HTTPException on validation failure."""
-    if not video_urls:
+    if video_urls is None:
         return []
+    if not isinstance(video_urls, list):
+        raise HTTPException(status_code=400, detail="video_links must be a list of HTTPS URLs")
     
     if len(video_urls) > 3:
         raise HTTPException(status_code=400, detail="Maximum 3 video URLs allowed per assignment")
     
     for url in video_urls:
-        if not url.startswith("https://"):
-            raise HTTPException(status_code=400, detail="Video URLs must use HTTPS")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise HTTPException(status_code=400, detail="Video URLs must be HTTPS strings")
     
     return video_urls
 
@@ -793,6 +948,8 @@ async def create_assignment(
         data_dict = json.loads(assignment_data)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid assignment_data JSON")
+    if not isinstance(data_dict, dict):
+        raise HTTPException(status_code=400, detail="assignment_data must be a JSON object")
     
     # Validate required fields
     required_fields = ["board", "class_name", "subject", "chapter_number", "topic_title"]
@@ -869,6 +1026,10 @@ async def create_assignment(
 
     # Validate video URLs if provided
     video_urls = _validate_video_urls(data_dict.get("video_links", []))
+    if "key_points" in data_dict and data_dict["key_points"] is not None and not isinstance(data_dict["key_points"], list):
+        raise HTTPException(status_code=400, detail="key_points must be a list")
+    if "questions" in data_dict and data_dict["questions"] is not None and not isinstance(data_dict["questions"], list):
+        raise HTTPException(status_code=400, detail="questions must be a list")
     
     # Enforce chapter creation constraints:
     # 1) A single user cannot create more than one assignment for the same (board, class_name, chapter_number)
@@ -1090,7 +1251,12 @@ def get_assignment(
             if not assignment.school_name and teacher.school is not None:
                 assignment.school_name = teacher.school.school_name
             if not assignment.school_address and teacher.school is not None:
-                assignment.school_address = teacher.school.school_address
+                assignment.school_address = assignment.school_address or ", ".join(filter(None, [
+                    teacher.school.school_location,
+                    teacher.school.district,
+                    teacher.school.state,
+                    teacher.school.pin_code,
+                ]))
 
     if assignment.created_by_self_signed_teacher_id is None and assignment.created_by_user_id is not None:
         self_signed_teacher = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.user_id == assignment.created_by_user_id).first()
@@ -1098,6 +1264,14 @@ def get_assignment(
             assignment.created_by_self_signed_teacher_id = self_signed_teacher.id
             if not assignment.teacher_name:
                 assignment.teacher_name = f"{self_signed_teacher.first_name} {self_signed_teacher.last_name}".strip()
+
+    # Add creator favorite count to assignment response payload
+    creator_teacher_id = assignment.created_by_teacher_id or assignment.created_by_self_signed_teacher_id
+    if creator_teacher_id is not None:
+        creator_type = "teacher" if assignment.created_by_teacher_id is not None else "self_signed_teacher"
+        assignment.creator_favorite_count = _get_favorite_teacher_count(db, str(creator_teacher_id), creator_type)
+    else:
+        assignment.creator_favorite_count = 0
 
     return assignment
 
@@ -1175,6 +1349,8 @@ def list_student_assignments(
     student = _get_student_for_user(db, current_user)
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found.")
+    if student.id != student_id:
+        raise HTTPException(status_code=403, detail="Cannot view assignments for another student.")
 
     query = db.query(Assignment).filter(Assignment.status == AssignmentStatus.PUBLISHED)
     if board:

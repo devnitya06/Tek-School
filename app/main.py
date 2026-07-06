@@ -72,6 +72,7 @@ def on_startup():
         ensure_self_signed_student_teacher_id_column()
         ensure_self_signed_teacher_teaching_configuration_table()
         ensure_self_signed_student_additional_columns()
+        create_tables()
         ensure_assignment_tables()
         ensure_academic_results_tables()
         ensure_progress_report_tables()

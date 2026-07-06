@@ -58,6 +58,7 @@ from app.models.assignments.assignment import (
     AssignmentDoubt,
     DoubtReply,
     AssignmentReport,
+    FavoriteTeacher,
 )
 from app.models.admin import *
 from app.models.staff import *
@@ -344,6 +345,7 @@ def ensure_assignment_tables():
     )
 
     Assignment.__table__.create(bind=engine, checkfirst=True)
+    FavoriteTeacher.__table__.create(bind=engine, checkfirst=True)
 
     inspector = inspect(engine)
     if inspector.has_table("assignments"):

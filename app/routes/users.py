@@ -180,6 +180,24 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
     db.commit()
 
     # 🔹 Send credentials
+    password_prefix = user.name or user.email.split("@")[0]
+    raw_password = generate_password(prefix=password_prefix)
+    user.hashed_password = get_password_hash(raw_password)
+    user.is_verified = True
+    otp_entry.is_verified = True
+
+    # 🔹 Update SelfSignedStudent status to TRIAL
+    student_profile = db.query(SelfSignedStudent).filter(SelfSignedStudent.user_id == user.id).first()
+    print(f"[verify_otp] student_profile={student_profile}, status={student_profile.status if student_profile else 'NOT FOUND'}, type={type(student_profile.status) if student_profile else None}")
+    if student_profile:
+        current = str(student_profile.status)  # handles both enum obj and string
+        if current in ("PENDING", "StudentStatus.PENDING"):
+            student_profile.status = StudentStatus.TRIAL.value
+            student_profile.status_expiry_date = datetime.utcnow() + timedelta(days=30)
+            print(f"[verify_otp] ✅ Status updated to TRIAL for user_id={user.id}")
+
+    db.commit()
+
     send_dynamic_email(
         context_key="credential.html",
         subject="Your Credentials",
@@ -217,7 +235,8 @@ def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
         db.commit()
         return {"detail": "Account is already verified."}
 
-    raw_password = generate_password()
+    prefix_source = user.name or user.email.split("@")[0]
+    raw_password = generate_password(prefix=prefix_source)
     user.hashed_password = get_password_hash(raw_password)
     user.is_verified = True
 

@@ -12,10 +12,19 @@ from app.core.config import settings
 # Load templates from templates folder
 templates_env = Environment(loader=FileSystemLoader('app/templates'))
 
-def generate_password():
-    return ''.join(
-        random.choices(string.ascii_letters + string.digits + string.punctuation, k=10)
-    )
+def generate_password(prefix: str = None) -> str:
+    symbol = random.choice("@#$")
+    digits = ''.join(str(secrets.randbelow(10)) for _ in range(4))
+    if prefix:
+        clean_prefix = ''.join(ch for ch in prefix if ch.isalnum()).lower()[:4]
+        if clean_prefix:
+            prefix = clean_prefix.capitalize()
+        else:
+            prefix = ''.join(random.choices(string.ascii_lowercase, k=4)).capitalize()
+    else:
+        prefix = ''.join(random.choices(string.ascii_lowercase, k=4)).capitalize()
+    return f"{prefix}{symbol}{digits}"
+
 
 def generate_otp(length: int = 6) -> str:
     return ''.join(str(secrets.randbelow(10)) for _ in range(length))

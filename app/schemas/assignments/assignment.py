@@ -299,6 +299,28 @@ class AssignmentUpdate(AssignmentBase):
     questions: Optional[List[AssignmentQuestionCreate]] = None
     tasks: Optional[List[AssignmentTaskCreate]] = None # New field
 
+class FavoriteTeacherCreate(BaseModel):
+    teacher_id: str
+
+
+class FavoriteTeacherResponse(BaseModel):
+    teacher_id: str
+    is_favorite: bool
+
+    class Config:
+        orm_mode = True
+
+
+class FavoriteTeacherListResponse(BaseModel):
+    teacher_id: str
+    teacher_name: Optional[str] = None
+    teacher_type: str
+    is_favorite: bool = True
+
+    class Config:
+        orm_mode = True
+
+
 class AssignmentResponse(AssignmentBase):
     id: int
     created_by_user_id: Optional[int] = None # Can be null now for self-signed
@@ -312,6 +334,7 @@ class AssignmentResponse(AssignmentBase):
     teacher_name: Optional[str] = None
     school_name: Optional[str] = None
     school_address: Optional[str] = None
+    creator_favorite_count: int = 0
 
     @root_validator(pre=True)
     def populate_teacher_id(cls, values):

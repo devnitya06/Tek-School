@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float, Enum, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float, Enum, Text, UniqueConstraint
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -140,6 +140,19 @@ class Assignment(Base):
     # Unified doubts and reports
     doubts = relationship("AssignmentDoubt", back_populates="assignment", cascade="all, delete-orphan")
     reports = relationship("AssignmentReport", back_populates="assignment", cascade="all, delete-orphan")
+
+class FavoriteTeacher(Base):
+    __tablename__ = "favorite_teachers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    teacher_id = Column(String, nullable=False)
+    teacher_type = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("student_user_id", "teacher_id", name="uq_student_teacher_favorite"),
+    )
 
 # --- New Models merged from AssignmentActivity ---
 
