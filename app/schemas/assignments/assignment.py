@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import List, Optional, Union
 from datetime import datetime
 from app.models.assignments.assignment import AssignmentStatus, AssignmentType, StudentImprovementCategory, DoubtStatus, ReportCategory, ReportStatus, TaskStatus # Import new enums and TaskStatus
 import json
@@ -302,7 +302,8 @@ class AssignmentUpdate(AssignmentBase):
 class AssignmentResponse(AssignmentBase):
     id: int
     created_by_user_id: Optional[int] = None # Can be null now for self-signed
-    created_by_teacher_id: Optional[str] = None # New field
+    created_by_teacher_id: Optional[Union[str, int]] = None # New field
+    teacher_id: Optional[Union[str, int]] = None # Alias for created_by_teacher_id / self-signed teacher id
     created_by_self_signed_teacher_id: Optional[int] = None # New field
     status: AssignmentStatus
     created_at: datetime
@@ -311,6 +312,27 @@ class AssignmentResponse(AssignmentBase):
     teacher_name: Optional[str] = None
     school_name: Optional[str] = None
     school_address: Optional[str] = None
+
+    @root_validator(pre=True)
+    def populate_teacher_id(cls, values):
+        if isinstance(values, dict):
+            teacher_id = values.get("teacher_id")
+            if teacher_id is not None:
+                return values
+            if values.get("created_by_teacher_id") is not None:
+                values["teacher_id"] = values.get("created_by_teacher_id")
+            elif values.get("created_by_self_signed_teacher_id") is not None:
+                values["teacher_id"] = values.get("created_by_self_signed_teacher_id")
+            return values
+
+        teacher_id = getattr(values, "teacher_id", None)
+        if teacher_id is not None:
+            return values
+        if getattr(values, "created_by_teacher_id", None) is not None:
+            setattr(values, "teacher_id", getattr(values, "created_by_teacher_id"))
+        elif getattr(values, "created_by_self_signed_teacher_id", None) is not None:
+            setattr(values, "teacher_id", getattr(values, "created_by_self_signed_teacher_id"))
+        return values
 
     # Computed counts
     participants_count: int = 0

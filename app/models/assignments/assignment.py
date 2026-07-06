@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float, Enum, Text
 from sqlalchemy.types import TypeDecorator
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.dialects.postgresql import ARRAY
 from app.db.session import Base
 from datetime import datetime
@@ -85,6 +85,7 @@ class Assignment(Base):
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Can be null for self-signed teachers for now
     created_by_teacher_id = Column(String, ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True) # From AssignmentActivity
     created_by_self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id", ondelete="SET NULL"), nullable=True) # From AssignmentActivity
+    teacher_id = synonym("created_by_teacher_id")
     
     status = Column(StringEnum(AssignmentStatus), default=AssignmentStatus.DRAFT, nullable=False)
 

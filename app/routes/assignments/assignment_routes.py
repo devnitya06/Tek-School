@@ -61,6 +61,22 @@ def _get_teacher_for_user(db: Session, user: User):
     return None
 
 
+def _build_self_signed_teacher_school_info(teacher_obj: SelfSignedTeacher) -> dict:
+    school_name = teacher_obj.institution_name or None
+    address_parts = [
+        teacher_obj.landmark,
+        teacher_obj.division,
+        teacher_obj.district,
+        teacher_obj.state,
+        teacher_obj.institution_pin_code,
+    ]
+    school_address = ", ".join(filter(None, [part.strip() for part in address_parts if part])) if any(address_parts) else None
+    return {
+        "school_name": school_name,
+        "school_address": school_address,
+    }
+
+
 @router.get("/assignments/catalog", response_model=List[AssignmentResponse])
 def get_assignments_catalog(
     board: str = Query(..., description="Board name (e.g., cbse, icse)"),
@@ -621,11 +637,17 @@ def _build_teacher_school_denorm(teacher_obj):
             "school_name": None,
             "school_address": None,
         }
-
     school = getattr(teacher_obj, "school", None)
     if school:
-        school_name = school.name
-        school_address = ", ".join(filter(None, [school.address, school.city, school.state]))
+        # School model uses `school_name` and address fields like `school_location`, `district`, `state`, `pin_code`
+        school_name = getattr(school, "school_name", None)
+        address_parts = [
+            getattr(school, "school_location", None),
+            getattr(school, "district", None),
+            getattr(school, "state", None),
+            getattr(school, "pin_code", None),
+        ]
+        school_address = ", ".join(filter(None, [str(p).strip() for p in address_parts if p])) or None
     else:
         school_name = None
         school_address = None
@@ -653,15 +675,39 @@ def _pending_tasks_count(assignment: Assignment) -> int:
     return count
 
 
-def _compute_teacher_stats(db: Session, teacher_user_id: int) -> dict:
-    assignment_count = db.query(func.count(Assignment.id)).filter(Assignment.created_by_user_id == teacher_user_id).scalar() or 0
-    participant_count = (
-        db.query(func.count(StudentAssignmentAttempt.id))
-        .join(Assignment, Assignment.id == StudentAssignmentAttempt.assignment_id)
-        .filter(Assignment.created_by_user_id == teacher_user_id)
-        .scalar()
-        or 0
-    )
+def _compute_teacher_stats(db: Session, teacher_obj) -> dict:
+    if isinstance(teacher_obj, Teacher):
+        assignment_count = (
+            db.query(func.count(Assignment.id))
+            .filter(Assignment.created_by_teacher_id == teacher_obj.id)
+            .scalar()
+            or 0
+        )
+        participant_count = (
+            db.query(func.count(StudentAssignmentAttempt.id))
+            .join(Assignment, Assignment.id == StudentAssignmentAttempt.assignment_id)
+            .filter(Assignment.created_by_teacher_id == teacher_obj.id)
+            .scalar()
+            or 0
+        )
+    elif isinstance(teacher_obj, SelfSignedTeacher):
+        assignment_count = (
+            db.query(func.count(Assignment.id))
+            .filter(Assignment.created_by_self_signed_teacher_id == teacher_obj.id)
+            .scalar()
+            or 0
+        )
+        participant_count = (
+            db.query(func.count(StudentAssignmentAttempt.id))
+            .join(Assignment, Assignment.id == StudentAssignmentAttempt.assignment_id)
+            .filter(Assignment.created_by_self_signed_teacher_id == teacher_obj.id)
+            .scalar()
+            or 0
+        )
+    else:
+        assignment_count = 0
+        participant_count = 0
+
     return {
         "total_exams_count": 0,
         "total_assignments_count": assignment_count,
@@ -912,25 +958,32 @@ async def create_assignment(
     denorm = _build_teacher_school_denorm(teacher_obj)
     
     # Create assignment record
-    assignment = Assignment(
-        created_by_user_id=current_user.id,
-        status=AssignmentStatus.PUBLISHED,
-        board=board_value,
-        class_name=class_name_value,
-        subject=subject_value,
-        chapter_number=data_dict.get("chapter_number"),
-        sub_chapter=data_dict.get("sub_chapter"),
-        topic_title=data_dict.get("topic_title"),
-        chapter_tagline=data_dict.get("chapter_tagline"),
-        original_content=data_dict.get("original_content"),
-        summarized_content=data_dict.get("summarized_content"),
-        activity_type=data_dict.get("assignment_type", "Academic"),
-        class_id=class_id_value,
-        subject_id=subject_id_value,
-        teacher_name=denorm["teacher_name"],
-        school_name=denorm["school_name"],
-        school_address=denorm["school_address"],
-    )
+    assignment_kwargs = {
+        "created_by_user_id": current_user.id,
+        "status": AssignmentStatus.PUBLISHED,
+        "board": board_value,
+        "class_name": class_name_value,
+        "subject": subject_value,
+        "chapter_number": data_dict.get("chapter_number"),
+        "sub_chapter": data_dict.get("sub_chapter"),
+        "topic_title": data_dict.get("topic_title"),
+        "chapter_tagline": data_dict.get("chapter_tagline"),
+        "original_content": data_dict.get("original_content"),
+        "summarized_content": data_dict.get("summarized_content"),
+        "activity_type": data_dict.get("assignment_type", "Academic"),
+        "class_id": class_id_value,
+        "subject_id": subject_id_value,
+        "teacher_name": denorm["teacher_name"],
+        "school_name": denorm["school_name"],
+        "school_address": denorm["school_address"],
+    }
+
+    if current_user.role == UserRole.TEACHER:
+        assignment_kwargs["created_by_teacher_id"] = teacher_obj.id
+    elif current_user.role == UserRole.SELF_SIGNED_TEACHER:
+        assignment_kwargs["created_by_self_signed_teacher_id"] = teacher_obj.id
+
+    assignment = Assignment(**assignment_kwargs)
     
     # Parse and add key points with optional images
     if data_dict.get("key_points"):
@@ -1026,6 +1079,25 @@ def get_assignment(
 
     if current_user.id != assignment.created_by_user_id and assignment.status != AssignmentStatus.PUBLISHED:
         raise HTTPException(status_code=403, detail="Assignment is not visible.")
+
+    # Backfill teacher ID from user ID for legacy assignments
+    if assignment.created_by_teacher_id is None and assignment.created_by_user_id is not None:
+        teacher = db.query(Teacher).filter(Teacher.user_id == assignment.created_by_user_id).first()
+        if teacher:
+            assignment.created_by_teacher_id = teacher.id
+            if not assignment.teacher_name:
+                assignment.teacher_name = f"{teacher.first_name} {teacher.last_name}".strip()
+            if not assignment.school_name and teacher.school is not None:
+                assignment.school_name = teacher.school.school_name
+            if not assignment.school_address and teacher.school is not None:
+                assignment.school_address = teacher.school.school_address
+
+    if assignment.created_by_self_signed_teacher_id is None and assignment.created_by_user_id is not None:
+        self_signed_teacher = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.user_id == assignment.created_by_user_id).first()
+        if self_signed_teacher:
+            assignment.created_by_self_signed_teacher_id = self_signed_teacher.id
+            if not assignment.teacher_name:
+                assignment.teacher_name = f"{self_signed_teacher.first_name} {self_signed_teacher.last_name}".strip()
 
     return assignment
 
@@ -1124,25 +1196,51 @@ def list_student_assignments(
 
 @router.get("/teachers/{teacher_id}/profile", response_model=TeacherProfileResponse)
 def get_teacher_profile(
-    teacher_id: int,
+    teacher_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     teacher_user = db.query(User).filter(User.id == teacher_id, User.role.in_([UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER])).first()
-    if not teacher_user:
+    teacher_obj = None
+
+    if teacher_user:
+        teacher_obj = _get_teacher_for_user(db, teacher_user)
+
+    if not teacher_obj:
+        teacher_obj = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+        if teacher_obj:
+            teacher_user = teacher_obj.user
+
+    if not teacher_obj and teacher_id.isdigit():
+        self_signed_teacher = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.id == int(teacher_id)).first()
+        if self_signed_teacher:
+            teacher_obj = self_signed_teacher
+            teacher_user = self_signed_teacher.user
+
+    if not teacher_obj:
         raise HTTPException(status_code=404, detail="Teacher not found.")
 
-    teacher_obj = _get_teacher_for_user(db, teacher_user)
-    if not teacher_obj:
-        raise HTTPException(status_code=404, detail="Teacher profile not found.")
+    stats = _compute_teacher_stats(db, teacher_obj)
+    school_info = {
+        "school_name": None,
+        "school_address": None,
+    }
+    if isinstance(teacher_obj, Teacher) and hasattr(teacher_obj, "school") and teacher_obj.school:
+        school_info["school_name"] = teacher_obj.school.name
+        school_info["school_address"] = ", ".join(filter(None, [
+            teacher_obj.school.address,
+            teacher_obj.school.city,
+            teacher_obj.school.state,
+        ]))
+    elif isinstance(teacher_obj, SelfSignedTeacher):
+        school_info = _build_self_signed_teacher_school_info(teacher_obj)
 
-    stats = _compute_teacher_stats(db, teacher_user.id)
     return {
-        "teacher_id": teacher_user.id,
+        "teacher_id": int(teacher_id) if teacher_id.isdigit() else teacher_id,
         "teacher_name": f"{teacher_obj.first_name} {teacher_obj.last_name}",
-        "school_name": teacher_obj.school.name if teacher_obj.school else None,
-        "school_address": ", ".join(filter(None, [teacher_obj.school.address if teacher_obj.school else None, teacher_obj.school.city if teacher_obj.school else None, teacher_obj.school.state if teacher_obj.school else None])),
-        "average_rating": teacher_obj.avg_rating or 0.0,
+        "school_name": school_info["school_name"],
+        "school_address": school_info["school_address"],
+        "average_rating": getattr(teacher_obj, "avg_rating", 0.0) or 0.0,
         "total_exams_count": stats["total_exams_count"],
         "total_assignments_count": stats["total_assignments_count"],
         "total_participants_count": stats["total_participants_count"],
