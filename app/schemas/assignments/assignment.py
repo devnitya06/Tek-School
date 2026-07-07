@@ -438,15 +438,18 @@ class AssignmentViewResponse(BaseModel):
 
 class DoubtReplyBase(BaseModel):
     reply_text: str
-    step_solutions: Optional[JsonEncodedDict] = None # JSON string
+    file_url: Optional[str] = None # From AssignmentActivityDoubtReply
+    step_solutions: Optional[str] = None
 
 class DoubtReplyCreate(DoubtReplyBase):
+    # For creation, link to teacher and doubt will be handled in route
     pass
 
 class DoubtReplyResponse(DoubtReplyBase):
     id: int
     doubt_id: int
-    teacher_id: int
+    teacher_user_id: Optional[int] = None
+    self_signed_teacher_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -454,18 +457,24 @@ class DoubtReplyResponse(DoubtReplyBase):
 
 class AssignmentDoubtBase(BaseModel):
     doubt_text: str
+    doubt_summary: Optional[str] = None # From AssignmentActivityDoubt
     question_id: Optional[int] = None
 
 class AssignmentDoubtCreate(AssignmentDoubtBase):
+    # For creation, link to student and assignment will be handled in route
     pass
 
 class AssignmentDoubtResponse(AssignmentDoubtBase):
     id: int
     assignment_id: int
-    student_id: int
-    status: AssignmentStatus
+    student_user_id: Optional[int] = None
+    self_signed_student_id: Optional[int] = None
+    status: DoubtStatus
     created_at: datetime
     resolved_at: Optional[datetime] = None
+
+    number_of_attempts: int = 0 # From AssignmentActivityDoubt
+    last_attempt_date: Optional[datetime] = None # From AssignmentActivityDoubt
     replies: List[DoubtReplyResponse] = []
 
     class Config:
@@ -496,6 +505,7 @@ class TeacherProfileResponse(BaseModel):
     school_name: Optional[str] = None
     school_address: Optional[str] = None
     average_rating: float = 0.0
+    rating_count: int = 0
     total_exams_count: int = 0
     total_assignments_count: int = 0
     total_participants_count: int = 0

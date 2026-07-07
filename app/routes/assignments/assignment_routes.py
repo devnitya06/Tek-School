@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, Uplo
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 from app.core.dependencies import get_current_user
@@ -722,14 +722,20 @@ def get_all_assignments(
         if getattr(student_obj, "select_class_id", None):
             class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
         
-        if not class_group:
+        if class_group:
+            query = query.filter(
+                Assignment.status == AssignmentStatus.PUBLISHED,
+                Assignment.class_name == class_group.class_name,
+                Assignment.board == (class_group.school_board.value if hasattr(class_group.school_board, "value") else class_group.school_board),
+            )
+        elif board and class_name:
+            query = query.filter(
+                Assignment.status == AssignmentStatus.PUBLISHED,
+                func.lower(Assignment.board) == board.lower(),
+                func.lower(Assignment.class_name) == class_name.lower(),
+            )
+        else:
             return {"data": [], "total": 0, "skip": skip, "limit": limit}
-        
-        query = query.filter(
-            Assignment.status == AssignmentStatus.PUBLISHED,
-            Assignment.class_name == class_group.class_name,
-            Assignment.board == (class_group.school_board.value if hasattr(class_group.school_board, "value") else class_group.school_board),
-        )
     
     elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
         student_obj = _get_student_for_user(db, current_user)
@@ -740,14 +746,20 @@ def get_all_assignments(
         if getattr(student_obj, "select_class_id", None):
             class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
         
-        if not class_group:
+        if class_group:
+            query = query.filter(
+                Assignment.status == AssignmentStatus.PUBLISHED,
+                Assignment.class_name == class_group.class_name,
+                Assignment.board == (class_group.school_board.value if hasattr(class_group.school_board, "value") else class_group.school_board),
+            )
+        elif board and class_name:
+            query = query.filter(
+                Assignment.status == AssignmentStatus.PUBLISHED,
+                func.lower(Assignment.board) == board.lower(),
+                func.lower(Assignment.class_name) == class_name.lower(),
+            )
+        else:
             return {"data": [], "total": 0, "skip": skip, "limit": limit}
-        
-        query = query.filter(
-            Assignment.status == AssignmentStatus.PUBLISHED,
-            Assignment.class_name == class_group.class_name,
-            Assignment.board == (class_group.school_board.value if hasattr(class_group.school_board, "value") else class_group.school_board),
-        )
     
     else:
         raise HTTPException(status_code=403, detail="Unauthorized role.")
@@ -1411,12 +1423,23 @@ def get_teacher_profile(
     elif isinstance(teacher_obj, SelfSignedTeacher):
         school_info = _build_self_signed_teacher_school_info(teacher_obj)
 
+    # Compute rating aggregates from persisted TeacherRating rows to ensure correctness
+    rating_stats = (
+        db.query(func.count(TeacherRating.id).label("rating_count"), func.avg(TeacherRating.rating).label("average_rating"))
+        .filter(TeacherRating.teacher_user_id == (teacher_user.id if teacher_user is not None else None))
+        .first()
+    )
+
+    rating_count = int(rating_stats.rating_count or 0) if rating_stats else 0
+    average_rating = float(round(rating_stats.average_rating, 2)) if rating_stats and rating_stats.average_rating is not None else 0.0
+
     return {
         "teacher_id": int(teacher_id) if teacher_id.isdigit() else teacher_id,
         "teacher_name": f"{teacher_obj.first_name} {teacher_obj.last_name}",
         "school_name": school_info["school_name"],
         "school_address": school_info["school_address"],
-        "average_rating": getattr(teacher_obj, "avg_rating", 0.0) or 0.0,
+        "average_rating": average_rating,
+        "rating_count": rating_count,
         "total_exams_count": stats["total_exams_count"],
         "total_assignments_count": stats["total_assignments_count"],
         "total_participants_count": stats["total_participants_count"],
@@ -1433,10 +1456,34 @@ def rate_teacher(
     if current_user.role not in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
         raise HTTPException(status_code=403, detail="Only students may rate teachers.")
 
+    # Resolve teacher identifier: accept User.id (for school teachers), Teacher.id (string), or SelfSignedTeacher.id (int)
     teacher_user = db.query(User).filter(User.id == teacher_id, User.role.in_([UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER])).first()
-    if not teacher_user:
+    teacher_obj = None
+    if teacher_user:
+        # teacher_user found (user-based teacher)
+        teacher_obj = _get_teacher_for_user(db, teacher_user)
+
+    if not teacher_obj:
+        # Try resolving by Teacher.id (string primary key)
+        teacher_obj = db.query(Teacher).filter(Teacher.id == str(teacher_id)).first()
+        if teacher_obj:
+            teacher_user = teacher_obj.user
+
+    if not teacher_obj and str(teacher_id).isdigit():
+        # Try self-signed teacher by numeric id
+        self_signed_teacher = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.id == int(teacher_id)).first()
+        if self_signed_teacher:
+            teacher_obj = self_signed_teacher
+            teacher_user = self_signed_teacher.user
+
+    if not teacher_obj and not teacher_user:
         raise HTTPException(status_code=404, detail="Teacher not found.")
 
+    # Ensure the teacher has a linked `User` to attach the rating to
+    if not teacher_user:
+        raise HTTPException(status_code=400, detail="This teacher cannot be rated (no linked user account).")
+
+    # Create or update a single rating per student per teacher (last rating wins)
     rating = db.query(TeacherRating).filter(TeacherRating.teacher_user_id == teacher_user.id, TeacherRating.student_user_id == current_user.id).first()
     if not rating:
         rating = TeacherRating(teacher_user_id=teacher_user.id, student_user_id=current_user.id, rating=data.rating)
@@ -1446,11 +1493,23 @@ def rate_teacher(
 
     db.commit()
 
-    ratings = db.query(TeacherRating).filter(TeacherRating.teacher_user_id == teacher_user.id).all()
-    if ratings:
-        teacher_user.avg_rating = sum(r.rating for r in ratings) / len(ratings)
-        teacher_user.rating_count = len(ratings)
-        db.commit()
+    # Recompute aggregates from TeacherRating rows
+    rating_stats = (
+        db.query(func.count(TeacherRating.id).label("rating_count"), func.avg(TeacherRating.rating).label("average_rating"))
+        .filter(TeacherRating.teacher_user_id == teacher_user.id)
+        .first()
+    )
+
+    if rating_stats:
+        count = int(rating_stats.rating_count or 0)
+        avg = float(rating_stats.average_rating) if rating_stats.average_rating is not None else 0.0
+
+        # Persist aggregates to school Teacher model if applicable
+        if isinstance(teacher_obj, Teacher):
+            teacher_obj.avg_rating = avg
+            teacher_obj.rating_count = count
+            db.commit()
+        # For SelfSignedTeacher we currently do not persist avg/count columns; they will be computed on read
 
     return {"detail": "Rating submitted successfully."}
 
@@ -1468,6 +1527,42 @@ def submit_assignment_attempt(
     assignment = db.query(Assignment).filter(Assignment.id == assignment_id, Assignment.status == AssignmentStatus.PUBLISHED).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found or not published.")
+
+    # Enforce per-teacher daily doubt limit (max 10 doubts per teacher per UTC day)
+    try:
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_start = today_start + timedelta(days=1)
+
+        # Count doubts for school teacher owner if present
+        if getattr(assignment, "created_by_teacher_id", None):
+            owner_tid = assignment.created_by_teacher_id
+            doubts_today = (
+                db.query(func.count(AssignmentDoubt.id))
+                .join(Assignment, Assignment.id == AssignmentDoubt.assignment_id)
+                .filter(Assignment.created_by_teacher_id == owner_tid)
+                .filter(AssignmentDoubt.created_at >= today_start)
+                .filter(AssignmentDoubt.created_at < tomorrow_start)
+                .scalar()
+            ) or 0
+            if doubts_today >= 10:
+                raise HTTPException(status_code=403, detail="This teacher has reached the daily doubt limit (10). Please try again tomorrow.")
+
+        # Count doubts for self-signed teacher owner if present
+        if getattr(assignment, "created_by_self_signed_teacher_id", None):
+            owner_sid = assignment.created_by_self_signed_teacher_id
+            doubts_today = (
+                db.query(func.count(AssignmentDoubt.id))
+                .join(Assignment, Assignment.id == AssignmentDoubt.assignment_id)
+                .filter(Assignment.created_by_self_signed_teacher_id == owner_sid)
+                .filter(AssignmentDoubt.created_at >= today_start)
+                .filter(AssignmentDoubt.created_at < tomorrow_start)
+                .scalar()
+            ) or 0
+            if doubts_today >= 10:
+                raise HTTPException(status_code=403, detail="This self-signed teacher has reached the daily doubt limit (10). Please try again tomorrow.")
+    except Exception:
+        # Fail-open: if quota check fails for any reason, allow the doubt to be created
+        pass
 
     attempt_count = db.query(func.count(StudentAssignmentAttempt.id)).filter(StudentAssignmentAttempt.assignment_id == assignment_id, StudentAssignmentAttempt.student_user_id == current_user.id).scalar() or 0
     if attempt_count >= 3:
@@ -1530,13 +1625,22 @@ def submit_assignment_doubt(
     student_user_id = current_user.id if current_user.role == UserRole.STUDENT else None
     self_signed_student_id = current_user.id if current_user.role == UserRole.SELF_SIGNED_STUDENT else None
 
+    question_id = None
+    if data.question_id is not None:
+        question = db.query(AssignmentQuestion).filter(
+            AssignmentQuestion.id == data.question_id,
+            AssignmentQuestion.assignment_id == assignment_id,
+        ).first()
+        if question:
+            question_id = data.question_id
+
     doubt = AssignmentDoubt(
         assignment_id=assignment_id,
         student_user_id=student_user_id,
         self_signed_student_id=self_signed_student_id,
         doubt_text=data.doubt_text,
         doubt_summary=data.doubt_summary,
-        question_id=data.question_id,
+        question_id=question_id,
         status=DoubtStatus.OPEN,
     )
     db.add(doubt)

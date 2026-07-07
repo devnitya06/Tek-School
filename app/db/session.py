@@ -374,6 +374,35 @@ def ensure_assignment_tables():
                 with engine.begin() as conn:
                     conn.execute(text('ALTER TABLE assignment_key_points ADD COLUMN IF NOT EXISTS image_url VARCHAR NULL'))
 
+        # Ensure merged assignment doubt table columns exist for existing databases
+        if inspector.has_table("assignment_doubts"):
+            for col_name, col_type in [
+                ("self_signed_student_id", "INTEGER"),
+                ("question_id", "INTEGER"),
+                ("doubt_summary", "VARCHAR(500)"),
+                ("status", "VARCHAR(50)"),
+                ("created_at", "TIMESTAMP"),
+                ("resolved_at", "TIMESTAMP"),
+                ("number_of_attempts", "INTEGER"),
+                ("last_attempt_date", "TIMESTAMP"),
+            ]:
+                if not column_exists("assignment_doubts", col_name):
+                    with engine.begin() as conn:
+                        conn.execute(text(f'ALTER TABLE assignment_doubts ADD COLUMN IF NOT EXISTS "{col_name}" {col_type} NULL'))
+
+        if inspector.has_table("doubt_replies"):
+            for col_name, col_type in [
+                ("teacher_user_id", "INTEGER"),
+                ("self_signed_teacher_id", "INTEGER"),
+                ("reply_text", "TEXT"),
+                ("file_url", "VARCHAR(255)"),
+                ("step_solutions", "TEXT"),
+                ("created_at", "TIMESTAMP"),
+            ]:
+                if not column_exists("doubt_replies", col_name):
+                    with engine.begin() as conn:
+                        conn.execute(text(f'ALTER TABLE doubt_replies ADD COLUMN IF NOT EXISTS "{col_name}" {col_type} NULL'))
+
     # Create merged activity-related tables as part of assignments
     AssignmentActivityTask.__table__.create(bind=engine, checkfirst=True)
     StudentAssignmentProgress.__table__.create(bind=engine, checkfirst=True)
