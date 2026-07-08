@@ -1081,6 +1081,31 @@ def get_months_between_dates(start_date: date, end_date: date) -> List[str]:
     return months
 
 
+def _resolve_teacher_for_wallet_access(db: Session, current_user: User):
+    if current_user.role == UserRole.TEACHER:
+        teacher = current_user.teacher_profile or db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher profile not found")
+        return teacher, None
+
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile or db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found")
+
+        teacher = (
+            db.query(Teacher)
+            .filter(Teacher.school_id == school.id)
+            .order_by(Teacher.created_at.asc())
+            .first()
+        )
+        if not teacher:
+            raise HTTPException(status_code=404, detail="No teacher profile found for this school")
+        return teacher, school
+
+    raise HTTPException(status_code=403, detail="Only teachers and schools are allowed")
+
+
 @router.post(
     "/{teacher_id}/payments/",
     status_code=status.HTTP_201_CREATED,
@@ -1478,43 +1503,52 @@ def get_wallet(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Step 1: Role validation
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403, detail="Only teachers allowed")
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
+        raise HTTPException(status_code=403, detail="Only teachers and schools are allowed")
 
-    # ✅ Step 2: Try relationship first
-    teacher = current_user.teacher_profile
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile or db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found")
 
-    # 🔥 Step 3: Fallback (VERY IMPORTANT)
-    if not teacher:
-        teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
+        teachers = db.query(Teacher).filter(Teacher.school_id == school.id).all()
+        teacher_ids = [teacher.id for teacher in teachers]
+        if not teacher_ids:
+            return {
+                "teacher_id": None,
+                "school_id": school.id,
+                "balance": 0,
+                "total_earned": 0,
+                "level": 1,
+            }
 
-    # ❌ Still not found → real issue
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found. Please contact admin."
-        )
+        wallets = db.query(TeacherWallet).filter(TeacherWallet.teacher_id.in_(teacher_ids)).all()
+        return {
+            "teacher_id": None,
+            "school_id": school.id,
+            "balance": sum((wallet.balance or 0) for wallet in wallets),
+            "total_earned": sum((wallet.total_earned or 0) for wallet in wallets),
+            "level": max((wallet.level or 1) for wallet in wallets) if wallets else 1,
+        }
 
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
     teacher_id = teacher.id
 
-    # ✅ Step 4: Get wallet
     wallet = db.query(TeacherWallet).filter_by(teacher_id=teacher_id).first()
 
-    # ✅ Step 5: Default response
     if not wallet:
         return {
             "teacher_id": teacher_id,
             "balance": 0,
             "total_earned": 0,
-            "level": 1
+            "level": 1,
         }
 
     return {
         "teacher_id": teacher_id,
         "balance": wallet.balance,
         "total_earned": wallet.total_earned,
-        "level": wallet.level
+        "level": wallet.level,
     }
 
 @router.get("/reward-history")
@@ -1522,29 +1556,32 @@ def reward_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # ✅ Step 1: Role check
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403, detail="Only teachers allowed")
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
+        raise HTTPException(status_code=403, detail="Only teachers and schools are allowed")
 
-    # ✅ Step 2: Try relationship
-    teacher = current_user.teacher_profile
+    if current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile or db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found")
 
-    # ✅ Step 3: Fallback to DB (important)
-    if not teacher:
-        teacher = db.query(Teacher).filter(
-            Teacher.user_id == current_user.id
-        ).first()
-
-    # ❌ Still missing → real issue
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found"
+        teachers = db.query(Teacher).filter(Teacher.school_id == school.id).all()
+        teacher_ids = [teacher.id for teacher in teachers]
+        data = (
+            db.query(RewardTransaction)
+            .filter(RewardTransaction.teacher_id.in_(teacher_ids))
+            .order_by(RewardTransaction.created_at.desc())
+            .all()
         )
+        return {
+            "teacher_id": None,
+            "school_id": school.id,
+            "total_records": len(data),
+            "rewards": data,
+        }
 
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
     teacher_id = teacher.id
 
-    # ✅ Step 4: Fetch reward history
     data = (
         db.query(RewardTransaction)
         .filter(RewardTransaction.teacher_id == teacher_id)
@@ -1552,11 +1589,10 @@ def reward_history(
         .all()
     )
 
-    # ✅ Optional: clean response
     return {
         "teacher_id": teacher_id,
         "total_records": len(data),
-        "rewards": data
+        "rewards": data,
     }
 
 
@@ -1567,13 +1603,10 @@ def add_teacher_bank_account(
     current_user: User = Depends(get_current_user)
 ):
 
-    if current_user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=403)
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
+        raise HTTPException(status_code=403, detail="Only teachers and schools are allowed")
 
-    teacher = current_user.teacher_profile
-
-    if not teacher:
-        raise HTTPException(status_code=404)
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
 
     if payload.account_number != payload.re_account_number:
         raise HTTPException(
@@ -1629,23 +1662,13 @@ def get_bank_account(
     current_user: User = Depends(get_current_user)
 ):
 
-    # ✅ Only teachers allowed
-    if current_user.role != UserRole.TEACHER:
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
         raise HTTPException(
             status_code=403,
-            detail="Only teachers allowed"
+            detail="Only teachers and schools are allowed"
         )
 
-    # ✅ Get teacher
-    teacher = current_user.teacher_profile or db.query(Teacher).filter(
-        Teacher.user_id == current_user.id
-    ).first()
-
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found"
-        )
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
 
     # ✅ Get account
     account = db.query(TeacherBankAccount).filter(
@@ -1682,23 +1705,13 @@ def get_bank_account_list(
     current_user: User = Depends(get_current_user)
 ):
 
-    # ✅ Only teachers allowed
-    if current_user.role != UserRole.TEACHER:
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
         raise HTTPException(
             status_code=403,
-            detail="Only teachers allowed"
+            detail="Only teachers and schools are allowed"
         )
 
-    # ✅ Get teacher
-    teacher = current_user.teacher_profile or db.query(Teacher).filter(
-        Teacher.user_id == current_user.id
-    ).first()
-
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found"
-        )
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
 
     # ✅ Get all accounts
     accounts = db.query(TeacherBankAccount).filter(
@@ -1729,21 +1742,13 @@ def set_default_teacher_bank_account(
     current_user: User = Depends(get_current_user)
 ):
 
-    if current_user.role != UserRole.TEACHER:
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
         raise HTTPException(
             status_code=403,
-            detail="Only teachers allowed"
+            detail="Only teachers and schools are allowed"
         )
 
-    teacher = current_user.teacher_profile or db.query(Teacher).filter(
-        Teacher.user_id == current_user.id
-    ).first()
-
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found"
-        )
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
 
     account = db.query(TeacherBankAccount).filter(
         TeacherBankAccount.id == account_id,
@@ -1776,27 +1781,13 @@ def request_withdraw(
     current_user: User = Depends(get_current_user)
 ):
 
-    # =====================================
-    # ROLE CHECK
-    # =====================================
-    if current_user.role != UserRole.TEACHER:
+    if current_user.role not in [UserRole.TEACHER, UserRole.SCHOOL]:
         raise HTTPException(
             status_code=403,
-            detail="Only teachers allowed"
+            detail="Only teachers and schools are allowed"
         )
 
-    # =====================================
-    # GET TEACHER
-    # =====================================
-    teacher = current_user.teacher_profile or db.query(Teacher).filter(
-        Teacher.user_id == current_user.id
-    ).first()
-
-    if not teacher:
-        raise HTTPException(
-            status_code=404,
-            detail="Teacher profile not found"
-        )
+    teacher, _ = _resolve_teacher_for_wallet_access(db, current_user)
     amount = payload.amount
     bank_account_id = payload.bank_account_id
 
@@ -1895,35 +1886,43 @@ def get_withdrawals(
     current_user: User = Depends(get_current_user)
 ):
 
-    # ==========================================
-    # ADMIN -> GET ALL WITHDRAWALS
-    # ==========================================
     if current_user.role == UserRole.ADMIN:
-
         withdrawals = db.query(WithdrawalRequest).order_by(
             WithdrawalRequest.created_at.desc()
         ).all()
 
-    # ==========================================
-    # TEACHER -> GET OWN WITHDRAWALS
-    # ==========================================
-    elif current_user.role == UserRole.TEACHER:
+    elif current_user.role in [UserRole.TEACHER, UserRole.SCHOOL]:
+        if current_user.role == UserRole.SCHOOL:
+            school = current_user.school_profile or db.query(School).filter(School.user_id == current_user.id).first()
+            if not school:
+                raise HTTPException(status_code=404, detail="School profile not found")
 
-        teacher = current_user.teacher_profile or db.query(Teacher).filter(
-            Teacher.user_id == current_user.id
-        ).first()
+            teachers = db.query(Teacher).filter(Teacher.school_id == school.id).all()
+            teacher_ids = [teacher.id for teacher in teachers]
+            if not teacher_ids:
+                withdrawals = []
+            else:
+                withdrawals = db.query(WithdrawalRequest).filter(
+                    WithdrawalRequest.teacher_id.in_(teacher_ids)
+                ).order_by(
+                    WithdrawalRequest.created_at.desc()
+                ).all()
+        else:
+            teacher = current_user.teacher_profile or db.query(Teacher).filter(
+                Teacher.user_id == current_user.id
+            ).first()
 
-        if not teacher:
-            raise HTTPException(
-                status_code=404,
-                detail="Teacher profile not found"
-            )
+            if not teacher:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Teacher profile not found"
+                )
 
-        withdrawals = db.query(WithdrawalRequest).filter(
-            WithdrawalRequest.teacher_id == teacher.id
-        ).order_by(
-            WithdrawalRequest.created_at.desc()
-        ).all()
+            withdrawals = db.query(WithdrawalRequest).filter(
+                WithdrawalRequest.teacher_id == teacher.id
+            ).order_by(
+                WithdrawalRequest.created_at.desc()
+            ).all()
 
     else:
         raise HTTPException(
@@ -1960,20 +1959,24 @@ def get_withdrawal_details(
     current_user: User = Depends(get_current_user)
 ):
 
-    # ==========================================
-    # ADMIN -> ACCESS ALL
-    # ==========================================
     if current_user.role == UserRole.ADMIN:
-
         withdraw = db.query(WithdrawalRequest).filter(
             WithdrawalRequest.id == withdraw_id
         ).first()
 
-    # ==========================================
-    # TEACHER -> ACCESS ONLY OWN
-    # ==========================================
-    elif current_user.role == UserRole.TEACHER:
+    elif current_user.role == UserRole.SCHOOL:
+        school = current_user.school_profile or db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="School profile not found")
 
+        teachers = db.query(Teacher).filter(Teacher.school_id == school.id).all()
+        teacher_ids = [teacher.id for teacher in teachers]
+        withdraw = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.id == withdraw_id,
+            WithdrawalRequest.teacher_id.in_(teacher_ids)
+        ).first()
+
+    elif current_user.role == UserRole.TEACHER:
         teacher = current_user.teacher_profile or db.query(Teacher).filter(
             Teacher.user_id == current_user.id
         ).first()
