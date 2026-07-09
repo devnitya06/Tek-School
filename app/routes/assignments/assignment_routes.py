@@ -617,6 +617,7 @@ def get_all_assignments(
     class_id: Optional[int] = Query(None),
     subject: Optional[str] = Query(None),
     subject_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None, description="Filter by status: 'published' or 'unpublished' (defaults to both)"),
     chapter_number: Optional[int] = Query(None),
     teacher_id: Optional[int] = Query(None),
     school_name: Optional[str] = Query(None),
@@ -647,6 +648,17 @@ def get_all_assignments(
     **Response:** Paginated list of published assignments sorted by published_at desc, then created_at desc.
     """
     query = db.query(Assignment)
+
+    # Determine statuses to include for published/unpublished filter (drafts excluded).
+    # Teachers can still see their own drafts via the created_by_* conditions.
+    if status is None:
+        statuses_to_include = [AssignmentStatus.PUBLISHED, AssignmentStatus.UNPUBLISHED]
+    elif isinstance(status, str) and status.lower() == "published":
+        statuses_to_include = [AssignmentStatus.PUBLISHED]
+    elif isinstance(status, str) and status.lower() == "unpublished":
+        statuses_to_include = [AssignmentStatus.UNPUBLISHED]
+    else:
+        raise HTTPException(status_code=400, detail="Invalid status filter. Use 'published' or 'unpublished'")
     
     # Apply role-based filtering
     if current_user.role == UserRole.TEACHER:
@@ -668,7 +680,7 @@ def get_all_assignments(
             or_(
                 Assignment.created_by_user_id == current_user.id,
                 and_(
-                    Assignment.status == AssignmentStatus.PUBLISHED,
+                    Assignment.status.in_(statuses_to_include),
                     Assignment.class_name.in_(list(allowed_classes)) if allowed_classes else False,
                     Assignment.subject.in_(list(allowed_subjects)) if allowed_subjects else False,
                     Assignment.board == teacher_board if teacher_board else True,
@@ -707,7 +719,7 @@ def get_all_assignments(
             or_(
                 Assignment.created_by_self_signed_teacher_id == teacher_obj.id,
                 and_(
-                    Assignment.status == AssignmentStatus.PUBLISHED,
+                    Assignment.status.in_(statuses_to_include),
                     func.lower(Assignment.board).in_(list(allowed_boards)) if allowed_boards else False,
                 ),
             )
@@ -723,6 +735,7 @@ def get_all_assignments(
             class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
         
         if class_group:
+            # Students always see only published assignments regardless of the status filter
             query = query.filter(
                 Assignment.status == AssignmentStatus.PUBLISHED,
                 Assignment.class_name == class_group.class_name,
@@ -747,6 +760,7 @@ def get_all_assignments(
             class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
         
         if class_group:
+            # Self-signed students also see only published assignments
             query = query.filter(
                 Assignment.status == AssignmentStatus.PUBLISHED,
                 Assignment.class_name == class_group.class_name,
@@ -1133,7 +1147,7 @@ async def create_assignment(
     # Create assignment record
     assignment_kwargs = {
         "created_by_user_id": current_user.id,
-        "status": AssignmentStatus.PUBLISHED,
+        "status": AssignmentStatus.DRAFT,
         "board": board_value,
         "class_name": class_name_value,
         "subject": subject_value,
@@ -1222,8 +1236,8 @@ def update_assignment(
         raise HTTPException(status_code=404, detail="Assignment not found.")
     if assignment.created_by_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the owning teacher may update this assignment.")
-    if assignment.status == AssignmentStatus.PUBLISHED:
-        raise HTTPException(status_code=400, detail="Published assignments cannot be modified directly.")
+    if assignment.status in (AssignmentStatus.PUBLISHED, AssignmentStatus.UNPUBLISHED):
+        raise HTTPException(status_code=400, detail="Published or unpublished assignments cannot be modified directly.")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(assignment, field, value)
