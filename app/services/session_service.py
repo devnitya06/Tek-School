@@ -1,7 +1,7 @@
 import requests
 from user_agents import parse as parse_ua
 from fastapi import Request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.models.user_session import UserSession
 
@@ -83,7 +83,7 @@ def update_or_create_session_on_login(db: Session, user, request: Request):
     ua = _parse_user_agent(ua_string)
     language = _extract_language(request)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
     sess = db.query(UserSession).filter(UserSession.user_id == user.id).first()
     if not sess:
@@ -124,7 +124,7 @@ def update_session_on_refresh(db: Session, user, request: Request):
     ua = _parse_user_agent(ua_string)
     language = _extract_language(request)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
     sess = db.query(UserSession).filter(UserSession.user_id == user.id).first()
     if not sess:
@@ -174,7 +174,7 @@ def update_session_on_refresh(db: Session, user, request: Request):
 
 
 def deactivate_session_on_logout(db: Session, user):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
     sess = db.query(UserSession).filter(UserSession.user_id == user.id).first()
     if not sess:
         return None
