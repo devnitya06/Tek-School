@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from app.models.user_session import UserSession
 
 
+IPINFO_URL = "https://ipinfo.io/{}"
 IPWHO_URL = "https://ipwho.is/{}"
-IPWHO_TIMEOUT = 3
+API_TIMEOUT = 3
 
 
 def _get_client_ip(request: Request) -> str | None:
@@ -21,16 +22,67 @@ def _get_client_ip(request: Request) -> str | None:
     return None
 
 
-def _fetch_ip_info(ip: str) -> dict | None:
+def _fetch_ip_info_ipinfo(ip: str) -> dict | None:
+    """Fetch IP information from ipinfo.io"""
     try:
-        resp = requests.get(IPWHO_URL.format(ip), timeout=IPWHO_TIMEOUT)
+        resp = requests.get(IPINFO_URL.format(ip), timeout=API_TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Parse latitude and longitude from 'loc' field (format: "latitude,longitude")
+            loc = data.get("loc", "").split(",")
+            latitude = float(loc[0]) if len(loc) > 0 and loc[0] else None
+            longitude = float(loc[1]) if len(loc) > 1 and loc[1] else None
+            
+            return {
+                "country": data.get("country"),
+                "region": data.get("region"),
+                "city": data.get("city"),
+                "latitude": latitude,
+                "longitude": longitude,
+                "timezone": data.get("timezone"),
+                "isp": data.get("isp"),
+                "organization": data.get("org"),
+            }
+    except Exception:
+        return None
+
+
+def _fetch_ip_info_ipwho(ip: str) -> dict | None:
+    """Fetch IP information from ipwho.is"""
+    try:
+        resp = requests.get(IPWHO_URL.format(ip), timeout=API_TIMEOUT)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success", True) is False:
                 return None
-            return data
+            
+            return {
+                "country": data.get("country"),
+                "region": data.get("region"),
+                "city": data.get("city"),
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "timezone": data.get("timezone", {}).get("id") if isinstance(data.get("timezone"), dict) else data.get("timezone"),
+                "isp": (data.get("connection") or {}).get("isp") if isinstance(data.get("connection"), dict) else None,
+                "organization": (data.get("connection") or {}).get("org") if isinstance(data.get("connection"), dict) else None,
+            }
     except Exception:
         return None
+
+
+def _fetch_ip_info(ip: str) -> dict | None:
+    """Fetch IP information using ipinfo.io, fallback to ipwho.is if needed"""
+    # Try ipinfo.io first
+    ip_info = _fetch_ip_info_ipinfo(ip)
+    if ip_info:
+        return ip_info
+    
+    # Fallback to ipwho.is
+    ip_info = _fetch_ip_info_ipwho(ip)
+    if ip_info:
+        return ip_info
+    
+    return None
 
 
 def _parse_user_agent(ua_string: str) -> dict:
@@ -74,9 +126,9 @@ def update_or_create_session_on_login(db: Session, user, request: Request):
             "city": ip_info.get("city"),
             "latitude": ip_info.get("latitude"),
             "longitude": ip_info.get("longitude"),
-            "timezone": ip_info.get("timezone", {}).get("id") if isinstance(ip_info.get("timezone"), dict) else ip_info.get("timezone"),
-            "isp": (ip_info.get("connection") or {}).get("isp") if isinstance(ip_info.get("connection"), dict) else None,
-            "organization": (ip_info.get("connection") or {}).get("org") if isinstance(ip_info.get("connection"), dict) else None,
+            "timezone": ip_info.get("timezone"),
+            "isp": ip_info.get("isp"),
+            "organization": ip_info.get("organization"),
         }
 
     ua_string = request.headers.get("user-agent")
@@ -142,9 +194,9 @@ def update_session_on_refresh(db: Session, user, request: Request):
                 "city": ip_info.get("city"),
                 "latitude": ip_info.get("latitude"),
                 "longitude": ip_info.get("longitude"),
-                "timezone": ip_info.get("timezone", {}).get("id") if isinstance(ip_info.get("timezone"), dict) else ip_info.get("timezone"),
-                "isp": (ip_info.get("connection") or {}).get("isp") if isinstance(ip_info.get("connection"), dict) else None,
-                "organization": (ip_info.get("connection") or {}).get("org") if isinstance(ip_info.get("connection"), dict) else None,
+                "timezone": ip_info.get("timezone"),
+                "isp": ip_info.get("isp"),
+                "organization": ip_info.get("organization"),
             }
 
     sess.ip_address = ip

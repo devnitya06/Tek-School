@@ -1239,15 +1239,26 @@ def update_assignment(
     if assignment.status in (AssignmentStatus.PUBLISHED, AssignmentStatus.UNPUBLISHED):
         raise HTTPException(status_code=400, detail="Published or unpublished assignments cannot be modified directly.")
 
+    # Update scalar fields (exclude nested relationship fields)
+    excluded_fields = {"key_points", "questions", "images", "pdfs", "video_links", "media_banners"}
     for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(assignment, field, value)
+        if field not in excluded_fields and value is not None:
+            setattr(assignment, field, value)
 
+    # Update nested items only if explicitly provided
     if data.key_points is not None:
-        assignment.key_points.clear()
-        assignment.key_points = [AssignmentKeyPoint(**kp.model_dump()) for kp in data.key_points]
+        db.query(AssignmentKeyPoint).filter(AssignmentKeyPoint.assignment_id == assignment.id).delete()
+        new_key_points = [AssignmentKeyPoint(**kp.model_dump()) for kp in data.key_points]
+        for kp in new_key_points:
+            db.add(kp)
+        assignment.key_points = new_key_points
+
     if data.questions is not None:
-        assignment.questions.clear()
-        assignment.questions = [AssignmentQuestion(**q.model_dump()) for q in data.questions]
+        db.query(AssignmentQuestion).filter(AssignmentQuestion.assignment_id == assignment.id).delete()
+        new_questions = [AssignmentQuestion(**q.model_dump()) for q in data.questions]
+        for q in new_questions:
+            db.add(q)
+        assignment.questions = new_questions
 
     db.commit()
     db.refresh(assignment)
@@ -1325,10 +1336,16 @@ def publish_assignment(
 
     publish = db.query(PublishConfiguration).filter(PublishConfiguration.assignment_id == assignment.id).first()
     if not publish:
-        publish = PublishConfiguration(assignment_id=assignment.id, **data.model_dump())
+        # Serialize improvement_categories to JSON if needed
+        publish_data = data.model_dump()
+        if isinstance(publish_data.get("improvement_categories"), list):
+            publish_data["improvement_categories"] = json.dumps([cat.value if hasattr(cat, 'value') else cat for cat in publish_data["improvement_categories"]])
+        publish = PublishConfiguration(assignment_id=assignment.id, **publish_data)
         db.add(publish)
     else:
         for field, value in data.model_dump(exclude_unset=True).items():
+            if field == "improvement_categories" and isinstance(value, list):
+                value = json.dumps([cat.value if hasattr(cat, 'value') else cat for cat in value])
             setattr(publish, field, value)
 
     assignment.status = AssignmentStatus.PUBLISHED
