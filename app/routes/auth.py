@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta,datetime,timezone
@@ -16,6 +16,11 @@ from app.core.security import (
     verify_token,
     oauth2_scheme,
 )
+from app.services.session_service import (
+    update_or_create_session_on_login,
+    update_session_on_refresh,
+    deactivate_session_on_logout,
+)
 from app.core.config import settings
 
 router = APIRouter(tags=["auth"])
@@ -23,7 +28,8 @@ router = APIRouter(tags=["auth"])
 @router.post("/login/", response_model=TokenResponse)
 async def login(
     form_data: LoginRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None,
 ):
     user = db.query(User).filter(User.email == form_data.email).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -80,6 +86,11 @@ async def login(
     db.add(db_refresh_token)
     db.commit()
     db.refresh(db_refresh_token)
+    try:
+        update_or_create_session_on_login(db, user, request)
+    except Exception:
+        # Do not block login if session tracking fails
+        pass
     
     return {
         "detail": "Login successful",
@@ -95,6 +106,8 @@ async def login(
 async def refresh_token(
     refresh_token: str,
     db: Session = Depends(get_db)
+    ,
+    request: Request = None,
 ):
     """Generate new access token using refresh token"""
     try:
@@ -150,6 +163,12 @@ async def refresh_token(
             staff = db.query(Staff).filter(Staff.user_id == user.id).first()
             is_created_by_admin = bool(staff and staff.school_id is None)
 
+        try:
+            # Update session last_active_at and related runtime info
+            update_session_on_refresh(db, user, request)
+        except Exception:
+            pass
+
         return {
             "access_token": new_access_token,
             "refresh_token": new_refresh_token,
@@ -159,6 +178,7 @@ async def refresh_token(
             "id": user.id,
             "is_created_by_admin": is_created_by_admin,
         }
+        
         
     except JWTError:
         raise HTTPException(
@@ -179,6 +199,14 @@ async def logout(
         # Invalidate all refresh tokens for this user
         db.query(Token).filter(Token.user_id == user_id).delete()
         db.commit()
+        try:
+            # Mark session inactive
+            from app.models.users import User as UserModel
+            user = db.query(UserModel).filter(UserModel.id == user_id).first()
+            if user:
+                deactivate_session_on_logout(db, user)
+        except Exception:
+            pass
         
         return {"detail": "Successfully logged out"}
     

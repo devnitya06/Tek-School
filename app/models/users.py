@@ -79,6 +79,7 @@ class User(Base):
         cascade="all, delete-orphan",
         foreign_keys="SelfSignedTeacher.user_id",
     )
+    session = relationship("UserSession", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     # Add unique constraint for school name and location
     __table_args__ = (

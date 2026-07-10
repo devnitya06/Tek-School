@@ -60,6 +60,7 @@ from app.models.assignments.assignment import (
     AssignmentReport,
     FavoriteTeacher,
 )
+from app.models.user_session import UserSession
 from app.models.admin import *
 from app.models.staff import *
 from app.models.progress_reports import *

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.core.config import settings
 from app.db.session import (
@@ -41,6 +41,7 @@ app.include_router(school.router, prefix="/school", tags=["schools"])
 app.include_router(teachers.router, prefix="/teacher", tags=["Teacher"])
 app.include_router(students.router, prefix="/student", tags=["Students"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
+app.include_router(admin_sessions.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(staff.router, prefix="/staff", tags=["Staff"])
 app.include_router(workers.router, prefix="/worker", tags=["Workers"])
 app.include_router(selfsignedstudents.router, prefix="/api", tags=["SelfSignedStudents"])
