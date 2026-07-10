@@ -118,24 +118,8 @@ def update_or_create_session_on_login(db: Session, user, request: Request):
 
 
 def update_session_on_refresh(db: Session, user, request: Request):
-    """Update only last_active_at and related runtime fields on token refresh. Keep login_at intact."""
+    """Update last_active_at and refresh location fields only when the IP changes. Keep login_at intact."""
     ip = _get_client_ip(request)
-    ip_info = None
-    geo = {}
-    if ip:
-        ip_info = _fetch_ip_info(ip)
-    if ip_info:
-        geo = {
-            "country": ip_info.get("country"),
-            "region": ip_info.get("region"),
-            "city": ip_info.get("city"),
-            "latitude": ip_info.get("latitude"),
-            "longitude": ip_info.get("longitude"),
-            "timezone": ip_info.get("timezone", {}).get("id") if isinstance(ip_info.get("timezone"), dict) else ip_info.get("timezone"),
-            "isp": (ip_info.get("connection") or {}).get("isp") if isinstance(ip_info.get("connection"), dict) else None,
-            "organization": (ip_info.get("connection") or {}).get("org") if isinstance(ip_info.get("connection"), dict) else None,
-        }
-
     ua_string = request.headers.get("user-agent")
     ua = _parse_user_agent(ua_string)
     language = _extract_language(request)
@@ -144,12 +128,27 @@ def update_session_on_refresh(db: Session, user, request: Request):
 
     sess = db.query(UserSession).filter(UserSession.user_id == user.id).first()
     if not sess:
-        # If session doesn't exist, create but keep login_at as now (best-effort)
         sess = UserSession(user_id=user.id)
         db.add(sess)
 
+    ip_changed = bool(ip and sess.ip_address != ip) or (ip is None and sess.ip_address is not None)
+    geo = {}
+    if ip_changed and ip:
+        ip_info = _fetch_ip_info(ip)
+        if ip_info:
+            geo = {
+                "country": ip_info.get("country"),
+                "region": ip_info.get("region"),
+                "city": ip_info.get("city"),
+                "latitude": ip_info.get("latitude"),
+                "longitude": ip_info.get("longitude"),
+                "timezone": ip_info.get("timezone", {}).get("id") if isinstance(ip_info.get("timezone"), dict) else ip_info.get("timezone"),
+                "isp": (ip_info.get("connection") or {}).get("isp") if isinstance(ip_info.get("connection"), dict) else None,
+                "organization": (ip_info.get("connection") or {}).get("org") if isinstance(ip_info.get("connection"), dict) else None,
+            }
+
     sess.ip_address = ip
-    if geo:
+    if ip_changed:
         sess.country = geo.get("country")
         sess.region = geo.get("region")
         sess.city = geo.get("city")
