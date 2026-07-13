@@ -41,9 +41,7 @@ from app.models.teachers import *
 from app.models.students import *
 from app.models.assignments.assignment import (
     Assignment,
-    AssignmentActivityTask,
     StudentAssignmentProgress,
-    AssignmentActivityTaskStatus,
     AssignmentKeyPoint,
     AssignmentQuestion,
     AssignmentImage,
@@ -65,6 +63,7 @@ from app.models.admin import *
 from app.models.staff import *
 from app.models.progress_reports import *
 from app.models.academic_results import *
+from app.models.tuition import *
 
 def create_tables():
     """Create all tables that don't exist yet"""
@@ -395,6 +394,8 @@ def ensure_assignment_tables():
             for col_name, col_type in [
                 ("teacher_user_id", "INTEGER"),
                 ("self_signed_teacher_id", "INTEGER"),
+                ("student_user_id", "INTEGER"),
+                ("self_signed_student_id", "INTEGER"),
                 ("reply_text", "TEXT"),
                 ("file_url", "VARCHAR(255)"),
                 ("step_solutions", "TEXT"),
@@ -412,10 +413,8 @@ def ensure_assignment_tables():
                     with engine.begin() as conn:
                         conn.execute(text('ALTER TABLE doubt_replies ALTER COLUMN "teacher_user_id" DROP NOT NULL'))
 
-    # Create merged activity-related tables as part of assignments
-    AssignmentActivityTask.__table__.create(bind=engine, checkfirst=True)
+    # Create assignment-related tables used by the app
     StudentAssignmentProgress.__table__.create(bind=engine, checkfirst=True)
-    AssignmentActivityTaskStatus.__table__.create(bind=engine, checkfirst=True)
     AssignmentKeyPoint.__table__.create(bind=engine, checkfirst=True)
     AssignmentQuestion.__table__.create(bind=engine, checkfirst=True)
     AssignmentImage.__table__.create(bind=engine, checkfirst=True)

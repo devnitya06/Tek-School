@@ -124,6 +124,145 @@ def _get_favorite_teacher_count(db: Session, teacher_id: str, teacher_type: str)
     )
 
 
+def _get_student_display_name(db: Session, doubt: AssignmentDoubt) -> Optional[str]:
+    if doubt.student_user_id is not None:
+        student = db.query(Student).filter(Student.user_id == doubt.student_user_id).first()
+        if student:
+            full_name = " ".join(filter(None, [getattr(student, "first_name", None), getattr(student, "last_name", None)])).strip()
+            if full_name:
+                return full_name
+
+        user = db.query(User).filter(User.id == doubt.student_user_id).first()
+        if user:
+            full_name = " ".join(filter(None, [getattr(user, "name", None)])).strip()
+            return full_name or getattr(user, "email", None) or getattr(user, "username", None)
+
+    if doubt.self_signed_student_id is not None:
+        student = db.query(SelfSignedStudent).filter(SelfSignedStudent.id == doubt.self_signed_student_id).first()
+        if student:
+            full_name = " ".join(filter(None, [getattr(student, "first_name", None), getattr(student, "last_name", None)])).strip()
+            return full_name or getattr(student, "email", None)
+
+    return None
+
+
+def _calculate_attempt_percentage(assignment: Assignment, attempt: Optional[StudentAssignmentAttempt]) -> Optional[float]:
+    if not assignment or not attempt:
+        return None
+
+    try:
+        submitted = json.loads(attempt.submitted_answers) if attempt.submitted_answers else {}
+    except Exception:
+        submitted = {}
+
+    q_by_id = {q.id: q.correct_option for q in assignment.questions} if assignment.questions else {}
+    q_by_number = {q.question_number: q.correct_option for q in assignment.questions} if assignment.questions else {}
+
+    correct = 0
+    incorrect = 0
+    for key, ans in (submitted or {}).items():
+        matched = False
+
+        try:
+            ik = int(key)
+        except Exception:
+            ik = None
+
+        if ik is not None and ik in q_by_id:
+            matched = True
+            if str(ans).strip().upper() == str(q_by_id[ik]).strip().upper():
+                correct += 1
+            else:
+                incorrect += 1
+
+        if not matched:
+            try:
+                num = int(''.join(filter(str.isdigit, str(key)))) if any(c.isdigit() for c in str(key)) else None
+            except Exception:
+                num = None
+            if num is not None and num in q_by_number:
+                if str(ans).strip().upper() == str(q_by_number[num]).strip().upper():
+                    correct += 1
+                else:
+                    incorrect += 1
+
+    total_questions = len(assignment.questions) if assignment.questions else max(correct + incorrect, 0)
+    return round((correct / total_questions) * 100, 2) if total_questions > 0 else 0.0
+
+
+def _serialize_doubt_response(db: Session, doubt: AssignmentDoubt) -> AssignmentDoubtResponse:
+    messages = []
+    if doubt.student_user_id is not None:
+        initial_sender_type = "student"
+    elif doubt.self_signed_student_id is not None:
+        initial_sender_type = "self_signed_student"
+    else:
+        initial_sender_type = "student"
+
+    messages.append({
+        "sender_type": initial_sender_type,
+        "message": doubt.doubt_text,
+        "created_at": doubt.created_at,
+    })
+
+    for reply in sorted(doubt.replies, key=lambda r: r.created_at or datetime.min):
+        reply_sender_type = getattr(reply, "sender_type", None) or "student"
+        messages.append({
+            "sender_type": reply_sender_type,
+            "message": reply.reply_text,
+            "created_at": reply.created_at,
+        })
+
+    assignment = db.query(Assignment).filter(Assignment.id == doubt.assignment_id).first()
+    student_id = doubt.student_user_id
+    if student_id is None and doubt.self_signed_student_id is not None:
+        student_id = doubt.self_signed_student_id
+
+    attempts = (
+        db.query(StudentAssignmentAttempt)
+        .filter(StudentAssignmentAttempt.assignment_id == doubt.assignment_id)
+        .filter(StudentAssignmentAttempt.student_user_id == student_id)
+        .order_by(StudentAssignmentAttempt.submission_date.desc())
+        .all()
+    ) if student_id is not None else []
+
+    latest_attempt = attempts[0] if attempts else None
+    result = _calculate_attempt_percentage(assignment, latest_attempt) if assignment and latest_attempt else None
+
+    return AssignmentDoubtResponse(
+        id=doubt.id,
+        assignment_id=doubt.assignment_id,
+        student_user_id=doubt.student_user_id,
+        self_signed_student_id=doubt.self_signed_student_id,
+        student_name=_get_student_display_name(db, doubt),
+        status=doubt.status,
+        created_at=doubt.created_at,
+        resolved_at=doubt.resolved_at,
+        number_of_attempts=len(attempts),
+        last_attempt_date=latest_attempt.submission_date if latest_attempt else None,
+        result=result,
+        replies=messages,
+    )
+
+
+def _get_existing_student_doubt(
+    db: Session,
+    assignment_id: int,
+    student_user_id: Optional[int] = None,
+    self_signed_student_id: Optional[int] = None,
+) -> Optional[AssignmentDoubt]:
+    query = db.query(AssignmentDoubt).filter(AssignmentDoubt.assignment_id == assignment_id)
+
+    if student_user_id is not None:
+        query = query.filter(AssignmentDoubt.student_user_id == student_user_id)
+    elif self_signed_student_id is not None:
+        query = query.filter(AssignmentDoubt.self_signed_student_id == self_signed_student_id)
+    else:
+        return None
+
+    return query.order_by(AssignmentDoubt.created_at.desc()).first()
+
+
 @router.post("/my/favorite-teachers", response_model=FavoriteTeacherResponse)
 def add_favorite_teacher(
     data: FavoriteTeacherCreate,
@@ -1665,19 +1804,42 @@ def submit_assignment_doubt(
         if question:
             question_id = data.question_id
 
-    doubt = AssignmentDoubt(
-        assignment_id=assignment_id,
+    existing_doubt = _get_existing_student_doubt(
+        db,
+        assignment_id,
         student_user_id=student_user_id,
         self_signed_student_id=self_signed_student_id,
-        doubt_text=data.doubt_text,
-        doubt_summary=data.doubt_summary,
-        question_id=question_id,
-        status=DoubtStatus.OPEN,
     )
+
+    if existing_doubt is not None:
+        if existing_doubt.question_id is None and question_id is not None:
+            existing_doubt.question_id = question_id
+        existing_doubt.status = DoubtStatus.OPEN
+        existing_doubt.resolved_at = None
+
+        reply = DoubtReply(
+            doubt_id=existing_doubt.id,
+            reply_text=data.doubt_text,
+        )
+        db.add(reply)
+        db.commit()
+        db.refresh(existing_doubt)
+        return _serialize_doubt_response(db, existing_doubt)
+
+    doubt_payload = {
+        "assignment_id": assignment_id,
+        "student_user_id": student_user_id,
+        "self_signed_student_id": self_signed_student_id,
+        "doubt_text": data.doubt_text,
+        "question_id": question_id,
+        "status": DoubtStatus.OPEN,
+    }
+    doubt = AssignmentDoubt(**doubt_payload)
     db.add(doubt)
     db.commit()
     db.refresh(doubt)
-    return doubt
+
+    return _serialize_doubt_response(db, doubt)
 
 
 @router.get("/assignments/{assignment_id}/doubts", response_model=List[AssignmentDoubtResponse])
@@ -1694,9 +1856,26 @@ def get_assignment_doubts(
     # For simplicity, allowing all roles to view published assignment doubts as per user story. 
     # A more granular permission system could be implemented here.
 
-    doubts = db.query(AssignmentDoubt).filter(AssignmentDoubt.assignment_id == assignment_id).all()
+    doubts = (
+        db.query(AssignmentDoubt)
+        .filter(AssignmentDoubt.assignment_id == assignment_id)
+        .order_by(AssignmentDoubt.created_at.desc())
+        .all()
+    )
 
-    return doubts
+    seen_students = set()
+    unique_doubts = []
+    for doubt in doubts:
+        identity = (doubt.student_user_id, doubt.self_signed_student_id)
+        if identity in seen_students:
+            continue
+        seen_students.add(identity)
+        unique_doubts.append(doubt)
+
+    return [
+        _serialize_doubt_response(db, doubt)
+        for doubt in unique_doubts
+    ]
 
 
 @router.post("/assignments/doubts/{doubt_id}/reply", response_model=DoubtReplyResponse)
@@ -1706,33 +1885,42 @@ def reply_to_doubt(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
-        raise HTTPException(status_code=403, detail="Only teachers may reply to doubts.")
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER, UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        raise HTTPException(status_code=403, detail="Only teachers and the original student may reply to doubts.")
 
     doubt = db.query(AssignmentDoubt).filter(AssignmentDoubt.id == doubt_id).first()
     if not doubt:
         raise HTTPException(status_code=404, detail="Doubt not found.")
 
-    # Create reply
-    teacher_user_id = current_user.id if current_user.role == UserRole.TEACHER else None
-    self_signed_teacher_id = current_user.id if current_user.role == UserRole.SELF_SIGNED_TEACHER else None
+    teacher_user_id = None
+    self_signed_teacher_id = None
 
-    reply = DoubtReply(
-        doubt_id=doubt_id,
-        teacher_user_id=teacher_user_id,
-        self_signed_teacher_id=self_signed_teacher_id,
-        reply_text=data.reply_text,
-        file_url=data.file_url,
-        step_solutions=json.dumps(data.step_solutions) if data.step_solutions is not None else None,
-    )
+    if current_user.role == UserRole.TEACHER:
+        teacher_user_id = current_user.id
+    elif current_user.role == UserRole.SELF_SIGNED_TEACHER:
+        self_signed_teacher_id = current_user.id
+    elif current_user.role == UserRole.STUDENT:
+        if doubt.student_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Students may only reply to their own doubts.")
+    elif current_user.role == UserRole.SELF_SIGNED_STUDENT:
+        if doubt.self_signed_student_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Students may only reply to their own doubts.")
+
+    reply_payload = {
+        "doubt_id": doubt_id,
+        "teacher_user_id": teacher_user_id,
+        "self_signed_teacher_id": self_signed_teacher_id,
+        "reply_text": data.reply_text,
+        "file_url": data.file_url,
+        "step_solutions": json.dumps(data.step_solutions) if data.step_solutions is not None else None,
+    }
+    reply = DoubtReply(**reply_payload)
     db.add(reply)
 
-    # Mark doubt as resolved
-    try:
-        doubt.status = DoubtStatus.RESOLVED
-        doubt.resolved_at = datetime.utcnow()
-    except Exception:
-        pass
+    # If a student follows up on a resolved thread, reopen it.
+    if current_user.role in [UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT]:
+        doubt.status = DoubtStatus.OPEN
+        doubt.resolved_at = None
 
     db.commit()
     db.refresh(reply)
