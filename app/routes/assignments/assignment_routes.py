@@ -1603,7 +1603,7 @@ def submit_assignment_attempt(
         student_user_id=current_user.id,
         assignment_id=assignment_id,
         attempt_number=attempt_count + 1,
-        submitted_answers=data.submitted_answers,
+        submitted_answers=json.dumps(data.submitted_answers),
         score=data.score,
         time_taken_seconds=data.time_taken_seconds,
     )
