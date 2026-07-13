@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, validator, root_validator, ConfigDict
 from typing import List, Optional, Union
 from datetime import datetime
 from app.models.assignments.assignment import AssignmentStatus, AssignmentType, StudentImprovementCategory, DoubtStatus, ReportCategory, ReportStatus, TaskStatus # Import new enums and TaskStatus
@@ -22,8 +22,7 @@ class AssignmentKeyPointCreate(AssignmentKeyPointBase):
 class AssignmentKeyPointResponse(AssignmentKeyPointBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentQuestionBase(BaseModel):
     question_number: int
@@ -41,8 +40,7 @@ class AssignmentQuestionCreate(AssignmentQuestionBase):
 class AssignmentQuestionResponse(AssignmentQuestionBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentImageBase(BaseModel):
     url: str
@@ -53,8 +51,7 @@ class AssignmentImageCreate(AssignmentImageBase):
 class AssignmentImageResponse(AssignmentImageBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentPDFBase(BaseModel):
     url: str
@@ -65,8 +62,7 @@ class AssignmentPDFCreate(AssignmentPDFBase):
 class AssignmentPDFResponse(AssignmentPDFBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentVideoLinkBase(BaseModel):
     url: str
@@ -77,8 +73,7 @@ class AssignmentVideoLinkCreate(AssignmentVideoLinkBase):
 class AssignmentVideoLinkResponse(AssignmentVideoLinkBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentMediaBannerBase(BaseModel):
     url: str
@@ -89,8 +84,7 @@ class AssignmentMediaBannerCreate(AssignmentMediaBannerBase):
 class AssignmentMediaBannerResponse(AssignmentMediaBannerBase):
     id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PublishConfigurationBase(BaseModel):
     assignment_type: AssignmentType
@@ -128,8 +122,7 @@ class PublishConfigurationResponse(BaseModel):
             return []
         return value
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- New Schemas for merged AssignmentActivity models ---
@@ -146,8 +139,7 @@ class AssignmentTaskResponse(AssignmentTaskBase):
     id: int
     assignment_id: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentTaskStatusBase(BaseModel):
@@ -163,8 +155,7 @@ class StudentTaskStatusResponse(StudentTaskStatusBase):
     student_assignment_progress_id: int
     student_id: Optional[int] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentAssignmentProgressBase(BaseModel):
@@ -181,8 +172,7 @@ class StudentAssignmentProgressResponse(StudentAssignmentProgressBase):
     assigned_date: datetime
     task_statuses: List[StudentTaskStatusResponse] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Unified Doubt Schemas ---
@@ -210,26 +200,37 @@ class DoubtReplyResponse(DoubtReplyBase):
     doubt_id: int
     teacher_user_id: Optional[int] = None
     self_signed_teacher_id: Optional[int] = None
+    student_user_id: Optional[int] = None
+    self_signed_student_id: Optional[int] = None
+    sender_type: Optional[str] = None
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
-class AssignmentDoubtResponse(AssignmentDoubtBase):
+
+class DoubtConversationMessageResponse(BaseModel):
+    sender_type: Optional[str] = None
+    message: str
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssignmentDoubtResponse(BaseModel):
     id: int
     assignment_id: int
     student_user_id: Optional[int] = None
     self_signed_student_id: Optional[int] = None
+    student_name: Optional[str] = None
     status: DoubtStatus
     created_at: datetime
     resolved_at: Optional[datetime] = None
-    
-    number_of_attempts: int = 0 # From AssignmentActivityDoubt
-    last_attempt_date: Optional[datetime] = None # From AssignmentActivityDoubt
-    replies: List[DoubtReplyResponse] = []
+    number_of_attempts: int = 0
+    last_attempt_date: Optional[datetime] = None
+    result: Optional[float] = None
+    replies: List[DoubtConversationMessageResponse] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Unified Report Schemas ---
@@ -262,8 +263,7 @@ class AssignmentReportResponse(AssignmentReportBase):
     admin_notes: Optional[str] = None
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Main Assignment Schemas (Updated) ---
@@ -307,8 +307,7 @@ class FavoriteTeacherResponse(BaseModel):
     teacher_id: str
     is_favorite: bool
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FavoriteTeacherListResponse(BaseModel):
@@ -317,8 +316,7 @@ class FavoriteTeacherListResponse(BaseModel):
     teacher_type: str
     is_favorite: bool = True
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AssignmentResponse(AssignmentBase):
@@ -372,8 +370,7 @@ class AssignmentResponse(AssignmentBase):
     tasks: List[AssignmentTaskResponse] = [] # New field
     assigned_students_progress: List[StudentAssignmentProgressResponse] = [] # New field
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentAssignmentAttemptBase(BaseModel):
@@ -391,8 +388,7 @@ class StudentAssignmentAttemptResponse(StudentAssignmentAttemptBase):
     attempt_number: int
     submission_date: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChapterFeedbackBase(BaseModel):
@@ -407,8 +403,7 @@ class ChapterFeedbackResponse(ChapterFeedbackBase):
     assignment_id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TeacherRatingBase(BaseModel):
@@ -423,8 +418,7 @@ class TeacherRatingResponse(TeacherRatingBase):
     student_id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AssignmentViewResponse(BaseModel):
     id: int
@@ -432,8 +426,7 @@ class AssignmentViewResponse(BaseModel):
     viewer_user_id: int
     viewed_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DoubtReplyBase(BaseModel):
@@ -444,42 +437,6 @@ class DoubtReplyBase(BaseModel):
 class DoubtReplyCreate(DoubtReplyBase):
     # For creation, link to teacher and doubt will be handled in route
     pass
-
-class DoubtReplyResponse(DoubtReplyBase):
-    id: int
-    doubt_id: int
-    teacher_user_id: Optional[int] = None
-    self_signed_teacher_id: Optional[int] = None
-    created_at: datetime
-
-    class Config:
-        orm_mode = True
-
-class AssignmentDoubtBase(BaseModel):
-    doubt_text: str
-    doubt_summary: Optional[str] = None # From AssignmentActivityDoubt
-    question_id: Optional[int] = None
-
-class AssignmentDoubtCreate(AssignmentDoubtBase):
-    # For creation, link to student and assignment will be handled in route
-    pass
-
-class AssignmentDoubtResponse(AssignmentDoubtBase):
-    id: int
-    assignment_id: int
-    student_user_id: Optional[int] = None
-    self_signed_student_id: Optional[int] = None
-    status: DoubtStatus
-    created_at: datetime
-    resolved_at: Optional[datetime] = None
-
-    number_of_attempts: int = 0 # From AssignmentActivityDoubt
-    last_attempt_date: Optional[datetime] = None # From AssignmentActivityDoubt
-    replies: List[DoubtReplyResponse] = []
-
-    class Config:
-        orm_mode = True
-
 
 class AssignmentReportBase(BaseModel):
     category: ReportCategory
@@ -495,8 +452,7 @@ class AssignmentReportResponse(AssignmentReportBase):
     student_id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Schemas for API responses/requests
 class TeacherProfileResponse(BaseModel):
@@ -510,8 +466,7 @@ class TeacherProfileResponse(BaseModel):
     total_assignments_count: int = 0
     total_participants_count: int = 0
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SubjectSummaryResponse(BaseModel):
     board: str
@@ -521,5 +476,4 @@ class SubjectSummaryResponse(BaseModel):
     your_study_materials: Optional[int] = None # For teachers
     completed_count: Optional[int] = None # For students
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

@@ -69,7 +69,12 @@ class Teacher(Base):
     payment = relationship("TeacherStaffPayment", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
     assigned_doubts = relationship("DoubtTeacher", back_populates="teacher")
     responses = relationship("DoubtResponse", back_populates="teacher")
-    assignments = relationship("Assignment", back_populates="created_by_teacher")
+    assignments = relationship(
+        "Assignment",
+        back_populates="created_by_teacher",
+        primaryjoin="Teacher.id == Assignment.created_by_teacher_id",
+        foreign_keys="[Assignment.created_by_teacher_id]",
+    )
     ratings = relationship(
         "TeacherRating",
         back_populates="teacher",
@@ -137,6 +142,12 @@ class SelfSignedTeacher(Base):
         foreign_keys=[user_id],
     )
     students = relationship("SelfSignedStudent", back_populates="self_signed_teacher", cascade="all, delete-orphan")
+    assignments = relationship(
+        "Assignment",
+        back_populates="created_by_self_signed_teacher",
+        primaryjoin="SelfSignedTeacher.id == Assignment.created_by_self_signed_teacher_id",
+        foreign_keys="[Assignment.created_by_self_signed_teacher_id]",
+    )
     teaching_configurations = relationship(
         "SelfSignedTeacherTeachingConfiguration",
         back_populates="teacher",
