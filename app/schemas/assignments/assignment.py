@@ -388,6 +388,7 @@ class StudentAssignmentAttemptResponse(StudentAssignmentAttemptBase):
     id: int
     student_user_id: int
     assignment_id: int
+    student_name: Optional[str] = None
     attempt_number: int
     submission_date: datetime
 

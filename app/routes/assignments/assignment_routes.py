@@ -1739,6 +1739,28 @@ def reply_to_doubt(
     return reply
 
 
+def _serialize_attempt(attempt: StudentAssignmentAttempt) -> dict:
+    student_name = None
+    if attempt.student_user is not None:
+        student_name = attempt.student_user.name
+    elif getattr(attempt, 'student_user_id', None) is not None:
+        student = attempt.student_user
+        if student is not None:
+            student_name = student.name
+
+    return {
+        "id": attempt.id,
+        "student_user_id": attempt.student_user_id,
+        "assignment_id": attempt.assignment_id,
+        "attempt_number": attempt.attempt_number,
+        "submitted_answers": json.loads(attempt.submitted_answers) if attempt.submitted_answers else {},
+        "score": attempt.score,
+        "time_taken_seconds": attempt.time_taken_seconds,
+        "submission_date": attempt.submission_date,
+        "student_name": student_name,
+    }
+
+
 @router.get("/assignments/attempts/history", response_model=List[StudentAssignmentAttemptResponse])
 def get_my_attempts_history(
     db: Session = Depends(get_db),
@@ -1753,7 +1775,7 @@ def get_my_attempts_history(
         .order_by(StudentAssignmentAttempt.submission_date.desc())
         .all()
     )
-    return attempts
+    return [_serialize_attempt(attempt) for attempt in attempts]
 
 
 @router.get("/assignments/{assignment_id}/my-results")
@@ -1855,7 +1877,7 @@ def list_assignment_attempts_for_teacher(
         raise HTTPException(status_code=403, detail="Not authorized to view attempts for this assignment.")
 
     attempts = db.query(StudentAssignmentAttempt).filter(StudentAssignmentAttempt.assignment_id == assignment_id).order_by(StudentAssignmentAttempt.submission_date.desc()).all()
-    return attempts
+    return [_serialize_attempt(attempt) for attempt in attempts]
 
 
 @router.post("/assignments/{assignment_id}/report", response_model=AssignmentReportResponse)
