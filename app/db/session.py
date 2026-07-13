@@ -404,6 +404,14 @@ def ensure_assignment_tables():
                     with engine.begin() as conn:
                         conn.execute(text(f'ALTER TABLE doubt_replies ADD COLUMN IF NOT EXISTS "{col_name}" {col_type} NULL'))
 
+            # Ensure existing copies of the table allow nullable teacher_user_id for self-signed teacher replies
+            if column_exists("doubt_replies", "teacher_user_id"):
+                current_cols = inspector.get_columns("doubt_replies")
+                teacher_col = next((col for col in current_cols if col["name"] == "teacher_user_id"), None)
+                if teacher_col is not None and teacher_col.get("nullable") is False:
+                    with engine.begin() as conn:
+                        conn.execute(text('ALTER TABLE doubt_replies ALTER COLUMN "teacher_user_id" DROP NOT NULL'))
+
     # Create merged activity-related tables as part of assignments
     AssignmentActivityTask.__table__.create(bind=engine, checkfirst=True)
     StudentAssignmentProgress.__table__.create(bind=engine, checkfirst=True)
