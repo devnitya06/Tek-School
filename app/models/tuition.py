@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
-import uuid
+import secrets
+import string
 
 from sqlalchemy import (
     Boolean,
@@ -63,10 +64,23 @@ class ApprovalStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class LessonPlanStatus(str, Enum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+def generate_short_id(prefix: str = "ID", length: int = 8) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    suffix = "".join(secrets.choice(alphabet) for _ in range(length))
+    return f"{prefix}{suffix}"
+
+
 class TuitionBatch(Base):
     __tablename__ = "tuition_batches"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=generate_short_id)
     school_id = Column(String, ForeignKey("schools.id"), nullable=True)
     teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
     self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=True)
@@ -120,6 +134,11 @@ class TuitionBatch(Base):
         back_populates="batch",
         cascade="all, delete-orphan",
     )
+    lesson_plan_batches = relationship(
+        "TuitionLessonPlanBatch",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
     class_done_records = relationship(
         "TuitionClassDoneRecord",
         back_populates="batch",
@@ -141,7 +160,7 @@ class TuitionBatch(Base):
 class TuitionBatchStudentMapping(Base):
     __tablename__ = "tuition_batch_student_mappings"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("BSM"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
     self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=True)
@@ -168,7 +187,7 @@ class TuitionBatchStudentMapping(Base):
 class TuitionBatchSchedule(Base):
     __tablename__ = "tuition_batch_schedules"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("SCH"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
     class_date = Column(Date, nullable=False)
     topic = Column(String(255), nullable=True)
@@ -198,7 +217,7 @@ class TuitionBatchSchedule(Base):
 class TuitionClassDoneRecord(Base):
     __tablename__ = "tuition_class_done_records"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("CLS"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
     schedule_id = Column(String, ForeignKey("tuition_batch_schedules.id"), nullable=False, unique=True)
     class_date = Column(Date, nullable=False)
@@ -227,7 +246,7 @@ class TuitionClassDoneRecord(Base):
 class TuitionLessonPlan(Base):
     __tablename__ = "tuition_lesson_plans"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("LP"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
     chapter = Column(String(255), nullable=True)
     lesson_title = Column(String(255), nullable=False)
@@ -244,9 +263,126 @@ class TuitionLessonPlan(Base):
     )
 
     batch = relationship("TuitionBatch", back_populates="lesson_plans")
+    batch_mappings = relationship(
+        "TuitionLessonPlanBatch",
+        back_populates="lesson_plan",
+        cascade="all, delete-orphan",
+    )
+    lessons = relationship(
+        "TuitionLesson",
+        back_populates="lesson_plan",
+        cascade="all, delete-orphan",
+    )
+    assignments = relationship(
+        "TuitionLessonAssignmentMapping",
+        back_populates="lesson_plan",
+        cascade="all, delete-orphan",
+    )
+
+    # Convenience read-only properties to match API schema expectations
+    @property
+    def title(self):
+        return self.lesson_title
+
+    @property
+    def board(self):
+        first_batch = self.batches[0] if self.batches else None
+        return first_batch.board_id if getattr(first_batch, 'board_id', None) else None
+
+    @property
+    def class_id(self):
+        first_batch = self.batches[0] if self.batches else None
+        return first_batch.class_id if getattr(first_batch, 'class_id', None) else None
+
+    @property
+    def class_name(self):
+        first_batch = self.batches[0] if self.batches else None
+        if getattr(first_batch, 'class_obj', None) is not None:
+            return first_batch.class_obj.name
+        return None
+
+    @property
+    def subject_id(self):
+        first_batch = self.batches[0] if self.batches else None
+        return first_batch.subject_id if getattr(first_batch, 'subject_id', None) else None
+
+    @property
+    def subject_name(self):
+        first_batch = self.batches[0] if self.batches else None
+        if getattr(first_batch, 'subject_obj', None) is not None:
+            return first_batch.subject_obj.name
+        return None
+
+    @property
+    def remarks(self):
+        # remarks may be set dynamically; default to None
+        return getattr(self, '_remarks', None)
+
+    @remarks.setter
+    def remarks(self, value):
+        self._remarks = value
+
+    @property
+    def batch_ids(self):
+        mappings = getattr(self, 'batch_mappings', None) or []
+        if mappings:
+            return [mapping.batch_id for mapping in mappings if getattr(mapping, 'batch_id', None)]
+        return [self.batch_id] if getattr(self, 'batch_id', None) else []
+
+    @property
+    def batches(self):
+        mappings = getattr(self, 'batch_mappings', None) or []
+        if mappings:
+            return [mapping.batch for mapping in mappings if getattr(mapping, 'batch', None)]
+        return [self.batch] if getattr(self, 'batch', None) else []
+
+
+class TuitionLessonPlanBatch(Base):
+    __tablename__ = "tuition_lesson_plan_batches"
+
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("LPB"))
+    lesson_plan_id = Column(String, ForeignKey("tuition_lesson_plans.id"), nullable=False)
+    batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("lesson_plan_id", "batch_id", name="uq_tuition_lesson_plan_batch"),
+        Index("ix_tuition_lesson_plan_batch_plan", "lesson_plan_id"),
+        Index("ix_tuition_lesson_plan_batch_batch", "batch_id"),
+    )
+
+    lesson_plan = relationship("TuitionLessonPlan", back_populates="batch_mappings")
+    batch = relationship("TuitionBatch", back_populates="lesson_plan_batches")
+
+
+class TuitionLesson(Base):
+    __tablename__ = "tuition_lessons"
+
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("LSN"))
+    lesson_plan_id = Column(String, ForeignKey("tuition_lesson_plans.id"), nullable=False)
+    lesson_title = Column(String(255), nullable=False)
+    lesson_objective = Column(Text, nullable=True)
+    display_order = Column(Integer, nullable=False, default=1)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("lesson_plan_id", "display_order", name="uq_tuition_lesson_order"),
+        Index("ix_tuition_lesson_plan", "lesson_plan_id"),
+        Index("ix_tuition_lesson_order", "display_order"),
+    )
+
+    lesson_plan = relationship("TuitionLessonPlan", back_populates="lessons")
     topics = relationship(
         "TuitionLessonTopic",
-        back_populates="lesson_plan",
+        back_populates="lesson",
+        cascade="all, delete-orphan",
+    )
+    mappings = relationship(
+        "TuitionLessonAssignmentMapping",
+        back_populates="lesson",
         cascade="all, delete-orphan",
     )
 
@@ -254,31 +390,76 @@ class TuitionLessonPlan(Base):
 class TuitionLessonTopic(Base):
     __tablename__ = "tuition_lesson_topics"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    lesson_plan_id = Column(String, ForeignKey("tuition_lesson_plans.id"), nullable=False)
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("TOP"))
+    lesson_id = Column(String, ForeignKey("tuition_lessons.id"), nullable=False)
     topic_title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=True)
+    topic_content = Column(Text, nullable=True)
     display_order = Column(Integer, nullable=False, default=1)
-    video_link = Column(Text, nullable=True)
-    reference_files = Column(ARRAY(String), nullable=True)
+    reference_video_link = Column(Text, nullable=True)
     is_deleted = Column(Boolean, nullable=False, default=False)
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("lesson_plan_id", "display_order", name="uq_tuition_lesson_topic_order"),
-        Index("ix_tuition_lesson_topic_plan", "lesson_plan_id"),
+        UniqueConstraint("lesson_id", "display_order", name="uq_tuition_lesson_topic_order"),
+        Index("ix_tuition_lesson_topic_lesson", "lesson_id"),
         Index("ix_tuition_lesson_topic_order", "display_order"),
     )
 
-    lesson_plan = relationship("TuitionLessonPlan", back_populates="topics")
+    lesson = relationship("TuitionLesson", back_populates="topics")
+    files = relationship(
+        "TuitionTopicFile",
+        back_populates="topic",
+        cascade="all, delete-orphan",
+    )
+
+
+class TuitionTopicFile(Base):
+    __tablename__ = "tuition_topic_files"
+
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("FIL"))
+    topic_id = Column(String, ForeignKey("tuition_lesson_topics.id"), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    file_url = Column(Text, nullable=False)
+    file_type = Column(String(100), nullable=True)
+    uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_by_teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
+    uploaded_by_self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_tuition_topic_file_topic", "topic_id"),
+    )
+
+    topic = relationship("TuitionLessonTopic", back_populates="files")
+
+
+class TuitionLessonAssignmentMapping(Base):
+    __tablename__ = "tuition_lesson_assignment_mappings"
+
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("ASM"))
+    lesson_plan_id = Column(String, ForeignKey("tuition_lesson_plans.id"), nullable=False)
+    lesson_id = Column(String, ForeignKey("tuition_lessons.id"), nullable=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("lesson_plan_id", "lesson_id", "assignment_id", name="uq_tuition_lesson_assignment_mapping"),
+        Index("ix_tuition_lesson_assignment_plan", "lesson_plan_id"),
+        Index("ix_tuition_lesson_assignment_assignment", "assignment_id"),
+    )
+
+    lesson_plan = relationship("TuitionLessonPlan", back_populates="assignments")
+    lesson = relationship("TuitionLesson", back_populates="mappings")
 
 
 class TuitionTeacherEarning(Base):
     __tablename__ = "tuition_teacher_earnings"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("EARN"))
     teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
     self_signed_teacher_id = Column(Integer, ForeignKey("self_signed_teachers.id"), nullable=True)
     teacher_type = Column(String(30), nullable=False, default="teacher")
@@ -307,7 +488,7 @@ class TuitionTeacherEarning(Base):
 class TuitionBatchApproval(Base):
     __tablename__ = "tuition_batch_approvals"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("APRV"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False, unique=True)
     approval_status = Column(SQLEnum(ApprovalStatus), nullable=False, default=ApprovalStatus.PENDING)
     requested_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
