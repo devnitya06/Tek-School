@@ -25,7 +25,6 @@ from app.utils.permission import require_roles
 from app.crud.tuition.lesson_plan import (
     create_lesson_plan,
     get_lesson_plan,
-    update_lesson_plan,
     delete_lesson_plan,
     create_lesson,
     get_lesson,
@@ -43,6 +42,7 @@ from app.services.tuition.lesson_plan import (
     can_edit_lesson_plan,
     can_delete_lesson_plan,
     create_lesson_plan_service,
+    update_lesson_plan_service,
     submit_lesson_plan_service,
     withdraw_lesson_plan_service,
     approve_lesson_plan_service,
@@ -94,7 +94,7 @@ def update_lesson_plan_endpoint(
     lesson_plan = _get_lesson_plan_or_404(db, lesson_plan_id)
     if not can_edit_lesson_plan(lesson_plan):
         raise HTTPException(status_code=403, detail="Only draft or rejected lesson plans can be updated")
-    updated = update_lesson_plan(db, lesson_plan, **payload.model_dump(exclude_unset=True))
+    updated = update_lesson_plan_service(db, lesson_plan, current_user=current_user, payload=payload)
     return updated
 
 

@@ -64,10 +64,31 @@ def create_lesson_plan(db: Session, *, owner_user_id: Optional[int], owner_teach
 
 
 def update_lesson_plan(db: Session, lesson_plan: TuitionLessonPlan, **kwargs):
+    batch_ids = kwargs.pop("batch_ids", None)
+    if batch_ids is not None:
+        existing_batch_ids = {mapping.batch_id for mapping in lesson_plan.batch_mappings if getattr(mapping, 'batch_id', None)}
+        for batch_id in [batch_id for batch_id in batch_ids if batch_id]:
+            if batch_id not in existing_batch_ids:
+                lesson_plan.batch_mappings.append(
+                    TuitionLessonPlanBatch(lesson_plan_id=lesson_plan.id, batch_id=batch_id)
+                )
+                existing_batch_ids.add(batch_id)
+        if not lesson_plan.batch_id and lesson_plan.batch_mappings:
+            lesson_plan.batch_id = lesson_plan.batch_mappings[0].batch_id
+
     for key, value in kwargs.items():
-        if value is not None:
+        if value is None:
+            continue
+        attr = getattr(type(lesson_plan), key, None)
+        if isinstance(attr, property) and attr.fset is None:
+            continue
+        if not hasattr(lesson_plan, key):
+            continue
+        try:
             setattr(lesson_plan, key, value)
-    lesson_plan.updated_at = lesson_plan.updated_at
+        except AttributeError:
+            continue
+
     db.add(lesson_plan)
     db.commit()
     db.refresh(lesson_plan)
@@ -174,12 +195,12 @@ def list_lesson_plans_for_user(db: Session, *, created_by_user_id: Optional[int]
         .join(TuitionBatch, TuitionLessonPlanBatch.batch_id == TuitionBatch.id)
         .filter(TuitionLessonPlan.is_deleted.is_(False))
     )
-    if created_by_user_id is not None:
-        query = query.filter(TuitionBatch.created_by_user_id == created_by_user_id)
     if created_by_teacher_id is not None:
         query = query.filter(TuitionBatch.teacher_id == created_by_teacher_id)
-    if created_by_self_signed_teacher_id is not None:
+    elif created_by_self_signed_teacher_id is not None:
         query = query.filter(TuitionBatch.self_signed_teacher_id == created_by_self_signed_teacher_id)
+    elif created_by_user_id is not None:
+        query = query.filter(TuitionBatch.created_by_user_id == created_by_user_id)
     if status:
         query = query.filter(TuitionLessonPlan.status == status)
     if board_id:
