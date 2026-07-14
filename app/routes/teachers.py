@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.utils.email_utility import generate_otp
+from app.utils.s3 import upload_base64_to_s3
 from datetime import datetime, timedelta, date
 from calendar import month_name
 import json
