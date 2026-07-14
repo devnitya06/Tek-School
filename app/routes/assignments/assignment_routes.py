@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile, File, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, String
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import json
@@ -144,6 +144,50 @@ def _get_student_display_name(db: Session, doubt: AssignmentDoubt) -> Optional[s
             return full_name or getattr(student, "email", None)
 
     return None
+
+
+def _resolve_class_subject_ids(
+    db: Session,
+    class_name: Optional[str],
+    subject_name: Optional[str],
+    board_name: Optional[str] = None,
+) -> tuple[Optional[int], Optional[int]]:
+    class_id = None
+    subject_id = None
+
+    normalized_class = (class_name or "").strip().lower()
+    normalized_subject = (subject_name or "").strip().lower()
+    normalized_board = (board_name or "").strip().lower()
+
+    if normalized_class:
+        class_query = db.query(SchoolClassSubject).filter(
+            func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == normalized_class
+        )
+        if normalized_board:
+            class_query = class_query.filter(
+                func.lower(func.cast(SchoolClassSubject.school_board, String)) == normalized_board
+            )
+        class_row = class_query.order_by(SchoolClassSubject.id).first()
+        if class_row:
+            class_id = class_row.id
+
+    if normalized_subject:
+        subject_query = db.query(SchoolClassSubject).filter(
+            func.lower(func.coalesce(SchoolClassSubject.subject, "")) == normalized_subject
+        )
+        if normalized_board:
+            subject_query = subject_query.filter(
+                func.lower(func.cast(SchoolClassSubject.school_board, String)) == normalized_board
+            )
+        if normalized_class:
+            subject_query = subject_query.filter(
+                func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == normalized_class
+            )
+        subject_row = subject_query.order_by(SchoolClassSubject.id).first()
+        if subject_row:
+            subject_id = subject_row.id
+
+    return class_id, subject_id
 
 
 def _calculate_attempt_percentage(assignment: Assignment, attempt: Optional[StudentAssignmentAttempt]) -> Optional[float]:
@@ -710,8 +754,10 @@ def get_my_assignments(
         board_key = r.board or ''
         class_key = r.class_name or ''
         subj_key = r.subject or ''
+        class_id, subject_id = _resolve_class_subject_ids(db, class_key, subj_key, board_key)
         subject_entry = {
             "subject_name": subj_key,
+            "subject_id": subject_id,
             "total_assignments": int(r.total or 0),
         }
         if current_user.role in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
@@ -724,9 +770,11 @@ def get_my_assignments(
     data = []
     for board_name, classes in response_map.items():
         for class_name, subjects in classes.items():
+            class_id, _ = _resolve_class_subject_ids(db, class_name, None, board_name)
             data.append({
                 "board_name": board_name,
                 "class_name": class_name,
+                "class_id": class_id,
                 "subjects": subjects,
             })
 
@@ -1128,6 +1176,24 @@ async def create_assignment(
     class_id_value = data_dict.get("class_id")
     subject_id_value = data_dict.get("subject_id")
 
+    if (class_id_value in (None, "", 0)) and class_name_value:
+        class_lookup = (
+            db.query(SchoolClassSubject)
+            .filter(func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == class_name_value.strip().lower())
+            .first()
+        )
+        if class_lookup:
+            class_id_value = class_lookup.id
+
+    if (subject_id_value in (None, "", 0)) and subject_value:
+        subject_lookup = (
+            db.query(SchoolClassSubject)
+            .filter(func.lower(func.coalesce(SchoolClassSubject.subject, "")) == subject_value.strip().lower())
+            .first()
+        )
+        if subject_lookup:
+            subject_id_value = subject_lookup.id
+
     if current_user.role == UserRole.TEACHER:
         school = getattr(teacher_obj, "school", None)
         if not school or not getattr(school, "school_board", None):
@@ -1296,9 +1362,6 @@ async def create_assignment(
         "chapter_tagline": data_dict.get("chapter_tagline"),
         "original_content": data_dict.get("original_content"),
         "summarized_content": data_dict.get("summarized_content"),
-        "activity_type": data_dict.get("assignment_type", "Academic"),
-        "class_id": class_id_value,
-        "subject_id": subject_id_value,
         "teacher_name": denorm["teacher_name"],
         "school_name": denorm["school_name"],
         "school_address": denorm["school_address"],
@@ -1352,7 +1415,7 @@ async def create_assignment(
     
     # Set publish config fields if provided
     if data_dict.get("assignment_type"):
-        assignment.activity_type = data_dict["assignment_type"]
+        pass
     
     db.add(assignment)
     db.commit()
