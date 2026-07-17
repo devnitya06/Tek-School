@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from app.schemas.users import UserRole
 
 
 class LessonPlanCreate(BaseModel):
@@ -19,14 +18,7 @@ class LessonPlanUpdate(BaseModel):
     subject_id: Optional[int] = None
     batch_ids: Optional[List[str]] = None
     remarks: Optional[str] = None
-
-
-class LessonPlanSubmit(BaseModel):
-    remarks: Optional[str] = None
-
-
-class LessonPlanReview(BaseModel):
-    remarks: Optional[str] = None
+    status: Optional[str] = None
 
 
 class LessonCreate(BaseModel):
@@ -70,18 +62,6 @@ class TopicFileResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class LessonResponse(BaseModel):
-    id: str
-    lesson_plan_id: str
-    lesson_title: str
-    lesson_objective: Optional[str] = None
-    display_order: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class TopicResponse(BaseModel):
     id: str
     lesson_id: str
@@ -89,6 +69,30 @@ class TopicResponse(BaseModel):
     topic_content: Optional[str] = None
     display_order: int
     reference_video_link: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LessonResponse(BaseModel):
+    id: str
+    lesson_plan_id: str
+    lesson_title: str
+    lesson_objective: Optional[str] = None
+    display_order: int
+    topics: list[TopicResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LessonSummaryResponse(BaseModel):
+    id: str
+    lesson_title: str
+    lesson_objective: Optional[str] = None
+    display_order: int
     created_at: datetime
     updated_at: datetime
 
@@ -112,6 +116,7 @@ class LessonPlanResponse(BaseModel):
         model_config = {"from_attributes": True}
 
     batches: list[BatchInfo] = Field(default_factory=list)
+    lessons: list[LessonSummaryResponse] = Field(default_factory=list)
     status: str
     remarks: Optional[str] = None
     created_at: datetime
