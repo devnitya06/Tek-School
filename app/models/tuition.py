@@ -65,10 +65,8 @@ class ApprovalStatus(str, Enum):
 
 
 class LessonPlanStatus(str, Enum):
-    DRAFT = "draft"
-    SUBMITTED = "submitted"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 def generate_short_id(prefix: str = "ID", length: int = 8) -> str:
@@ -138,6 +136,16 @@ class TuitionBatch(Base):
         "TuitionLessonPlanBatch",
         back_populates="batch",
         cascade="all, delete-orphan",
+    )
+    class_obj = relationship(
+        "Class",
+        foreign_keys=[class_id],
+        primaryjoin="TuitionBatch.class_id == Class.id",
+    )
+    subject_obj = relationship(
+        "Subject",
+        foreign_keys=[subject_id],
+        primaryjoin="TuitionBatch.subject_id == Subject.id",
     )
     class_done_records = relationship(
         "TuitionClassDoneRecord",
@@ -251,7 +259,7 @@ class TuitionLessonPlan(Base):
     chapter = Column(String(255), nullable=True)
     lesson_title = Column(String(255), nullable=False)
     objective = Column(Text, nullable=True)
-    status = Column(String(30), nullable=False, default="draft")
+    status = Column(String(30), nullable=False, default="active")
     is_deleted = Column(Boolean, nullable=False, default=False)
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -379,6 +387,7 @@ class TuitionLesson(Base):
         "TuitionLessonTopic",
         back_populates="lesson",
         cascade="all, delete-orphan",
+        order_by="TuitionLessonTopic.display_order",
     )
     mappings = relationship(
         "TuitionLessonAssignmentMapping",

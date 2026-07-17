@@ -22,15 +22,19 @@ def merge_lesson_plan_batches(lesson_plan: TuitionLessonPlan, batch_ids: list[st
 
 
 def can_edit_lesson_plan(lesson_plan: TuitionLessonPlan) -> bool:
-    if lesson_plan is None:
-        return False
-    return str(lesson_plan.status) in {LessonPlanStatus.DRAFT.value, LessonPlanStatus.REJECTED.value}
+    return (
+        lesson_plan is not None
+        and not getattr(lesson_plan, 'is_deleted', False)
+        and str(lesson_plan.status) == LessonPlanStatus.ACTIVE.value
+    )
 
 
 def can_delete_lesson_plan(lesson_plan: TuitionLessonPlan) -> bool:
-    if lesson_plan is None:
-        return False
-    return str(lesson_plan.status) in {LessonPlanStatus.DRAFT.value, LessonPlanStatus.REJECTED.value}
+    return (
+        lesson_plan is not None
+        and not getattr(lesson_plan, 'is_deleted', False)
+        and str(lesson_plan.status) == LessonPlanStatus.ACTIVE.value
+    )
 
 
 def _resolve_lesson_plan_batch_ids(
@@ -114,7 +118,7 @@ def create_lesson_plan_service(db: Session, *, current_user, payload: LessonPlan
         .join(TuitionBatch, TuitionLessonPlanBatch.batch_id == TuitionBatch.id)
         .filter(
             TuitionLessonPlan.is_deleted.is_(False),
-            TuitionLessonPlan.status == LessonPlanStatus.DRAFT.value,
+            TuitionLessonPlan.status == LessonPlanStatus.ACTIVE.value,
             TuitionLessonPlan.lesson_title == (payload.title or "Untitled Lesson Plan"),
             TuitionBatch.board_id == payload.board,
             TuitionBatch.class_id == payload.class_id,
@@ -186,21 +190,3 @@ def update_lesson_plan_service(db: Session, lesson_plan: TuitionLessonPlan, *, c
     return crud_update_lesson_plan(db, lesson_plan, **kwargs)
 
 
-def submit_lesson_plan_service(lesson_plan: TuitionLessonPlan):
-    lesson_plan.status = LessonPlanStatus.SUBMITTED.value
-    return lesson_plan
-
-
-def withdraw_lesson_plan_service(lesson_plan: TuitionLessonPlan):
-    lesson_plan.status = LessonPlanStatus.DRAFT.value
-    return lesson_plan
-
-
-def approve_lesson_plan_service(lesson_plan: TuitionLessonPlan):
-    lesson_plan.status = LessonPlanStatus.APPROVED.value
-    return lesson_plan
-
-
-def reject_lesson_plan_service(lesson_plan: TuitionLessonPlan):
-    lesson_plan.status = LessonPlanStatus.REJECTED.value
-    return lesson_plan
