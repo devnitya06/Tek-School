@@ -325,9 +325,7 @@ def ensure_assignment_tables():
     """Ensure core assignment module tables exist even when RUN_SCHEMA_SYNC is disabled."""
     from app.models.assignments.assignment import (
         Assignment,
-        AssignmentActivityTask,
         StudentAssignmentProgress,
-        AssignmentActivityTaskStatus,
         AssignmentKeyPoint,
         AssignmentQuestion,
         AssignmentImage,
