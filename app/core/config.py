@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     
     #Email
-    MAIL_USERNAME: EmailStr
+    MAIL_USERNAME: str
     MAIL_PASSWORD: str
     MAIL_FROM: EmailStr
     MAIL_PORT: int
