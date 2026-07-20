@@ -28,7 +28,7 @@ def retry_db_operation(operation, retries=3, delay=1):
             last_exception = exc
             engine.dispose()
             time.sleep(delay)
-    raise last_exception
+    raise last_exception or RuntimeError("DB operation failed after retries")
 
 
 def inspect_engine():
@@ -434,7 +434,7 @@ def ensure_assignment_tables():
 def ensure_assignment_activity_chapter_ids_column():
     """Ensure assignment activities can store multiple chapter/topic IDs."""
     # Ensure assignments table has chapter_ids column (merged from assignment_activities)
-    if not inspector.has_table("assignments"):
+    if not inspect(engine).has_table("assignments"):
         return
 
     if column_exists("assignments", "chapter_ids"):
