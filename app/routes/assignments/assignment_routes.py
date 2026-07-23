@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile, File, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, String
+from sqlalchemy import func, or_, and_
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import json
@@ -50,7 +50,7 @@ from app.models.assignments.assignment import (
 from app.models.users import User
 from app.models.teachers import Teacher, SelfSignedTeacher, SelfSignedTeacherTeachingConfiguration, TeacherClassSectionSubject
 from app.models.students import Student, SelfSignedStudent
-from app.models.school import Class, Subject
+from app.models.school import Class, Subject, class_subjects
 from app.models.admin import SchoolClassSubject
 from app.db.session import get_db
 
@@ -151,43 +151,90 @@ def _resolve_class_subject_ids(
     class_name: Optional[str],
     subject_name: Optional[str],
     board_name: Optional[str] = None,
+    school_id: Optional[str] = None,
 ) -> tuple[Optional[int], Optional[int]]:
     class_id = None
     subject_id = None
 
     normalized_class = (class_name or "").strip().lower()
     normalized_subject = (subject_name or "").strip().lower()
-    normalized_board = (board_name or "").strip().lower()
 
-    if normalized_class:
-        class_query = db.query(SchoolClassSubject).filter(
-            func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == normalized_class
-        )
-        if normalized_board:
-            class_query = class_query.filter(
-                func.lower(func.cast(SchoolClassSubject.school_board, String)) == normalized_board
+    # Prefer the canonical school class table for `class_id`.
+    if normalized_class and school_id:
+        class_row = (
+            db.query(Class)
+            .filter(
+                func.lower(func.coalesce(Class.name, "")) == normalized_class,
+                Class.school_id == school_id,
             )
-        class_row = class_query.order_by(SchoolClassSubject.id).first()
+            .order_by(Class.id)
+            .first()
+        )
         if class_row:
             class_id = class_row.id
 
     if normalized_subject:
-        subject_query = db.query(SchoolClassSubject).filter(
-            func.lower(func.coalesce(SchoolClassSubject.subject, "")) == normalized_subject
-        )
-        if normalized_board:
-            subject_query = subject_query.filter(
-                func.lower(func.cast(SchoolClassSubject.school_board, String)) == normalized_board
+        if class_id is not None and school_id:
+            subject_row = (
+                db.query(Subject)
+                .join(class_subjects, class_subjects.c.subject_id == Subject.id)
+                .filter(
+                    func.lower(func.coalesce(Subject.name, "")) == normalized_subject,
+                    class_subjects.c.class_id == class_id,
+                    class_subjects.c.school_id == school_id,
+                )
+                .order_by(Subject.id)
+                .first()
             )
-        if normalized_class:
-            subject_query = subject_query.filter(
-                func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == normalized_class
+            if subject_row:
+                subject_id = subject_row.id
+
+        if subject_id is None and school_id:
+            subject_row = (
+                db.query(Subject)
+                .filter(
+                    func.lower(func.coalesce(Subject.name, "")) == normalized_subject,
+                    Subject.school_id == school_id,
+                )
+                .order_by(Subject.id)
+                .first()
             )
-        subject_row = subject_query.order_by(SchoolClassSubject.id).first()
-        if subject_row:
-            subject_id = subject_row.id
+            if subject_row:
+                subject_id = subject_row.id
 
     return class_id, subject_id
+
+
+def _build_profile_scope_response(
+    db: Session,
+    class_names_by_board: Dict[str, set],
+    subject_names_by_class: Dict[str, set],
+    school_id: Optional[str] = None,
+) -> Dict[str, List[Dict[str, object]]]:
+    data = []
+    for board_name, class_names in class_names_by_board.items():
+        for class_name in sorted(class_names or set()):
+            class_id, _ = _resolve_class_subject_ids(db, class_name, None, board_name, school_id=school_id)
+            seen_subject_keys = set()
+            subjects = []
+            for subject_name in sorted(subject_names_by_class.get(class_name, set()) or set()):
+                normalized_subject_key = (subject_name or "").strip().lower()
+                if normalized_subject_key in seen_subject_keys:
+                    continue
+                seen_subject_keys.add(normalized_subject_key)
+                _, subject_id = _resolve_class_subject_ids(db, class_name, subject_name, board_name, school_id=school_id)
+                subjects.append({
+                    "subject_name": subject_name,
+                    "subject_id": subject_id,
+                    "total_assignments": 0,
+                })
+            data.append({
+                "board_name": board_name,
+                "class_name": class_name,
+                "class_id": class_id,
+                "subjects": subjects,
+            })
+    return {"data": data}
 
 
 def _calculate_attempt_percentage(assignment: Assignment, attempt: Optional[StudentAssignmentAttempt]) -> Optional[float]:
@@ -597,10 +644,14 @@ def get_my_assignments(
     - Provides counts: total_assignments and created_by_me (for teachers)
     - Optimized with aggregation queries to avoid N+1 problems
     """
+    scope_school_id = None
+
     if current_user.role in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
         teacher_obj = _get_teacher_for_user(db, current_user)
         if not teacher_obj:
             raise HTTPException(status_code=404, detail="Teacher profile not found.")
+
+        scope_school_id = getattr(getattr(teacher_obj, "school", None), "id", None)
 
         # Build allowed mappings depending on teacher type
         allowed_board_values = set()
@@ -652,17 +703,46 @@ def get_my_assignments(
         if not student_obj:
             raise HTTPException(status_code=404, detail="Student profile not found.")
 
-        class_group = None
-        if getattr(student_obj, "select_class_id", None):
-            class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
+        board_value = None
+        class_name = None
+        if current_user.role == UserRole.STUDENT:
+            school = getattr(student_obj, "school", None)
+            scope_school_id = getattr(school, "id", None)
+            if school and getattr(school, "school_board", None):
+                board_value = str(school.school_board.value if hasattr(school.school_board, 'value') else school.school_board)
+            class_obj = getattr(student_obj, "classes", None)
+            class_name = getattr(class_obj, "name", None) or getattr(student_obj, "class_id", None)
+        else:
+            if getattr(student_obj, "select_class_id", None):
+                class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == student_obj.select_class_id).first()
+                if class_group:
+                    board_value = str(class_group.school_board.value if hasattr(class_group.school_board, 'value') else class_group.school_board)
+                    class_name = class_group.class_name
+            if not board_value and getattr(student_obj, "select_board", None):
+                board_value = str(student_obj.select_board)
 
-        if not class_group:
+        if not board_value or not class_name:
             return {"data": []}
 
-        board_value = str(class_group.school_board.value if hasattr(class_group.school_board, 'value') else class_group.school_board)
         allowed_board_values = {board_value.lower()} if board_value else set()
-        class_names_by_board = {board_value or "": {class_group.class_name}} if class_group.class_name else {}
-        subject_names_by_class = {class_group.class_name: {class_group.subject}} if class_group.class_name and class_group.subject else {}
+        class_names_by_board = {board_value or "": {class_name}} if class_name else {}
+
+        subject_rows = (
+            db.query(Subject)
+            .join(class_subjects, class_subjects.c.subject_id == Subject.id)
+            .join(Class, Class.id == class_subjects.c.class_id)
+            .filter(
+                Class.school_id == scope_school_id,
+                func.lower(func.coalesce(Class.name, "")) == str(class_name).strip().lower(),
+            )
+            .all()
+        )
+        subject_names_by_class = {}
+        if class_name:
+            subject_names_by_class[class_name] = set()
+        for subject_row in subject_rows:
+            if subject_row.name and class_name:
+                subject_names_by_class.setdefault(class_name, set()).add(subject_row.name)
 
     else:
         raise HTTPException(status_code=403, detail="Only teachers and students may access this resource.")
@@ -754,7 +834,7 @@ def get_my_assignments(
         board_key = r.board or ''
         class_key = r.class_name or ''
         subj_key = r.subject or ''
-        class_id, subject_id = _resolve_class_subject_ids(db, class_key, subj_key, board_key)
+        class_id, subject_id = _resolve_class_subject_ids(db, class_key, subj_key, board_key, school_id=scope_school_id)
         subject_entry = {
             "subject_name": subj_key,
             "subject_id": subject_id,
@@ -766,17 +846,22 @@ def get_my_assignments(
 
         response_map.setdefault(board_key, {}).setdefault(class_key, []).append(subject_entry)
 
-    # Convert to list form matching example
+    # Convert to list form matching example. If the user has an assigned profile scope
+    # but no published assignments yet, return that profile scope with zero counts instead
+    # of an empty payload.
     data = []
     for board_name, classes in response_map.items():
         for class_name, subjects in classes.items():
-            class_id, _ = _resolve_class_subject_ids(db, class_name, None, board_name)
+            class_id, _ = _resolve_class_subject_ids(db, class_name, None, board_name, school_id=scope_school_id)
             data.append({
                 "board_name": board_name,
                 "class_name": class_name,
                 "class_id": class_id,
                 "subjects": subjects,
             })
+
+    if not data and class_names_by_board:
+        return _build_profile_scope_response(db, class_names_by_board, subject_names_by_class, school_id=scope_school_id)
 
     return {"data": data}
 

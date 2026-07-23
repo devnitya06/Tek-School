@@ -212,6 +212,35 @@ def ensure_attendance_mark_columns():
         )
 
 
+def ensure_tuition_teaching_setup_schema():
+    """Ensure the tuition teaching setup table and its columns exist for the current model."""
+    from app.models.tuition.teaching_setup import TuitionTeachingSetup
+
+    table_name = TuitionTeachingSetup.__tablename__
+    inspector = inspect_engine()
+    if not inspector.has_table(table_name):
+        TuitionTeachingSetup.__table__.create(bind=engine, checkfirst=True)
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns(table_name)}
+    for column in TuitionTeachingSetup.__table__.columns:
+        if column.name in existing_columns:
+            continue
+        column_type = column.type.compile(dialect=engine.dialect)
+        alter_stmt = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {column_type}'
+        if not column.nullable:
+            alter_stmt += " NOT NULL"
+        if column.default is not None:
+            default_value = column.default.arg
+            if callable(default_value):
+                default_value = default_value()
+            if hasattr(default_value, "value"):
+                default_value = default_value.value
+            alter_stmt += f" DEFAULT '{default_value}'"
+        with engine.begin() as conn:
+            conn.execute(text(alter_stmt))
+
+
 def ensure_staff_teacher_boss_columns():
     """
     Ensure both legacy/current boss column spellings exist and stay mirrored.
