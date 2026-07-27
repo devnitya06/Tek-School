@@ -62,6 +62,25 @@ class AssignmentQuestionResponse(AssignmentQuestionBase):
     
     model_config = ConfigDict(from_attributes=True)
 
+class AssignmentQuestionPatch(BaseModel):
+    """All fields optional — send only what you want to change."""
+    question_number: Optional[int] = None
+    question_text: Optional[str] = None
+    option_a: Optional[str] = None
+    option_b: Optional[str] = None
+    option_c: Optional[str] = None
+    option_d: Optional[str] = None
+    correct_option: Optional[str] = None
+    solution_explanation: Optional[str] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "question_text": "Updated question text?",
+            "correct_option": "C",
+            "solution_explanation": "Because C is correct."
+        }
+    })
+
 class AssignmentFileCreate(BaseModel):
     sub_chapter_name: Optional[str] = None
     step_number: Optional[int] = None

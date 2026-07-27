@@ -47,6 +47,7 @@ from app.schemas.assignments.assignment import (
     AssignmentFileUsageSummary,
     AssignmentPatchBody,
     AssignmentQuestionBatchCreate,
+    AssignmentQuestionPatch,
     AssignmentQuestionResponse,
     AssignmentReportCreate,
     AssignmentReportResponse,
@@ -1573,6 +1574,87 @@ def add_assignment_questions(
     for q in created_questions:
         db.refresh(q)
     return created_questions
+
+
+@router.patch(
+    "/assignments/{assignment_id}/questions/{question_id}",
+    response_model=AssignmentQuestionResponse,
+    summary="Edit Question",
+    tags=["Assignments"],
+)
+def edit_assignment_question(
+    assignment_id: int,
+    question_id: int,
+    data: AssignmentQuestionPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Edit an existing MCQ question on an assignment.**
+
+    - Send only the fields you want to change — all are optional.
+    - Only the assignment owner (teacher) can edit questions.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=403, detail="Only teachers may edit questions.")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    if assignment.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owning teacher may edit questions.")
+
+    question = db.query(AssignmentQuestion).filter(
+        AssignmentQuestion.id == question_id,
+        AssignmentQuestion.assignment_id == assignment_id,
+    ).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found on this assignment.")
+
+    patch = data.model_dump(exclude_unset=True)
+    for field, value in patch.items():
+        setattr(question, field, value)
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+@router.delete(
+    "/assignments/{assignment_id}/questions/{question_id}",
+    summary="Delete Question",
+    tags=["Assignments"],
+)
+def delete_assignment_question(
+    assignment_id: int,
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Delete a question from an assignment.**
+
+    - Only the assignment owner (teacher) can delete questions.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=403, detail="Only teachers may delete questions.")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    if assignment.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owning teacher may delete questions.")
+
+    question = db.query(AssignmentQuestion).filter(
+        AssignmentQuestion.id == question_id,
+        AssignmentQuestion.assignment_id == assignment_id,
+    ).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found on this assignment.")
+
+    db.delete(question)
+    db.commit()
+    return {"detail": "Question deleted.", "question_id": question_id, "assignment_id": assignment_id}
 
 
 @router.post("/assignments/{assignment_id}/files", response_model=List[AssignmentFileResponse], summary="Upload Files & Images", tags=["Assignments"])
