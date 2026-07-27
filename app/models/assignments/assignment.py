@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float, Enum, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float, Enum, Text, Date, JSON
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 from datetime import datetime
@@ -37,12 +37,18 @@ class Assignment(Base):
     board = Column(String, nullable=False)
     class_name = Column(String, nullable=False) # Renamed to avoid conflict with 'class' keyword
     subject = Column(String, nullable=False)
+    title = Column(String, nullable=True)
     chapter_number = Column(Integer, nullable=False)
-    sub_chapter = Column(String, nullable=True)
-    topic_title = Column(String, nullable=False)
+    chapter_name = Column(String, nullable=True)
+    chapter_description = Column(Text, nullable=True)
+    sub_chapters = Column(JSON, nullable=True)
     chapter_tagline = Column(String, nullable=True)
-    original_content = Column(Text, nullable=True) # Rich text/HTML
-    summarized_content = Column(Text, nullable=True) # Expert Summarized content block
+    sub_chapter = Column(String, nullable=True)
+    topic_title = Column(String, nullable=True)
+    tuition_setup_id = Column(String, nullable=True)
+    tuition_date = Column(Date, nullable=True)
+    total_file_size_bytes = Column(Integer, nullable=False, default=0)
+    total_file_count = Column(Integer, nullable=False, default=0)
 
     # Denormalized teacher and school info for display
     teacher_name = Column(String, nullable=True)
@@ -122,6 +128,13 @@ class AssignmentImage(Base):
     id = Column(Integer, primary_key=True, index=True)
     assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
     url = Column(String, nullable=False)
+    file_name = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+    usage = Column(String, nullable=True)
+    sub_chapter_name = Column(String, nullable=True)
+    step_number = Column(Integer, nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    s3_key = Column(String, nullable=True)
 
     assignment = relationship("Assignment", back_populates="images")
 
@@ -131,6 +144,13 @@ class AssignmentPDF(Base):
     id = Column(Integer, primary_key=True, index=True)
     assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
     url = Column(String, nullable=False)
+    file_name = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+    usage = Column(String, nullable=True)
+    sub_chapter_name = Column(String, nullable=True)
+    step_number = Column(Integer, nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    s3_key = Column(String, nullable=True)
 
     assignment = relationship("Assignment", back_populates="pdfs")
 

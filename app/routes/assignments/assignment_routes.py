@@ -1,58 +1,72 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, UploadFile, File, Request
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
-from typing import List, Optional, Dict
-from datetime import datetime, timedelta
 import json
+from datetime import datetime, timedelta
+from typing import Dict, List
+
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
-from app.schemas.users import UserRole
-from app.utils.s3 import upload_multipart_file_to_s3
+from app.db.session import get_db
+from app.models.admin import SchoolClassSubject
+from app.models.assignments.assignment import (
+    Assignment,
+    AssignmentDoubt,
+    AssignmentImage,
+    AssignmentKeyPoint,
+    AssignmentPDF,
+    AssignmentQuestion,
+    AssignmentReport,
+    AssignmentStatus,
+    AssignmentVideoLink,
+    ChapterFeedback,
+    DoubtReply,
+    DoubtStatus,
+    FavoriteTeacher,
+    PublishConfiguration,
+    StudentAssignmentAttempt,
+    StudentAssignmentProgress,
+    TeacherRating,
+)
+from app.models.school import Class, Subject, class_subjects
+from app.models.students import SelfSignedStudent, Student
+from app.models.teachers import (
+    SelfSignedTeacher,
+    SelfSignedTeacherTeachingConfiguration,
+    Teacher,
+    TeacherClassSectionSubject,
+)
+from app.models.users import User
 from app.schemas.assignments.assignment import (
-    AssignmentUpdate,
+    AssignmentCreate,
+    AssignmentDoubtCreate,
+    AssignmentDoubtResponse,
+    AssignmentFileCreate,
+    AssignmentFileResponse,
+    AssignmentFileUploadPayload,
+    AssignmentFileUsageSummary,
+    AssignmentPatchBody,
+    AssignmentQuestionBatchCreate,
+    AssignmentQuestionResponse,
+    AssignmentReportCreate,
+    AssignmentReportResponse,
     AssignmentResponse,
+    AssignmentUpdate,
+    ChapterFeedbackCreate,
+    DoubtReplyCreate,
+    DoubtReplyResponse,
+    FavoriteTeacherCreate,
+    FavoriteTeacherListResponse,
+    FavoriteTeacherResponse,
     PublishConfigurationCreate,
     PublishConfigurationResponse,
     StudentAssignmentAttemptCreate,
-    TeacherRatingCreate,
-    ChapterFeedbackCreate,
-    AssignmentDoubtCreate,
-    AssignmentDoubtResponse,
-    DoubtReplyCreate,
-    DoubtReplyResponse,
     StudentAssignmentAttemptResponse,
-    AssignmentReportCreate,
-    AssignmentReportResponse,
     TeacherProfileResponse,
-    FavoriteTeacherCreate,
-    FavoriteTeacherResponse,
-    FavoriteTeacherListResponse,
+    TeacherRatingCreate,
 )
-from app.models.assignments.assignment import (
-    Assignment,
-    AssignmentQuestion,
-    AssignmentKeyPoint,
-    AssignmentImage,
-    AssignmentPDF,
-    AssignmentVideoLink,
-    PublishConfiguration,
-    StudentAssignmentAttempt,
-    ChapterFeedback,
-    TeacherRating,
-    DoubtStatus,
-    AssignmentStatus,
-    StudentAssignmentProgress,
-    AssignmentDoubt,
-    DoubtReply,
-    AssignmentReport,
-    FavoriteTeacher,
-)
-from app.models.users import User
-from app.models.teachers import Teacher, SelfSignedTeacher, SelfSignedTeacherTeachingConfiguration, TeacherClassSectionSubject
-from app.models.students import Student, SelfSignedStudent
-from app.models.school import Class, Subject, class_subjects
-from app.models.admin import SchoolClassSubject
-from app.db.session import get_db
+from app.schemas.users import UserRole
+from app.utils.s3 import upload_multipart_file_to_s3
 
 router = APIRouter()
 
@@ -102,7 +116,7 @@ def _resolve_teacher_profile_by_id(db: Session, teacher_id: str):
     return None, None
 
 
-def _get_teacher_display_name(db: Session, teacher_id: str, teacher_type: str) -> Optional[str]:
+def _get_teacher_display_name(db: Session, teacher_id: str, teacher_type: str) -> str | None:
     if teacher_type == "teacher":
         teacher_obj = db.query(Teacher).filter(Teacher.id == teacher_id).first()
         if teacher_obj:
@@ -124,7 +138,7 @@ def _get_favorite_teacher_count(db: Session, teacher_id: str, teacher_type: str)
     )
 
 
-def _get_student_display_name(db: Session, doubt: AssignmentDoubt) -> Optional[str]:
+def _get_student_display_name(db: Session, doubt: AssignmentDoubt) -> str | None:
     if doubt.student_user_id is not None:
         student = db.query(Student).filter(Student.user_id == doubt.student_user_id).first()
         if student:
@@ -148,11 +162,11 @@ def _get_student_display_name(db: Session, doubt: AssignmentDoubt) -> Optional[s
 
 def _resolve_class_subject_ids(
     db: Session,
-    class_name: Optional[str],
-    subject_name: Optional[str],
-    board_name: Optional[str] = None,
-    school_id: Optional[str] = None,
-) -> tuple[Optional[int], Optional[int]]:
+    class_name: str | None,
+    subject_name: str | None,
+    board_name: str | None = None,
+    school_id: str | None = None,
+) -> tuple[int | None, int | None]:
     class_id = None
     subject_id = None
 
@@ -209,7 +223,7 @@ def _build_profile_scope_response(
     db: Session,
     class_names_by_board: Dict[str, set],
     subject_names_by_class: Dict[str, set],
-    school_id: Optional[str] = None,
+    school_id: str | None = None,
 ) -> Dict[str, List[Dict[str, object]]]:
     data = []
     for board_name, class_names in class_names_by_board.items():
@@ -237,7 +251,7 @@ def _build_profile_scope_response(
     return {"data": data}
 
 
-def _calculate_attempt_percentage(assignment: Assignment, attempt: Optional[StudentAssignmentAttempt]) -> Optional[float]:
+def _calculate_attempt_percentage(assignment: Assignment, attempt: StudentAssignmentAttempt | None) -> float | None:
     if not assignment or not attempt:
         return None
 
@@ -339,9 +353,9 @@ def _serialize_doubt_response(db: Session, doubt: AssignmentDoubt) -> Assignment
 def _get_existing_student_doubt(
     db: Session,
     assignment_id: int,
-    student_user_id: Optional[int] = None,
-    self_signed_student_id: Optional[int] = None,
-) -> Optional[AssignmentDoubt]:
+    student_user_id: int | None = None,
+    self_signed_student_id: int | None = None,
+) -> AssignmentDoubt | None:
     query = db.query(AssignmentDoubt).filter(AssignmentDoubt.assignment_id == assignment_id)
 
     if student_user_id is not None:
@@ -747,10 +761,19 @@ def get_my_assignments(
     else:
         raise HTTPException(status_code=403, detail="Only teachers and students may access this resource.")
 
-    # Build base filter for published assignments
-    base_filter = Assignment.status == AssignmentStatus.PUBLISHED
+    # For students: only count published assignments.
+    # For teachers: count ALL their own assignments (draft, published, etc.)
+    is_teacher = current_user.role in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]
+
+    if is_teacher:
+        # teacher sees their own assignments in any status
+        base_filter = Assignment.created_by_user_id == current_user.id
+    else:
+        # students only see published
+        base_filter = Assignment.status == AssignmentStatus.PUBLISHED
 
     # Aggregate totals grouped by board, class_name, subject
+    # Exclude tuition-linked assignments — they appear in the tuition section, not here
     agg_query = (
         db.query(
             func.coalesce(func.nullif(Assignment.board, ''), Assignment.board).label('board'),
@@ -759,7 +782,10 @@ def get_my_assignments(
             func.count(Assignment.id).label('total'),
         )
         .filter(base_filter)
+        .filter(Assignment.tuition_setup_id.is_(None))
+        .filter(Assignment.tuition_date.is_(None))
     )
+
 
     # Apply board filter if known
     if allowed_board_values:
@@ -790,69 +816,54 @@ def get_my_assignments(
     agg_query = agg_query.group_by(Assignment.board, Assignment.class_name, Assignment.subject)
     totals = agg_query.all()
 
-    # Aggregate created_by_me counts
-    me_query = (
-        db.query(
-            func.coalesce(func.nullif(Assignment.board, ''), Assignment.board).label('board'),
-            Assignment.class_name.label('class_name'),
-            Assignment.subject.label('subject'),
-            func.count(Assignment.id).label('created_by_me'),
-        )
-        .filter(base_filter)
-    )
-
-    if allowed_board_values:
-        me_query = me_query.filter(func.lower(Assignment.board).in_(list(allowed_board_values)))
-
-    if class_conds and subject_conds:
-        me_query = me_query.filter(and_(*class_conds), and_(*subject_conds))
-    elif class_conds:
-        me_query = me_query.filter(and_(*class_conds))
-    elif subject_conds:
-        me_query = me_query.filter(and_(*subject_conds))
-
-    # created by me conditions: count only assignments where created_by_user_id == current_user.id
-    # This avoids ambiguity with other creator fields and matches user's expectation
-    created_cond = Assignment.created_by_user_id == current_user.id
-
-    if created_cond is not False:
-        me_query = me_query.filter(created_cond)
-        me_query = me_query.group_by(Assignment.board, Assignment.class_name, Assignment.subject)
-        # Normalize keys to avoid case/whitespace mismatches between queries
-        me_counts = {}
-        for r in me_query.all():
-            kb = (r.board or '').strip().lower()
-            kc = (r.class_name or '').strip().lower()
-            ks = (r.subject or '').strip().lower()
-            me_counts[(kb, kc, ks)] = r.created_by_me
-    else:
-        me_counts = {}
-
-    # Build response grouped as Board -> Class -> Subjects
-    response_map = {}
+    # Build a counts lookup: (class_name_lower, subject_lower) -> count
+    counts_map = {}
     for r in totals:
-        board_key = r.board or ''
-        class_key = r.class_name or ''
-        subj_key = r.subject or ''
-        class_id, subject_id = _resolve_class_subject_ids(db, class_key, subj_key, board_key, school_id=scope_school_id)
-        subject_entry = {
-            "subject_name": subj_key,
-            "subject_id": subject_id,
-            "total_assignments": int(r.total or 0),
-        }
-        if current_user.role in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
-            lookup_key = ((r.board or '').strip().lower(), (r.class_name or '').strip().lower(), (r.subject or '').strip().lower())
-            subject_entry["created_by_me"] = int(me_counts.get(lookup_key, 0) or 0)
+        kc = (r.class_name or '').strip().lower()
+        ks = (r.subject or '').strip().lower()
+        counts_map[(kc, ks)] = int(r.total or 0)
 
-        response_map.setdefault(board_key, {}).setdefault(class_key, []).append(subject_entry)
+    # Pre-fetch SchoolClassSubject rows for efficient ID resolution
+    # class_id  = SchoolClassSubject.id matched by (board + class_name) — any subject row for that class
+    # subject_id = SchoolClassSubject.id matched by (board + class_name + subject)
+    def _admin_class_id(board: str, class_name: str) -> int | None:
+        row = (
+            db.query(SchoolClassSubject.id)
+            .filter(func.lower(func.coalesce(SchoolClassSubject.class_name, '')) == class_name.strip().lower())
+            .order_by(SchoolClassSubject.id)
+            .first()
+        )
+        return row[0] if row else None
 
-    # Convert to list form matching example. If the user has an assigned profile scope
-    # but no published assignments yet, return that profile scope with zero counts instead
-    # of an empty payload.
+    def _admin_subject_id(board: str, class_name: str, subject_name: str) -> int | None:
+        row = (
+            db.query(SchoolClassSubject.id)
+            .filter(func.lower(func.coalesce(SchoolClassSubject.class_name, '')) == class_name.strip().lower())
+            .filter(func.lower(func.coalesce(SchoolClassSubject.subject, '')) == subject_name.strip().lower())
+            .order_by(SchoolClassSubject.id)
+            .first()
+        )
+        return row[0] if row else None
+
+    # Always show ALL subjects from the teacher's profile, including those with 0 assignments.
     data = []
-    for board_name, classes in response_map.items():
-        for class_name, subjects in classes.items():
-            class_id, _ = _resolve_class_subject_ids(db, class_name, None, board_name, school_id=scope_school_id)
+    for board_name, class_names in class_names_by_board.items():
+        for class_name in sorted(class_names or set()):
+            class_id = _admin_class_id(board_name, class_name)
+            seen_subject_keys = set()
+            subjects = []
+            for subject_name in sorted(subject_names_by_class.get(class_name, set()) or set()):
+                normalized_subject_key = (subject_name or '').strip().lower()
+                if normalized_subject_key in seen_subject_keys:
+                    continue
+                seen_subject_keys.add(normalized_subject_key)
+                subject_id = _admin_subject_id(board_name, class_name, subject_name)
+                count = counts_map.get((class_name.strip().lower(), normalized_subject_key), 0)
+                subjects.append({
+                    "subject_name": subject_name,
+                    "subject_id": subject_id,
+                    "total_assignments": count,
+                })
             data.append({
                 "board_name": board_name,
                 "class_name": class_name,
@@ -860,10 +871,8 @@ def get_my_assignments(
                 "subjects": subjects,
             })
 
-    if not data and class_names_by_board:
-        return _build_profile_scope_response(db, class_names_by_board, subject_names_by_class, school_id=scope_school_id)
-
     return {"data": data}
+
 
 
 @router.get("/assignments/my-assignments")
@@ -883,16 +892,16 @@ def my_assignments_summary_legacy(
 def get_all_assignments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    board: Optional[str] = Query(None),
-    medium: Optional[str] = Query(None),
-    class_name: Optional[str] = Query(None),
-    class_id: Optional[int] = Query(None),
-    subject: Optional[str] = Query(None),
-    subject_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None, description="Filter by status: 'published' or 'unpublished' (defaults to both)"),
-    chapter_number: Optional[int] = Query(None),
-    teacher_id: Optional[int] = Query(None),
-    school_name: Optional[str] = Query(None),
+    board: str | None = Query(None),
+    medium: str | None = Query(None),
+    class_name: str | None = Query(None),
+    class_id: int | None = Query(None),
+    subject: str | None = Query(None),
+    subject_id: int | None = Query(None),
+    status: str | None = Query(None, description="Filter by status: 'published' or 'unpublished' (defaults to both)"),
+    chapter_number: int | None = Query(None),
+    teacher_id: int | None = Query(None),
+    school_name: str | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -1113,13 +1122,9 @@ def _build_teacher_school_denorm(teacher_obj):
 
 def _pending_tasks_count(assignment: Assignment) -> int:
     count = 0
-    if not assignment.topic_title:
+    if not assignment.chapter_name:
         count += 1
-    if not assignment.original_content:
-        count += 1
-    if not assignment.summarized_content:
-        count += 1
-    if not assignment.key_points:
+    if not assignment.sub_chapters:
         count += 1
     if not assignment.questions:
         count += 1
@@ -1185,6 +1190,51 @@ def _validate_image_file(file: UploadFile) -> str:
     return ext
 
 
+def _get_upload_file_size(file: UploadFile) -> int:
+    if not file or not getattr(file, "file", None):
+        return 0
+    try:
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+        return size
+    except Exception:
+        return 0
+
+
+def _update_assignment_file_stats(assignment: Assignment, file_size_bytes: int, count: int = 1) -> None:
+    assignment.total_file_size_bytes = (assignment.total_file_size_bytes or 0) + file_size_bytes
+    assignment.total_file_count = (assignment.total_file_count or 0) + count
+
+
+def _build_assignment_file_usage_summary(assignment: Assignment | None) -> AssignmentFileUsageSummary:
+    if assignment is None:
+        return AssignmentFileUsageSummary()
+
+    total_size = int(assignment.total_file_size_bytes or 0)
+    total_count = int(assignment.total_file_count or 0)
+    size_kb = round(total_size / 1024, 2) if total_size else 0.0
+    size_mb = round(size_kb / 1024, 4) if size_kb else 0.0
+
+    if size_mb >= 1:
+        numeric_label = f"{size_mb:.2f}".rstrip('0').rstrip('.')
+        storage_label = f"{numeric_label} MB"
+    elif size_kb >= 1:
+        numeric_label = f"{size_kb:.2f}".rstrip('0').rstrip('.')
+        storage_label = f"{numeric_label} KB"
+    else:
+        storage_label = f"{total_size} bytes"
+
+    return AssignmentFileUsageSummary(
+        assignment_id=assignment.id,
+        total_file_count=total_count,
+        total_file_size_bytes=total_size,
+        total_file_size_kb=size_kb,
+        total_file_size_mb=size_mb,
+        storage_label=storage_label,
+    )
+
+
 def _validate_pdf_file(file: UploadFile) -> str:
     """Validate PDF file type and size (max 10MB). Returns 'pdf' or raises HTTPException."""
     if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
@@ -1199,7 +1249,7 @@ def _validate_pdf_file(file: UploadFile) -> str:
     return "pdf"
 
 
-def _validate_video_urls(video_urls: Optional[List[str]]) -> List[str]:
+def _validate_video_urls(video_urls: list[str] | None) -> List[str]:
     """Validate video URLs: max 3, HTTPS only. Raise HTTPException on validation failure."""
     if video_urls is None:
         return []
@@ -1216,24 +1266,20 @@ def _validate_video_urls(video_urls: Optional[List[str]]) -> List[str]:
     return video_urls
 
 
-@router.post("/assignments", response_model=AssignmentResponse)
+@router.post("/assignments", response_model=AssignmentResponse, summary="Create Assignment", tags=["Assignments"])
 async def create_assignment(
-    request: Request,
-    assignment_data: str = Form(...),
-    images: Optional[List[UploadFile]] = File(None),
-    pdfs: Optional[List[UploadFile]] = File(None),
+    payload: AssignmentCreate = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create assignment with multipart file uploads (images, PDFs, key point images) to S3.
-    
-    Form fields:
-    - assignment_data: JSON string with assignment metadata
-    - images: Optional file array (JPG/PNG/WEBP, ≤10MB each)
-    - pdfs: Optional file array (PDF only, ≤10MB each)
-    - Additional form fields for key point images (e.g., "kp1.jpg", "kp2.png") - optional per key point
     """
-    
+    **Create a new assignment.**
+
+    - Status is always set to `draft` automatically.
+    - Upload files separately via `POST /assignments/{id}/files` after creation.
+    - Add questions separately via `POST /assignments/{id}/questions`.
+    """
+
     if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may create assignments.")
 
@@ -1241,16 +1287,10 @@ async def create_assignment(
     if not teacher_obj:
         raise HTTPException(status_code=404, detail="Teacher profile not found.")
 
-    # Parse assignment_data JSON from form field
-    try:
-        data_dict = json.loads(assignment_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid assignment_data JSON")
-    if not isinstance(data_dict, dict):
-        raise HTTPException(status_code=400, detail="assignment_data must be a JSON object")
-    
+    data_dict = payload.model_dump(exclude_unset=True)
+
     # Validate required fields
-    required_fields = ["board", "class_name", "subject", "chapter_number", "topic_title"]
+    required_fields = ["board", "class_name", "subject", "chapter_number", "chapter_name"]
     for field in required_fields:
         if field not in data_dict or not data_dict[field]:
             raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
@@ -1260,6 +1300,36 @@ async def create_assignment(
     subject_value = str(data_dict.get("subject")).strip()
     class_id_value = data_dict.get("class_id")
     subject_id_value = data_dict.get("subject_id")
+
+    # ── Admin-list validation ──────────────────────────────────────────────
+    # The board + class_name + subject combination MUST exist in the admin-
+    # configured school_classes_subjects table.
+    admin_combo = (
+        db.query(SchoolClassSubject)
+        .filter(func.lower(func.coalesce(SchoolClassSubject.class_name, "")) == class_name_value.lower())
+        .filter(func.lower(func.coalesce(SchoolClassSubject.subject, "")) == subject_value.lower())
+        .first()
+    )
+    if not admin_combo:
+        # Build a helpful list of valid classes & subjects for this board
+        valid_rows = (
+            db.query(SchoolClassSubject.class_name, SchoolClassSubject.subject)
+            .filter(SchoolClassSubject.class_name.isnot(None))
+            .order_by(SchoolClassSubject.class_name, SchoolClassSubject.subject)
+            .distinct()
+            .limit(20)
+            .all()
+        )
+        valid_list = ", ".join(
+            f"{r.class_name}/{r.subject}" for r in valid_rows if r.class_name and r.subject
+        ) or "None configured yet"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The combination class_name='{class_name_value}' and subject='{subject_value}' "
+                f"is not in the admin list. Valid pairs: {valid_list}"
+            )
+        )
 
     if (class_id_value in (None, "", 0)) and class_name_value:
         class_lookup = (
@@ -1342,157 +1412,107 @@ async def create_assignment(
 
     # Validate video URLs if provided
     video_urls = _validate_video_urls(data_dict.get("video_links", []))
-    if "key_points" in data_dict and data_dict["key_points"] is not None and not isinstance(data_dict["key_points"], list):
-        raise HTTPException(status_code=400, detail="key_points must be a list")
+    if "sub_chapters" in data_dict and data_dict["sub_chapters"] is not None and not isinstance(data_dict["sub_chapters"], list):
+        raise HTTPException(status_code=400, detail="sub_chapters must be a list")
     if "questions" in data_dict and data_dict["questions"] is not None and not isinstance(data_dict["questions"], list):
         raise HTTPException(status_code=400, detail="questions must be a list")
     
-    # Enforce chapter creation constraints:
-    # 1) A single user cannot create more than one assignment for the same (board, class_name, chapter_number)
-    # 2) Across all creators, a maximum of 10 assignments are allowed for the same (board, class_name, chapter_number)
+    # Validate and enforce chapter number constraints
     try:
         chapter_number_val = int(data_dict.get("chapter_number"))
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid chapter_number value")
 
+    # Rule 1: chapter_number must be between 1 and 15
+    if not (1 <= chapter_number_val <= 15):
+        raise HTTPException(
+            status_code=400,
+            detail=f"chapter_number must be between 1 and 15 (got {chapter_number_val})"
+        )
+
     kb = board_value.strip().lower()
     kc = class_name_value.strip().lower()
+    ks = subject_value.strip().lower()
 
-    # Per-user uniqueness check
+    # Rule 2: A teacher can only have ONE assignment per (board, class, subject, chapter_number)
     existing = (
         db.query(Assignment)
-        .filter(func.coalesce(func.nullif(Assignment.board, ''), Assignment.board).ilike(board_value))
+        .filter(func.lower(Assignment.board) == kb)
         .filter(func.lower(Assignment.class_name) == kc)
+        .filter(func.lower(Assignment.subject) == ks)
         .filter(Assignment.chapter_number == chapter_number_val)
         .filter(Assignment.created_by_user_id == current_user.id)
         .first()
     )
     if existing:
-        raise HTTPException(status_code=400, detail="You have already created an assignment for this board/class/chapter number")
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already have an assignment for chapter {chapter_number_val} "
+                   f"({board_value} / {class_name_value} / {subject_value}). "
+                   f"Each teacher can only create one assignment per chapter."
+        )
 
-    # Global cap per chapter
-    total_same_chapter = (
-        db.query(func.count(Assignment.id))
-        .filter(func.coalesce(func.nullif(Assignment.board, ''), Assignment.board).ilike(board_value))
-        .filter(func.lower(Assignment.class_name) == kc)
-        .filter(Assignment.chapter_number == chapter_number_val)
-        .scalar() or 0
-    )
-    if total_same_chapter >= 10:
-        raise HTTPException(status_code=400, detail="Maximum assignments for this board/class/chapter have been reached (10)")
-    
-    # Get all form data to find key point image files
-    form_data = await request.form()
-    kp_image_files: Dict[str, UploadFile] = {}
-    
-    # Extract key point image files (anything not in the known fields)
-    known_fields = {"assignment_data", "images", "pdfs"}
-    for field_name in form_data.keys():
-        if field_name not in known_fields:
-            file_item = form_data[field_name]
-            if isinstance(file_item, UploadFile):
-                kp_image_files[field_name] = file_item
-    
-    # Upload images to S3 and collect URLs
-    image_urls = []
-    if images:
-        for img_file in images:
-            if img_file.filename:  # Skip empty uploads
-                _validate_image_file(img_file)
-                url = upload_multipart_file_to_s3(
-                    img_file,
-                    f"assignments/teacher-{current_user.id}/images",
-                    max_size=10 * 1024 * 1024
-                )
-                image_urls.append(url)
-    
-    # Upload PDFs to S3 and collect URLs
-    pdf_urls = []
-    if pdfs:
-        for pdf_file in pdfs:
-            if pdf_file.filename:  # Skip empty uploads
-                _validate_pdf_file(pdf_file)
-                url = upload_multipart_file_to_s3(
-                    pdf_file,
-                    f"assignments/teacher-{current_user.id}/pdfs",
-                    max_size=10 * 1024 * 1024
-                )
-                pdf_urls.append(url)
-    
-    # Upload key point images and build a map of filename -> S3 URL
-    kp_image_map: Dict[str, str] = {}
-    for filename, kp_file in kp_image_files.items():
-        if kp_file.filename:
-            _validate_image_file(kp_file)
-            url = upload_multipart_file_to_s3(
-                kp_file,
-                f"assignments/teacher-{current_user.id}/key-points",
-                max_size=10 * 1024 * 1024
-            )
-            kp_image_map[filename] = url
     
     # Build denormalized teacher/school info
     denorm = _build_teacher_school_denorm(teacher_obj)
     
     # Create assignment record
+    sub_chapters_payload = data_dict.get("sub_chapters")
+    if sub_chapters_payload is not None:
+        normalized_sub_chapters = []
+        for item in sub_chapters_payload:
+            if hasattr(item, "model_dump"):
+                normalized_sub_chapters.append(item.model_dump())
+            else:
+                normalized_sub_chapters.append(item)
+        sub_chapters_payload = normalized_sub_chapters
+
     assignment_kwargs = {
         "created_by_user_id": current_user.id,
         "status": AssignmentStatus.DRAFT,
         "board": board_value,
         "class_name": class_name_value,
         "subject": subject_value,
+        "title": data_dict.get("title"),
         "chapter_number": data_dict.get("chapter_number"),
-        "sub_chapter": data_dict.get("sub_chapter"),
-        "topic_title": data_dict.get("topic_title"),
+        "chapter_name": data_dict.get("chapter_name"),
+        "chapter_description": data_dict.get("chapter_description"),
+        "sub_chapters": sub_chapters_payload,
         "chapter_tagline": data_dict.get("chapter_tagline"),
-        "original_content": data_dict.get("original_content"),
-        "summarized_content": data_dict.get("summarized_content"),
         "teacher_name": denorm["teacher_name"],
         "school_name": denorm["school_name"],
         "school_address": denorm["school_address"],
+        "tuition_setup_id": data_dict.get("tuition_setup_id"),
+        "tuition_date": data_dict.get("tuition_date"),
     }
+
 
     if current_user.role == UserRole.TEACHER:
         assignment_kwargs["created_by_teacher_id"] = teacher_obj.id
     elif current_user.role == UserRole.SELF_SIGNED_TEACHER:
         assignment_kwargs["created_by_self_signed_teacher_id"] = teacher_obj.id
 
+
     assignment = Assignment(**assignment_kwargs)
-    
-    # Parse and add key points with optional images
-    if data_dict.get("key_points"):
-        for kp_data in data_dict["key_points"]:
-            key_point = AssignmentKeyPoint(
-                step_number=kp_data.get("step_number"),
-                text=kp_data.get("text"),
-            )
-            # If key point references an image file, map it to the S3 URL
-            if kp_data.get("image") and kp_data["image"] in kp_image_map:
-                key_point.image_url = kp_image_map[kp_data["image"]]
-            assignment.key_points.append(key_point)
     
     # Parse and add questions
     if data_dict.get("questions"):
         for q_data in data_dict["questions"]:
+            if hasattr(q_data, "model_dump"):
+                q_payload = q_data.model_dump()
+            else:
+                q_payload = q_data
             question = AssignmentQuestion(
-                question_number=q_data.get("question_number"),
-                question_text=q_data.get("question_text"),
-                option_a=q_data.get("option_a"),
-                option_b=q_data.get("option_b"),
-                option_c=q_data.get("option_c"),
-                option_d=q_data.get("option_d"),
-                correct_option=q_data.get("correct_option"),
-                solution_explanation=q_data.get("solution_explanation"),
+                question_number=q_payload.get("question_number"),
+                question_text=q_payload.get("question_text"),
+                option_a=q_payload.get("option_a"),
+                option_b=q_payload.get("option_b"),
+                option_c=q_payload.get("option_c"),
+                option_d=q_payload.get("option_d"),
+                correct_option=q_payload.get("correct_option"),
+                solution_explanation=q_payload.get("solution_explanation"),
             )
             assignment.questions.append(question)
-    
-    # Add image records
-    for img_url in image_urls:
-        assignment.images.append(AssignmentImage(url=img_url))
-    
-    # Add PDF records
-    for pdf_url in pdf_urls:
-        assignment.pdfs.append(AssignmentPDF(url=pdf_url))
     
     # Add video link records
     for video_url in video_urls:
@@ -1505,16 +1525,254 @@ async def create_assignment(
     db.add(assignment)
     db.commit()
     db.refresh(assignment)
-    return assignment
+    assignment_response = AssignmentResponse.model_validate(assignment)
+    assignment_response.file_usage = _build_assignment_file_usage_summary(assignment)
+    return assignment_response
 
 
-@router.put("/assignments/{assignment_id}", response_model=AssignmentResponse)
-def update_assignment(
+@router.post("/assignments/{assignment_id}/questions", response_model=List[AssignmentQuestionResponse], summary="Add Questions", tags=["Assignments"])
+def add_assignment_questions(
     assignment_id: int,
-    data: AssignmentUpdate,
+    data: AssignmentQuestionBatchCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    **Add MCQ questions to an existing assignment.**
+
+    - Send one or more questions in the `questions` array.
+    - Questions are appended; existing questions are preserved.
+    - Only the assignment owner (teacher) can add questions.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may add questions.")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    if assignment.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owning teacher may update this assignment.")
+
+    created_questions = []
+    for q_data in data.questions:
+        question = AssignmentQuestion(
+            assignment_id=assignment.id,
+            question_number=q_data.question_number,
+            question_text=q_data.question_text,
+            option_a=q_data.option_a,
+            option_b=q_data.option_b,
+            option_c=q_data.option_c,
+            option_d=q_data.option_d,
+            correct_option=q_data.correct_option,
+            solution_explanation=q_data.solution_explanation,
+        )
+        db.add(question)
+        created_questions.append(question)
+
+    db.commit()
+    for q in created_questions:
+        db.refresh(q)
+    return created_questions
+
+
+@router.post("/assignments/{assignment_id}/files", response_model=List[AssignmentFileResponse], summary="Upload Files & Images", tags=["Assignments"])
+async def upload_assignment_files(
+    assignment_id: int,
+    files: List[UploadFile] = File(...),
+    metadata_json: str | None = Form(None, description='JSON string matching AssignmentFileUploadPayload, e.g. {"files":[{"sub_chapter_name":"Place Value","file_name":"worksheet.pdf","file_type":"pdf","usage":"subchapter_file"}]}'),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Upload PDF or image files for an assignment.**
+
+    - Multipart form: `files` = actual file(s), `metadata_json` = JSON metadata per file.
+    - `usage` values: `subchapter_file` | `key_point_image`.
+    - Files are stored in S3; max 10 MB each.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may upload assignment files.")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    if assignment.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owning teacher may update this assignment.")
+
+    payload = AssignmentFileUploadPayload(files=[])
+    if metadata_json:
+        try:
+            payload = AssignmentFileUploadPayload.model_validate_json(metadata_json)
+        except Exception:
+            raise HTTPException(status_code=400, detail="metadata_json must be a valid JSON array of file metadata")
+
+    created_records = []
+    for index, uploaded_file in enumerate(files):
+        metadata = payload.files[index] if index < len(payload.files) else AssignmentFileCreate()
+        filename = metadata.file_name or uploaded_file.filename or f"file_{index + 1}"
+        inferred_type = (metadata.file_type or "").lower() or (uploaded_file.content_type or "file")
+        if inferred_type.startswith("image/") or inferred_type in {"image", "jpg", "jpeg", "png", "webp", "gif"}:
+            file_type = "image"
+        elif inferred_type == "application/pdf" or filename.lower().endswith(".pdf"):
+            file_type = "pdf"
+        else:
+            file_type = inferred_type or "file"
+
+        if metadata.usage and metadata.usage.lower() in {"key_point_image", "key_point"}:
+            usage = metadata.usage.lower()
+        else:
+            usage = "subchapter_file"
+
+        # Capture size BEFORE uploading to S3 — the upload consumes the stream
+        file_size = _get_upload_file_size(uploaded_file)
+
+        if file_type == "pdf":
+            url = upload_multipart_file_to_s3(uploaded_file, f"assignments/teacher-{current_user.id}/files", max_size=10 * 1024 * 1024)
+            record = AssignmentPDF(
+                assignment_id=assignment.id,
+                url=url,
+                file_name=filename,
+                file_type=file_type,
+                usage=usage,
+                sub_chapter_name=metadata.sub_chapter_name,
+                step_number=metadata.step_number,
+                file_size_bytes=file_size,
+                s3_key=f"assignments/{assignment.id}/{filename}",
+            )
+            db.add(record)
+            created_records.append(record)
+        else:
+            url = upload_multipart_file_to_s3(uploaded_file, f"assignments/teacher-{current_user.id}/files", max_size=10 * 1024 * 1024)
+            record = AssignmentImage(
+                assignment_id=assignment.id,
+                url=url,
+                file_name=filename,
+                file_type=file_type,
+                usage=usage,
+                sub_chapter_name=metadata.sub_chapter_name,
+                step_number=metadata.step_number,
+                file_size_bytes=file_size,
+                s3_key=f"assignments/{assignment.id}/{filename}",
+            )
+            db.add(record)
+            created_records.append(record)
+
+        _update_assignment_file_stats(assignment, file_size)
+
+
+    db.commit()
+    for record in created_records:
+        db.refresh(record)
+
+    return created_records
+
+
+@router.delete(
+    "/assignments/{assignment_id}/files/{file_id}",
+    summary="Delete Assignment File",
+    tags=["Assignments"],
+)
+def delete_assignment_file(
+    assignment_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Delete a file (image or PDF) from an assignment.**
+
+    - Removes the file record from the database.
+    - Subtracts the file's size from `total_file_size_bytes`.
+    - Decrements `total_file_count` by 1.
+    - Only the assignment owner (teacher) can delete files.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may delete assignment files.")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+    if assignment.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owning teacher may delete files from this assignment.")
+
+    # Search in images first, then PDFs
+    file_record = db.query(AssignmentImage).filter(
+        AssignmentImage.id == file_id,
+        AssignmentImage.assignment_id == assignment_id,
+    ).first()
+
+    if not file_record:
+        file_record = db.query(AssignmentPDF).filter(
+            AssignmentPDF.id == file_id,
+            AssignmentPDF.assignment_id == assignment_id,
+        ).first()
+
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found on this assignment.")
+
+    # Subtract size and count from assignment stats
+    removed_size = int(file_record.file_size_bytes or 0)
+    assignment.total_file_size_bytes = max(0, (assignment.total_file_size_bytes or 0) - removed_size)
+    assignment.total_file_count = max(0, (assignment.total_file_count or 1) - 1)
+
+    db.delete(file_record)
+    db.commit()
+
+    return {
+        "detail": "File deleted successfully.",
+        "file_id": file_id,
+        "assignment_id": assignment_id,
+        "removed_bytes": removed_size,
+        "total_file_size_bytes": assignment.total_file_size_bytes,
+        "total_file_count": assignment.total_file_count,
+    }
+
+
+@router.get("/assignments/me", response_model=List[AssignmentResponse], summary="Get My Assignments", tags=["Assignments"])
+def get_my_assignments_list(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Get all assignments created by the logged-in teacher.**
+
+    - Returns all assignments regardless of status (draft, published, etc.).
+    - Ordered by creation date descending (newest first).
+    - Only accessible by teachers.
+    """
+    if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may access their assignments.")
+
+    assignments = (
+        db.query(Assignment)
+        .filter(Assignment.created_by_user_id == current_user.id)
+        .order_by(Assignment.created_at.desc())
+        .all()
+    )
+
+    results = []
+    for a in assignments:
+        response = AssignmentResponse.model_validate(a)
+        response.file_usage = _build_assignment_file_usage_summary(a)
+        results.append(response)
+    return results
+
+
+@router.patch("/assignments/{assignment_id}", response_model=AssignmentResponse, summary="Update Assignment", tags=["Assignments"])
+def update_assignment(
+    assignment_id: int,
+    data: AssignmentPatchBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    **Partially update an assignment.**
+
+    - Only the fields provided will be updated (all fields are optional).
+    - Updatable fields: `title`, `status`, `tuition_setup_id`, `tuition_date`.
+    - Setting `status` to `published` will also record the `published_at` timestamp.
+    - Only the assignment owner (teacher) can update.
+    """
     if current_user.role not in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers may edit assignments.")
 
@@ -1523,41 +1781,35 @@ def update_assignment(
         raise HTTPException(status_code=404, detail="Assignment not found.")
     if assignment.created_by_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the owning teacher may update this assignment.")
-    if assignment.status in (AssignmentStatus.PUBLISHED, AssignmentStatus.UNPUBLISHED):
-        raise HTTPException(status_code=400, detail="Published or unpublished assignments cannot be modified directly.")
 
-    # Update scalar fields (exclude nested relationship fields)
-    excluded_fields = {"key_points", "questions", "images", "pdfs", "video_links", "media_banners"}
-    for field, value in data.model_dump(exclude_unset=True).items():
-        if field not in excluded_fields and value is not None:
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if value is not None:
             setattr(assignment, field, value)
 
-    # Update nested items only if explicitly provided
-    if data.key_points is not None:
-        db.query(AssignmentKeyPoint).filter(AssignmentKeyPoint.assignment_id == assignment.id).delete()
-        new_key_points = [AssignmentKeyPoint(**kp.model_dump()) for kp in data.key_points]
-        for kp in new_key_points:
-            db.add(kp)
-        assignment.key_points = new_key_points
-
-    if data.questions is not None:
-        db.query(AssignmentQuestion).filter(AssignmentQuestion.assignment_id == assignment.id).delete()
-        new_questions = [AssignmentQuestion(**q.model_dump()) for q in data.questions]
-        for q in new_questions:
-            db.add(q)
-        assignment.questions = new_questions
+    # Record published_at timestamp when status becomes published
+    if data.status == AssignmentStatus.PUBLISHED and not assignment.published_at:
+        assignment.published_at = datetime.utcnow()
 
     db.commit()
     db.refresh(assignment)
-    return assignment
+    response = AssignmentResponse.model_validate(assignment)
+    response.file_usage = _build_assignment_file_usage_summary(assignment)
+    return response
 
 
-@router.get("/assignments/{assignment_id}", response_model=AssignmentResponse)
+@router.get("/assignments/{assignment_id}", response_model=AssignmentResponse, summary="Get Assignment Details", tags=["Assignments"])
 def get_assignment(
     assignment_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    **Get full details of a single assignment.**
+
+    - The assignment owner can view it in any status.
+    - Other users can only view published assignments.
+    """
     assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found.")
@@ -1597,7 +1849,9 @@ def get_assignment(
     else:
         assignment.creator_favorite_count = 0
 
-    return assignment
+    response = AssignmentResponse.model_validate(assignment)
+    response.file_usage = _build_assignment_file_usage_summary(assignment)
+    return response
 
 
 @router.post("/assignments/{assignment_id}/publish", response_model=PublishConfigurationResponse)
@@ -1662,14 +1916,14 @@ def unpublish_assignment(
 @router.get("/students/{student_id}/assignments")
 def list_student_assignments(
     student_id: int,
-    board: Optional[str] = Query(None),
-    class_name: Optional[str] = Query(None),
-    subject: Optional[str] = Query(None),
-    teacher_id: Optional[int] = Query(None),
-    school_name: Optional[str] = Query(None),
-    chapter_number: Optional[int] = Query(None),
-    appeared: Optional[str] = Query(None),
-    sort: Optional[str] = Query(None),
+    board: str | None = Query(None),
+    class_name: str | None = Query(None),
+    subject: str | None = Query(None),
+    teacher_id: int | None = Query(None),
+    school_name: str | None = Query(None),
+    chapter_number: int | None = Query(None),
+    appeared: str | None = Query(None),
+    sort: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -2288,8 +2542,8 @@ def get_assignment_reports(
 def list_reports_admin(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    assignment_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None),
+    assignment_id: int | None = Query(None),
+    status: str | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
 ):

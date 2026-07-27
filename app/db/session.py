@@ -390,16 +390,55 @@ def ensure_assignment_tables():
             ("subject_id", "INTEGER"),
             ("chapter_id", "INTEGER"),
             ("chapter_ids", "INTEGER[]"),
+            ("title", "VARCHAR(255)"),
+            ("chapter_name", "VARCHAR(255)"),
+            ("chapter_description", "TEXT"),
+            ("chapter_tagline", "VARCHAR(255)"),
+            ("sub_chapter", "VARCHAR(255)"),
+            ("topic_title", "VARCHAR(255)"),
+            ("sub_chapters", "JSON"),
+            ("tuition_setup_id", "VARCHAR(255)"),
+            ("tuition_date", "DATE"),
+            ("total_file_size_bytes", "BIGINT"),
+            ("total_file_count", "INTEGER"),
         ]:
             if not column_exists("assignments", col_name):
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE assignments ADD COLUMN IF NOT EXISTS {col_name} {col_type} NULL"))
+
+        # Ensure nullable columns aren't accidentally NOT NULL from old migrations
+        nullable_cols = ["title", "chapter_tagline", "sub_chapter", "topic_title",
+                         "chapter_name", "chapter_description", "sub_chapters",
+                         "tuition_setup_id", "tuition_date", "total_file_size_bytes", "total_file_count"]
+        with engine.begin() as conn:
+            for col in nullable_cols:
+                try:
+                    conn.execute(text(f"ALTER TABLE assignments ALTER COLUMN {col} DROP NOT NULL"))
+                except Exception:
+                    pass  # Already nullable or column doesn't exist — safe to ignore
 
         # Ensure key point image_url column exists when table already present
         if inspector.has_table("assignment_key_points"):
             if not column_exists("assignment_key_points", "image_url"):
                 with engine.begin() as conn:
                     conn.execute(text('ALTER TABLE assignment_key_points ADD COLUMN IF NOT EXISTS image_url VARCHAR NULL'))
+
+        # Ensure assignment_images and assignment_pdfs have all file metadata columns
+        _file_meta_cols = [
+            ("file_name",        "VARCHAR(255)"),
+            ("file_type",        "VARCHAR(50)"),
+            ("usage",            "VARCHAR(100)"),
+            ("sub_chapter_name", "VARCHAR(255)"),
+            ("step_number",      "INTEGER"),
+            ("file_size_bytes",  "BIGINT"),
+            ("s3_key",           "VARCHAR(500)"),
+        ]
+        for _tbl in ("assignment_images", "assignment_pdfs"):
+            if inspector.has_table(_tbl):
+                for _col, _typ in _file_meta_cols:
+                    if not column_exists(_tbl, _col):
+                        with engine.begin() as conn:
+                            conn.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ} NULL"))
 
         # Ensure merged assignment doubt table columns exist for existing databases
         if inspector.has_table("assignment_doubts"):

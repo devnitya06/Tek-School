@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, validator, root_validator, ConfigDict
 from typing import List, Optional, Union
-from datetime import datetime
+from datetime import date, datetime
 from app.models.assignments.assignment import AssignmentStatus, AssignmentType, StudentImprovementCategory, DoubtStatus, ReportCategory, ReportStatus, TaskStatus # Import new enums and TaskStatus
 import json
 
@@ -37,9 +37,118 @@ class AssignmentQuestionBase(BaseModel):
 class AssignmentQuestionCreate(AssignmentQuestionBase):
     pass
 
+class AssignmentQuestionBatchCreate(BaseModel):
+    questions: List[AssignmentQuestionCreate] = Field(default_factory=list)
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "questions": [
+                {
+                    "question_number": 1,
+                    "question_text": "What is the place value of 5 in 352?",
+                    "option_a": "5",
+                    "option_b": "50",
+                    "option_c": "500",
+                    "option_d": "5000",
+                    "correct_option": "B",
+                    "solution_explanation": "5 is in the tens place, so its value is 50."
+                }
+            ]
+        }
+    })
+
 class AssignmentQuestionResponse(AssignmentQuestionBase):
     id: int
     
+    model_config = ConfigDict(from_attributes=True)
+
+class AssignmentFileCreate(BaseModel):
+    sub_chapter_name: Optional[str] = None
+    step_number: Optional[int] = None
+    file_name: Optional[str] = None
+    file_type: Optional[str] = None
+    usage: Optional[str] = None
+    file_url: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    s3_key: Optional[str] = None
+
+class AssignmentFileUploadPayload(BaseModel):
+    files: List[AssignmentFileCreate] = Field(default_factory=list)
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "files": [
+                {
+                    "sub_chapter_name": "Place Value",
+                    "file_name": "worksheet.pdf",
+                    "file_type": "pdf",
+                    "usage": "subchapter_file"
+                },
+                {
+                    "sub_chapter_name": "Place Value",
+                    "file_name": "keypoint_image.png",
+                    "file_type": "image",
+                    "usage": "key_point_image",
+                    "step_number": 1
+                }
+            ]
+        }
+    })
+
+class AssignmentFileResponse(AssignmentFileCreate):
+    id: int
+    assignment_id: int
+    url: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubChapterKeyPointBase(BaseModel):
+    step_number: int
+    text: str
+    image_url: Optional[str] = None
+
+class SubChapterKeyPointCreate(SubChapterKeyPointBase):
+    pass
+
+class SubChapterKeyPointResponse(SubChapterKeyPointBase):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VocabularyItemBase(BaseModel):
+    word: str
+    easy_meaning: Optional[str] = None
+    example_sentence: Optional[str] = None
+
+class VocabularyItemCreate(VocabularyItemBase):
+    pass
+
+class VocabularyItemResponse(VocabularyItemBase):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HomeTaskItemBase(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+class HomeTaskItemCreate(HomeTaskItemBase):
+    pass
+
+class HomeTaskItemResponse(HomeTaskItemBase):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubChapterBase(BaseModel):
+    sub_chapter_name: str
+    sub_chapter_summary: Optional[str] = None
+    key_points: List[SubChapterKeyPointCreate] = []
+    vocabulary: List[VocabularyItemCreate] = []
+    home_task: List[HomeTaskItemCreate] = []
+
+class SubChapterCreate(SubChapterBase):
+    pass
+
+class SubChapterResponse(SubChapterBase):
     model_config = ConfigDict(from_attributes=True)
 
 class AssignmentImageBase(BaseModel):
@@ -128,7 +237,7 @@ class PublishConfigurationResponse(BaseModel):
 # --- New Schemas for merged AssignmentActivity models ---
 
 class AssignmentTaskBase(BaseModel):
-    title: str
+    title: Optional[str] = None
     description: Optional[str] = None
     file: Optional[str] = None
 
@@ -272,12 +381,12 @@ class AssignmentBase(BaseModel):
     board: str
     class_name: str
     subject: str
-    chapter_number: int
-    sub_chapter: Optional[str] = None
-    topic_title: str
+    title: Optional[str] = None
+    chapter_number: int = Field(..., ge=1, le=15, description="Chapter number (1–15)")
+    chapter_name: str
+    chapter_description: Optional[str] = None
+    sub_chapters: Optional[List[SubChapterCreate]] = None
     chapter_tagline: Optional[str] = None
-    original_content: Optional[str] = None
-    summarized_content: Optional[str] = None
     
     # From AssignmentActivity
     activity_type: AssignmentType = AssignmentType.ACADEMIC # New field
@@ -285,19 +394,83 @@ class AssignmentBase(BaseModel):
     subject_id: Optional[int] = None # New field
     chapter_id: Optional[int] = None # New field
     chapter_ids: Optional[List[int]] = None # New field
+    tuition_setup_id: Optional[str] = None
+    tuition_date: Optional[date] = None
 
 class AssignmentCreate(AssignmentBase):
-    key_points: Optional[List[AssignmentKeyPointCreate]] = None
     questions: Optional[List[AssignmentQuestionCreate]] = None
-    tasks: Optional[List[AssignmentTaskCreate]] = None # New field
-    student_ids: Optional[List[int]] = None # New field
-    self_signed_student_ids: Optional[List[int]] = None # New field
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "board": "cbse",
+            "class_name": "Standard 4",
+            "subject": "Math",
+            "title": "Math Assignment",
+            "chapter_number": 1,
+            "chapter_name": "Numbers",
+            "chapter_description": "Basic number concepts",
+            "tuition_setup_id": "TS12345678",
+            "tuition_date": "2026-07-28",
+            "sub_chapters": [
+                {
+                    "sub_chapter_name": "Place Value",
+                    "sub_chapter_summary": "Learn about ones, tens, hundreds",
+                    "key_points": [
+                        {"step_number": 1, "text": "Understand the value of each digit"}
+                    ],
+                    "vocabulary": [
+                        {
+                            "word": "digit",
+                            "easy_meaning": "a single number",
+                            "example_sentence": "The number 7 is a digit."
+                        }
+                    ],
+                    "home_task": [
+                        {
+                            "title": "Practice worksheet",
+                            "description": "Solve 10 place value problems"
+                        }
+                    ]
+                }
+            ]
+        }
+    })
+
+
+class AssignmentPatchBody(BaseModel):
+    """
+    Body for PATCH /assignments/{id}.
+    All fields are optional — send only the fields you want to change.
+    Note: total_file_size_bytes and total_file_count are managed by file upload/delete endpoints.
+    """
+    board: Optional[str] = None
+    class_name: Optional[str] = None
+    subject: Optional[str] = None
+    title: Optional[str] = None
+    chapter_number: Optional[int] = Field(None, ge=1, le=15, description="Chapter number (1–15)")
+    chapter_name: Optional[str] = None
+    chapter_description: Optional[str] = None
+    chapter_tagline: Optional[str] = None
+    sub_chapters: Optional[List[SubChapterCreate]] = None
+    tuition_setup_id: Optional[str] = None
+    tuition_date: Optional[date] = None
+    status: Optional[AssignmentStatus] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "chapter_name": "Numbers Ok",
+            "chapter_description": "Updated description",
+            "status": "published",
+            "tuition_setup_id": "TS12345678",
+            "tuition_date": "2026-07-28"
+        }
+    })
+
+
 
 class AssignmentUpdate(AssignmentBase):
     status: Optional[AssignmentStatus] = None
-    key_points: Optional[List[AssignmentKeyPointCreate]] = None
     questions: Optional[List[AssignmentQuestionCreate]] = None
-    tasks: Optional[List[AssignmentTaskCreate]] = None # New field
 
 class FavoriteTeacherCreate(BaseModel):
     teacher_id: str
@@ -319,8 +492,27 @@ class FavoriteTeacherListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssignmentFileUsageSummary(BaseModel):
+    assignment_id: Optional[int] = None
+    total_file_count: int = 0
+    total_file_size_bytes: int = 0
+    total_file_size_kb: float = 0.0
+    total_file_size_mb: float = 0.0
+    storage_label: str = "0 KB"
+
+    def __getitem__(self, item):
+        return getattr(self, item)
+
+    def get(self, item, default=None):
+        return getattr(self, item, default)
+
+
 class AssignmentResponse(AssignmentBase):
     id: int
+    title: Optional[str] = None
+    total_file_size_bytes: int = 0
+    total_file_count: int = 0
+    file_usage: AssignmentFileUsageSummary = Field(default_factory=AssignmentFileUsageSummary)
     created_by_user_id: Optional[int] = None # Can be null now for self-signed
     created_by_teacher_id: Optional[Union[str, int]] = None # New field
     teacher_id: Optional[Union[str, int]] = None # Alias for created_by_teacher_id / self-signed teacher id
@@ -360,14 +552,13 @@ class AssignmentResponse(AssignmentBase):
     doubts_count: int = 0
     made_ideal_count: int = 0
 
-    key_points: List[AssignmentKeyPointResponse] = []
+    sub_chapters: List[SubChapterResponse] = []
     questions: List[AssignmentQuestionResponse] = []
     images: List[AssignmentImageResponse] = []
     pdfs: List[AssignmentPDFResponse] = []
     video_links: List[AssignmentVideoLinkResponse] = []
     media_banners: List[AssignmentMediaBannerResponse] = []
     publish_config: Optional[PublishConfigurationResponse] = None
-    tasks: List[AssignmentTaskResponse] = [] # New field
     assigned_students_progress: List[StudentAssignmentProgressResponse] = [] # New field
 
     model_config = ConfigDict(from_attributes=True)
