@@ -507,6 +507,9 @@ def get_assignments_catalog(
     s = subject.strip().lower()
 
     # Role-based access validation
+    # Also track whether the requester is a teacher (to include their own drafts later)
+    is_teacher_role = current_user.role in [UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER]
+
     if current_user.role == UserRole.TEACHER:
         teacher_obj = _get_teacher_for_user(db, current_user)
         if not teacher_obj:
@@ -555,6 +558,10 @@ def get_assignments_catalog(
                 if any((srow.subject or '').strip().lower() == s and (srow.class_name or '').strip().lower() == c for srow in subjects):
                     allowed = True
                     break
+            else:
+                # No specific subjects configured — grant access to all subjects in this class
+                allowed = True
+                break
         if not allowed:
             raise HTTPException(status_code=403, detail="Self-signed teacher not configured for this class/subject")
 
@@ -575,16 +582,36 @@ def get_assignments_catalog(
     else:
         raise HTTPException(status_code=403, detail="Unauthorized role")
 
-    # Query assignments: published (and treat as active) and matching board/class/subject
-    assignments = (
-        db.query(Assignment)
-        .filter(Assignment.status == AssignmentStatus.PUBLISHED)
-        .filter(func.lower(func.coalesce(func.nullif(Assignment.board, ''), Assignment.board)) == b)
-        .filter(func.lower(Assignment.class_name) == c)
-        .filter(func.lower(Assignment.subject) == s)
-        .order_by(Assignment.created_at.desc())
-        .all()
+    # Query assignments: all published for this board/class/subject,
+    # PLUS the teacher's own drafts if the requester is a teacher.
+    board_class_subject_filter = (
+        func.lower(func.coalesce(func.nullif(Assignment.board, ''), Assignment.board)) == b,
+        func.lower(Assignment.class_name) == c,
+        func.lower(Assignment.subject) == s,
     )
+    if is_teacher_role:
+        # Teachers see: all PUBLISHED assignments + their own assignments in any status
+        assignments = (
+            db.query(Assignment)
+            .filter(*board_class_subject_filter)
+            .filter(
+                or_(
+                    Assignment.status == AssignmentStatus.PUBLISHED,
+                    Assignment.created_by_user_id == current_user.id,
+                )
+            )
+            .order_by(Assignment.created_at.desc())
+            .all()
+        )
+    else:
+        # Students only see published assignments
+        assignments = (
+            db.query(Assignment)
+            .filter(Assignment.status == AssignmentStatus.PUBLISHED)
+            .filter(*board_class_subject_filter)
+            .order_by(Assignment.created_at.desc())
+            .all()
+        )
 
     # Compute participants_count, doubts_count, made_ideal_count in bulk
     assignment_ids = [a.id for a in assignments]
@@ -817,12 +844,39 @@ def get_my_assignments(
     agg_query = agg_query.group_by(Assignment.board, Assignment.class_name, Assignment.subject)
     totals = agg_query.all()
 
-    # Build a counts lookup: (class_name_lower, subject_lower) -> count
+    # Build counts lookup: (class_name_lower, subject_lower) -> total assignment count
     counts_map = {}
     for r in totals:
         kc = (r.class_name or '').strip().lower()
         ks = (r.subject or '').strip().lower()
         counts_map[(kc, ks)] = int(r.total or 0)
+
+    # Build a per-subject lookup for the current teacher's own assignments.
+    my_counts_map = {}
+    if is_teacher:
+        my_totals_query = (
+            db.query(
+                Assignment.class_name.label('class_name'),
+                Assignment.subject.label('subject'),
+                func.count(Assignment.id).label('my_total'),
+            )
+            .filter(base_filter)
+            .filter(Assignment.tuition_setup_id.is_(None))
+            .filter(Assignment.tuition_date.is_(None))
+        )
+        if allowed_board_values:
+            my_totals_query = my_totals_query.filter(func.lower(Assignment.board).in_(list(allowed_board_values)))
+        if class_conds and subject_conds:
+            my_totals_query = my_totals_query.filter(and_(*class_conds), and_(*subject_conds))
+        elif class_conds:
+            my_totals_query = my_totals_query.filter(and_(*class_conds))
+        elif subject_conds:
+            my_totals_query = my_totals_query.filter(and_(*subject_conds))
+        my_totals_query = my_totals_query.group_by(Assignment.class_name, Assignment.subject)
+        for r in my_totals_query.all():
+            kc = (r.class_name or '').strip().lower()
+            ks = (r.subject or '').strip().lower()
+            my_counts_map[(kc, ks)] = int(r.my_total or 0)
 
     # Pre-fetch SchoolClassSubject rows for efficient ID resolution
     # class_id  = SchoolClassSubject.id matched by (board + class_name) — any subject row for that class
@@ -863,6 +917,7 @@ def get_my_assignments(
                 subjects.append({
                     "subject_name": subject_name,
                     "subject_id": subject_id,
+                    "my_assignments": my_counts_map.get((class_name.strip().lower(), normalized_subject_key), 0),
                     "total_assignments": count,
                 })
             data.append({
@@ -1453,6 +1508,27 @@ async def create_assignment(
                    f"Each teacher can only create one assignment per chapter."
         )
 
+    # Rule 3: Global cap — max 5 assignments per (board, class, subject, chapter_number) across ALL teachers
+    # Exclude tuition-linked assignments because they are independent and should not consume the global chapter quota.
+    global_count = (
+        db.query(func.count(Assignment.id))
+        .filter(func.lower(Assignment.board) == kb)
+        .filter(func.lower(Assignment.class_name) == kc)
+        .filter(func.lower(Assignment.subject) == ks)
+        .filter(Assignment.chapter_number == chapter_number_val)
+        .filter(Assignment.tuition_setup_id.is_(None))
+        .filter(Assignment.tuition_date.is_(None))
+        .scalar() or 0
+    )
+    if global_count >= 5:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Chapter {chapter_number_val} ({board_value} / {class_name_value} / {subject_value}) "
+                f"already has the maximum of 5 assignments. No more teachers can create an assignment for this chapter."
+            )
+        )
+
     
     # Build denormalized teacher/school info
     denorm = _build_teacher_school_denorm(teacher_obj)
@@ -1470,7 +1546,7 @@ async def create_assignment(
 
     assignment_kwargs = {
         "created_by_user_id": current_user.id,
-        "status": AssignmentStatus.DRAFT,
+        "status": AssignmentStatus.PUBLISHED,
         "board": board_value,
         "class_name": class_name_value,
         "subject": subject_value,
