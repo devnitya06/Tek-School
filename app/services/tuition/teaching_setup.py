@@ -1,17 +1,18 @@
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.crud.tuition.teaching_setup import create_teaching_setup as crud_create_teaching_setup
 from app.crud.tuition.teaching_setup import update_teaching_setup as crud_update_teaching_setup
 from app.db.session import ensure_tuition_teaching_setup_schema
-from app.models.tuition.teaching_setup import TeachingMode, TeachingSetupStatus, TuitionTeachingSetup
+from app.models.tuition.teaching_setup import TeachingMode, TeachingSetupStatus, TuitionTeachingSetup, TuitionTeachingSetupRating
 from app.models.tuition_models import TuitionBatch, TuitionLessonPlan, TuitionLessonPlanBatch
-from app.schemas.tuition.teaching_setup import TeachingSetupCreate, TeachingSetupUpdate
+from app.schemas.tuition.teaching_setup import TeachingSetupCreate, TeachingSetupRatingCreate, TeachingSetupUpdate
 from app.schemas.users import UserRole
 
 
@@ -247,6 +248,92 @@ def update_teaching_setup_service(db: Session, *, teaching_setup: TuitionTeachin
         existing_setup_id=teaching_setup.id,
     )
     return crud_update_teaching_setup(db, teaching_setup, payload=payload_dict)
+
+
+def get_tuition_setup_rating_summary(db: Session, teaching_setup_id: str) -> dict:
+    row = (
+        db.query(
+            func.avg(TuitionTeachingSetupRating.rating).label("average_rating"),
+            func.count(TuitionTeachingSetupRating.id).label("total_reviews"),
+        )
+        .filter(TuitionTeachingSetupRating.teaching_setup_id == teaching_setup_id)
+        .one()
+    )
+    average_rating = round(float(row.average_rating or 0), 2) if row.average_rating is not None else 0.0
+    total_reviews = int(row.total_reviews or 0)
+    return {"average_rating": average_rating, "total_reviews": total_reviews}
+
+
+def submit_teaching_setup_rating_service(
+    db: Session,
+    *,
+    current_user,
+    teaching_setup: TuitionTeachingSetup,
+    payload: TeachingSetupRatingCreate,
+):
+    if not teaching_setup:
+        raise HTTPException(status_code=404, detail="Teaching setup not found")
+
+    if getattr(current_user, "role", None) == UserRole.STUDENT:
+        student_user_id = getattr(current_user, "id", None)
+        if student_user_id is None:
+            raise HTTPException(status_code=400, detail="Student user id is missing")
+        existing = (
+            db.query(TuitionTeachingSetupRating)
+            .filter(
+                TuitionTeachingSetupRating.teaching_setup_id == teaching_setup.id,
+                TuitionTeachingSetupRating.student_user_id == student_user_id,
+            )
+            .first()
+        )
+        if existing:
+            existing.rating = payload.rating
+            existing.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
+        rating = TuitionTeachingSetupRating(
+            teaching_setup_id=teaching_setup.id,
+            student_user_id=student_user_id,
+            rating=payload.rating,
+        )
+        db.add(rating)
+        db.commit()
+        db.refresh(rating)
+        return rating
+
+    if getattr(current_user, "role", None) == UserRole.SELF_SIGNED_STUDENT:
+        self_signed_student_profile = getattr(current_user, "self_signed_student_profile", None)
+        self_signed_student_id = getattr(self_signed_student_profile, "id", None)
+        if self_signed_student_id is None:
+            raise HTTPException(status_code=400, detail="Self-signed student profile is missing")
+        existing = (
+            db.query(TuitionTeachingSetupRating)
+            .filter(
+                TuitionTeachingSetupRating.teaching_setup_id == teaching_setup.id,
+                TuitionTeachingSetupRating.self_signed_student_id == self_signed_student_id,
+            )
+            .first()
+        )
+        if existing:
+            existing.rating = payload.rating
+            existing.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
+        rating = TuitionTeachingSetupRating(
+            teaching_setup_id=teaching_setup.id,
+            self_signed_student_id=self_signed_student_id,
+            rating=payload.rating,
+        )
+        db.add(rating)
+        db.commit()
+        db.refresh(rating)
+        return rating
+
+    raise HTTPException(status_code=403, detail="Only students and self-signed students can rate a teaching setup")
 
 
 def ensure_teacher_scope(current_user, *, teacher_id: Optional[str], self_signed_teacher_id: Optional[int]):

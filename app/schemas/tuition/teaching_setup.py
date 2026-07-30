@@ -3,6 +3,12 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
 
+from app.schemas.tuition.class_sessions import (
+    TeachingSetupClassSessionCreate,
+    TeachingSetupClassSessionResponse,
+    TeachingSetupClassSessionUpdate,
+)
+
 
 class TeachingSetupCreate(BaseModel):
     teaching_mode: str
@@ -68,6 +74,17 @@ class TeachingSetupUpdate(BaseModel):
 
 class TeachingSetupStatusUpdate(BaseModel):
     status: str
+
+
+class TeachingSetupRatingCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+
+
+class TeachingSetupRatingResponse(BaseModel):
+    message: str
+    average_rating: float
+    total_reviews: int
+    your_rating: int
 
 
 class TeachingSetupCreateResponse(BaseModel):

@@ -1546,7 +1546,7 @@ async def create_assignment(
 
     assignment_kwargs = {
         "created_by_user_id": current_user.id,
-        "status": AssignmentStatus.PUBLISHED,
+        "status": AssignmentStatus.DRAFT,
         "board": board_value,
         "class_name": class_name_value,
         "subject": subject_value,

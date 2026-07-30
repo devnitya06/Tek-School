@@ -4,6 +4,7 @@ from app.routes import users, auth, school, teachers, students, admin, selfsigne
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
+from app.routes.tuition.class_sessions import router as tuition_class_session_router
 from app.core.config import settings
 from app.db.session import (
     create_tables,
@@ -21,6 +22,7 @@ from app.db.session import (
     ensure_self_signed_student_additional_columns,
     ensure_assignment_tables,
     ensure_tuition_teaching_setup_schema,
+    ensure_tuition_class_session_schema,
     ensure_worker_payment_settlement_columns,
     ensure_academic_results_tables,
     ensure_progress_report_tables,
@@ -56,6 +58,7 @@ app.include_router(academic_results.router, prefix="/academic-results", tags=["A
 app.include_router(assignment_routes, tags=["Assignments"])
 app.include_router(tuition_lesson_plan_router)
 app.include_router(tuition_teaching_setup_router)
+app.include_router(tuition_class_session_router)
 
 @app.on_event("startup")
 def on_startup():
@@ -79,6 +82,7 @@ def on_startup():
         ensure_self_signed_teacher_teaching_configuration_table()
         ensure_self_signed_student_additional_columns()
         ensure_tuition_teaching_setup_schema()
+        ensure_tuition_class_session_schema()
         create_tables()
         ensure_assignment_tables()
         ensure_academic_results_tables()

@@ -3,7 +3,8 @@ from enum import Enum
 import secrets
 import string
 
-from sqlalchemy import JSON, Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time
+from sqlalchemy import JSON, Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint
+from sqlalchemy.orm import relationship
 
 from app.db.session import Base
 
@@ -21,6 +22,26 @@ class TeachingSetupStatus(str, Enum):
 class MeetingProvider(str, Enum):
     GOOGLE_MEET = "GOOGLE_MEET"
     ZOOM = "ZOOM"
+
+
+class TuitionTeachingSetupRating(Base):
+    __tablename__ = "tuition_teaching_setup_ratings"
+    __table_args__ = (
+        UniqueConstraint("teaching_setup_id", "student_user_id", name="uq_tuition_setup_student_rating"),
+        UniqueConstraint("teaching_setup_id", "self_signed_student_id", name="uq_tuition_setup_self_signed_student_rating"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    teaching_setup_id = Column(String, ForeignKey("tuition_teaching_setups.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=True, index=True)
+    rating = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    teaching_setup = relationship("TuitionTeachingSetup", back_populates="ratings")
+    student_user = relationship("User", foreign_keys=[student_user_id])
+    self_signed_student = relationship("SelfSignedStudent", foreign_keys=[self_signed_student_id])
 
 
 def generate_teaching_setup_id(prefix: str = "TS", length: int = 8) -> str:
@@ -70,6 +91,7 @@ class TuitionTeachingSetup(Base):
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_deleted = Column(Boolean, nullable=False, default=False)
     deleted_at = Column(DateTime, nullable=True)
+    ratings = relationship("TuitionTeachingSetupRating", back_populates="teaching_setup", cascade="all, delete-orphan")
 
     @property
     def final_tuition_fee(self):

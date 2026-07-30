@@ -12,12 +12,20 @@ from app.schemas.tuition.teaching_setup import (
     TeachingSetupCreateResponse,
     TeachingSetupDetailResponse,
     TeachingSetupListResponse,
+    TeachingSetupRatingCreate,
+    TeachingSetupRatingResponse,
     TeachingSetupStatusUpdate,
     TeachingSetupSummaryResponse,
     TeachingSetupUpdate,
 )
 from app.schemas.users import UserRole
-from app.services.tuition.teaching_setup import create_teaching_setup_service, ensure_teacher_scope, update_teaching_setup_service
+from app.services.tuition.teaching_setup import (
+    create_teaching_setup_service,
+    ensure_teacher_scope,
+    get_tuition_setup_rating_summary,
+    submit_teaching_setup_rating_service,
+    update_teaching_setup_service,
+)
 from app.utils.permission import require_roles
 from app.utils.tuition_helpers import resolve_lesson_plan_subject_name
 
@@ -27,6 +35,7 @@ router = APIRouter(prefix="/tuition/teaching-setups", tags=["Tuition Teaching Se
 def _serialize_teaching_setup(db: Session, setup: TuitionTeachingSetup, current_user=None) -> TeachingSetupSummaryResponse:
     lesson_plan = None
     batch = None
+    rating_summary = get_tuition_setup_rating_summary(db, setup.id)
     if setup.lesson_plan_id:
         lesson_plan = db.query(TuitionLessonPlan).filter(TuitionLessonPlan.id == setup.lesson_plan_id, TuitionLessonPlan.is_deleted.is_(False)).first()
     if setup.batch_id:
@@ -49,8 +58,8 @@ def _serialize_teaching_setup(db: Session, setup: TuitionTeachingSetup, current_
         joined_students_count=setup.joined_students_count,
         maximum_students=setup.maximum_students or 200,
         available_seats=setup.available_seats,
-        average_rating=setup.average_rating,
-        total_reviews=setup.total_reviews,
+        average_rating=rating_summary["average_rating"],
+        total_reviews=rating_summary["total_reviews"],
         status=setup.status,
         created_at=setup.created_at,
     )
@@ -189,6 +198,32 @@ def teaching_setup_detail(
         raise HTTPException(status_code=404, detail="Teaching setup not found")
     _ensure_access(current_user, setup, teacher_id=teacher_id, self_signed_teacher_id=self_signed_teacher_id)
     return _serialize_teaching_setup_detail(db, setup, current_user)
+
+
+@router.post("/{teaching_setup_id}/ratings", response_model=TeachingSetupRatingResponse)
+def submit_teaching_setup_rating_endpoint(
+    teaching_setup_id: str,
+    payload: TeachingSetupRatingCreate,
+    db: Session = Depends(get_db),
+    current_user: object = Depends(require_roles(UserRole.STUDENT, UserRole.SELF_SIGNED_STUDENT)),
+):
+    setup = get_teaching_setup(db, teaching_setup_id)
+    if not setup:
+        raise HTTPException(status_code=404, detail="Teaching setup not found")
+
+    rating_row = submit_teaching_setup_rating_service(
+        db,
+        current_user=current_user,
+        teaching_setup=setup,
+        payload=payload,
+    )
+    rating_summary = get_tuition_setup_rating_summary(db, setup.id)
+    return TeachingSetupRatingResponse(
+        message="Rating submitted successfully.",
+        average_rating=rating_summary["average_rating"],
+        total_reviews=rating_summary["total_reviews"],
+        your_rating=rating_row.rating,
+    )
 
 
 @router.put("/{teaching_setup_id}", response_model=TeachingSetupDetailResponse)

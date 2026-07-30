@@ -214,7 +214,7 @@ def ensure_attendance_mark_columns():
 
 def ensure_tuition_teaching_setup_schema():
     """Ensure the tuition teaching setup table and its columns exist for the current model."""
-    from app.models.tuition.teaching_setup import TuitionTeachingSetup
+    from app.models.tuition.teaching_setup import TuitionTeachingSetup, TuitionTeachingSetupRating
 
     table_name = TuitionTeachingSetup.__tablename__
     inspector = inspect_engine()
@@ -239,6 +239,53 @@ def ensure_tuition_teaching_setup_schema():
             alter_stmt += f" DEFAULT '{default_value}'"
         with engine.begin() as conn:
             conn.execute(text(alter_stmt))
+
+    TuitionTeachingSetupRating.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_tuition_class_session_schema():
+    """Ensure the tuition class-session table exists for the current model and adds any missing columns."""
+    from app.models.tuition.class_sessions import TuitionTeachingSetupClassSession
+
+    TuitionTeachingSetupClassSession.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect_engine()
+    if not inspector.has_table(TuitionTeachingSetupClassSession.__tablename__):
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns(TuitionTeachingSetupClassSession.__tablename__)}
+    for column in TuitionTeachingSetupClassSession.__table__.columns:
+        if column.name in existing_columns:
+            continue
+        column_type = column.type.compile(dialect=engine.dialect)
+        alter_stmt = f'ALTER TABLE "{TuitionTeachingSetupClassSession.__tablename__}" ADD COLUMN "{column.name}" {column_type}'
+        if not column.nullable:
+            alter_stmt += " NOT NULL"
+        if column.default is not None:
+            default_value = column.default.arg
+            if callable(default_value):
+                default_value = default_value()
+            if hasattr(default_value, "value"):
+                default_value = default_value.value
+            alter_stmt += f" DEFAULT '{default_value}'"
+        with engine.begin() as conn:
+            conn.execute(text(alter_stmt))
+
+
+def ensure_tuition_runtime_tables():
+    """Ensure tuition-related tables exist even before app startup hooks run."""
+    try:
+        ensure_tuition_teaching_setup_schema()
+    except Exception:
+        pass
+    try:
+        ensure_tuition_class_session_schema()
+    except Exception:
+        pass
+
+
+# Initialize tuition runtime tables when the database module is imported.
+ensure_tuition_runtime_tables()
 
 
 def ensure_staff_teacher_boss_columns():
