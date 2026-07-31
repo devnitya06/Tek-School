@@ -172,6 +172,10 @@ class SubChapterResponse(SubChapterBase):
 
 class AssignmentImageBase(BaseModel):
     url: str
+    sub_chapter_name: Optional[str] = None
+    file_type: Optional[str] = None
+    step_number: Optional[int] = None
+    usage: Optional[str] = None
 
 class AssignmentImageCreate(AssignmentImageBase):
     pass
@@ -183,6 +187,10 @@ class AssignmentImageResponse(AssignmentImageBase):
 
 class AssignmentPDFBase(BaseModel):
     url: str
+    sub_chapter_name: Optional[str] = None
+    file_type: Optional[str] = None
+    step_number: Optional[int] = None
+    usage: Optional[str] = None
 
 class AssignmentPDFCreate(AssignmentPDFBase):
     pass

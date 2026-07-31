@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from datetime import timedelta,datetime,timezone
 from jose import JWTError
@@ -31,7 +32,14 @@ async def login(
     db: Session = Depends(get_db),
     request: Request = None,
 ):
-    user = db.query(User).filter(User.email == form_data.email).first()
+    try:
+        user = db.query(User).filter(User.email == form_data.email).first()
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable. Please try again later.",
+        ) from exc
+
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -77,20 +85,26 @@ async def login(
         expires_delta=refresh_token_expires
     )
     
-    # Store refresh token in database
-    db_refresh_token = Token(
-        user_id=user.id,
-        token=refresh_token,
-        expires_at=datetime.now(timezone.utc) + refresh_token_expires
-    )
-    db.add(db_refresh_token)
-    db.commit()
-    db.refresh(db_refresh_token)
     try:
-        update_or_create_session_on_login(db, user, request)
-    except Exception:
-        # Do not block login if session tracking fails
-        pass
+        # Store refresh token in database
+        db_refresh_token = Token(
+            user_id=user.id,
+            token=refresh_token,
+            expires_at=datetime.now(timezone.utc) + refresh_token_expires
+        )
+        db.add(db_refresh_token)
+        db.commit()
+        db.refresh(db_refresh_token)
+        try:
+            update_or_create_session_on_login(db, user, request)
+        except Exception:
+            # Do not block login if session tracking fails
+            pass
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable. Please try again later.",
+        ) from exc
     
     return {
         "detail": "Login successful",
