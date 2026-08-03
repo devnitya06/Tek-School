@@ -284,8 +284,28 @@ def ensure_tuition_runtime_tables():
         pass
 
 
+def ensure_teacher_class_section_subject_teacher_id_nullable():
+    """Allow teacher assignment rows to survive transient missing teacher IDs during signup flows."""
+    inspector = inspect_engine()
+    if not inspector.has_table("teacher_class_section_subjects"):
+        return
+
+    columns = inspector.get_columns("teacher_class_section_subjects")
+    teacher_id_col = next((col for col in columns if col["name"] == "teacher_id"), None)
+    if teacher_id_col is None:
+        return
+
+    if teacher_id_col.get("nullable") is False:
+        with engine.begin() as conn:
+            conn.execute(text('ALTER TABLE teacher_class_section_subjects ALTER COLUMN teacher_id DROP NOT NULL'))
+
+
 # Initialize tuition runtime tables when the database module is imported.
 ensure_tuition_runtime_tables()
+try:
+    ensure_teacher_class_section_subject_teacher_id_nullable()
+except Exception:
+    pass
 
 
 def ensure_staff_teacher_boss_columns():

@@ -147,17 +147,22 @@ def create_teacher(
         db.flush()  # assigns teacher.id
 
         # Teacher assignments
-        assignments = [
-            TeacherClassSectionSubject(
-                teacher_id=teacher.id,
-                class_id=item.class_id,
-                section_id=item.section_id,
-                subject_id=item.subject_id,
-                school_id=school.id,
-            )
-            for item in data.assignments
-        ]
-        db.bulk_save_objects(assignments)
+        if teacher.id:
+            assignments = [
+                TeacherClassSectionSubject(
+                    teacher_id=teacher.id,
+                    class_id=item.class_id,
+                    section_id=item.section_id,
+                    subject_id=item.subject_id,
+                    school_id=school.id,
+                )
+                for item in data.assignments
+                if getattr(item, "class_id", None) is not None
+                and getattr(item, "section_id", None) is not None
+                and getattr(item, "subject_id", None) is not None
+            ]
+            if assignments:
+                db.bulk_save_objects(assignments)
 
         # Create Teacher Payment if payment data is provided
         if data.payment:
@@ -897,17 +902,22 @@ def update_teacher_profile(
                 TeacherClassSectionSubject.teacher_id == teacher.id
             ).delete()
             # Add new assignments
-            new_assignments = [
-                TeacherClassSectionSubject(
-                    teacher_id=teacher.id,
-                    class_id=item.class_id,
-                    section_id=item.section_id,
-                    subject_id=item.subject_id,
-                    school_id=school.id
-                )
-                for item in data.assignments
-            ]
-            db.bulk_save_objects(new_assignments)
+            if teacher.id:
+                new_assignments = [
+                    TeacherClassSectionSubject(
+                        teacher_id=teacher.id,
+                        class_id=item.class_id,
+                        section_id=item.section_id,
+                        subject_id=item.subject_id,
+                        school_id=school.id
+                    )
+                    for item in data.assignments
+                    if getattr(item, "class_id", None) is not None
+                    and getattr(item, "section_id", None) is not None
+                    and getattr(item, "subject_id", None) is not None
+                ]
+                if new_assignments:
+                    db.bulk_save_objects(new_assignments)
 
         db.commit()
         db.refresh(teacher)

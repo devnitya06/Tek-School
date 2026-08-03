@@ -187,7 +187,7 @@ class TeacherClassSectionSubject(Base):
     __tablename__ = "teacher_class_section_subjects"
 
     id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=False)
+    teacher_id = Column(String, ForeignKey("teachers.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
     section_id = Column(Integer, ForeignKey("sections.id"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
