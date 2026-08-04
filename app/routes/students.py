@@ -28,6 +28,7 @@ from app.utils.email_utility import generate_otp
 from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles, verify_school_business_access
 from app.core.security import create_verification_token
+from app.core.config import get_verification_base_url
 from app.utils.email_utility import send_dynamic_email
 from datetime import datetime, timedelta, date
 from typing import List, Optional
@@ -222,7 +223,7 @@ def create_student(
         email_error = None
         try:
             token = create_verification_token(user.id)
-            verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
+            verification_link = f"{get_verification_base_url('https://school.beingideal.com')}/users/verify-account?token={token}"
 
             send_dynamic_email(
                 context_key="account_verification.html",

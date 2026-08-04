@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     #Redis
     REDIS_URL: Optional[str] = None
+
+    # Frontend / verification links
+    FRONTEND_BASE_URL: str = "https://testapi.vidyawings.com"
+    PRODUCTION_FRONTEND_HOSTS: list[str] = ["school.beingideal.com"]
     
     #model changed
     
@@ -54,3 +58,29 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+
+
+def get_verification_base_url(frontend_url: Optional[str] = None) -> str:
+    """Return the API host used for verification links.
+
+    If the frontend URL points to any of the beingideal.com school experiences,
+    use the production API host. Otherwise fall back to the test API host.
+    """
+    if frontend_url:
+        normalized_frontend = frontend_url.rstrip("/").lower()
+        production_hosts = {
+            "https://school.beingideal.com",
+            "http://school.beingideal.com",
+            "https://teacher.beingideal.com",
+            "http://teacher.beingideal.com",
+            "https://student.beingideal.com",
+            "http://student.beingideal.com",
+            "https://edu.beingideal.com",
+            "http://edu.beingideal.com",
+        }
+        if normalized_frontend in production_hosts:
+            return "https://api.beingideal.com"
+        if normalized_frontend.endswith((".beingideal.com", "beingideal.com")):
+            return "https://api.beingideal.com"
+
+    return "https://testapi.vidyawings.com"

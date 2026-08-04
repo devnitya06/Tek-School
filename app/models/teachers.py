@@ -29,7 +29,7 @@ class PaymentMode(str, Enum):
 class Teacher(Base):
     __tablename__ = "teachers"
 
-    id = Column(String, primary_key=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     profile_image=Column(String,nullable=True)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)

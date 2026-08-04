@@ -18,6 +18,7 @@ import json
 from typing import List
 from sqlalchemy import func, and_ ,desc
 from app.core.security import create_verification_token
+from app.core.config import get_verification_base_url
 from app.utils.email_utility import send_dynamic_email
 from app.services.pagination import PaginationParams
 from app.utils.staff_logging import log_action
@@ -146,6 +147,11 @@ def create_teacher(
         db.add(teacher)
         db.flush()  # assigns teacher.id
 
+        # Remove stale assignment rows that were left behind without a teacher ID.
+        db.query(TeacherClassSectionSubject).filter(
+            TeacherClassSectionSubject.teacher_id.is_(None)
+        ).delete(synchronize_session=False)
+
         # Teacher assignments
         if teacher.id:
             assignments = [
@@ -199,7 +205,7 @@ def create_teacher(
 
         # Send verification email
         token = create_verification_token(user.id)
-        verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
+        verification_link = f"{get_verification_base_url('https://school.beingideal.com')}/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Teacher Account Verification",
@@ -897,10 +903,15 @@ def update_teacher_profile(
 
         # Handle assignments if provided
         if data.assignments is not None:
+            # Remove any stale assignment rows with no teacher ID before recreating them.
+            db.query(TeacherClassSectionSubject).filter(
+                TeacherClassSectionSubject.teacher_id.is_(None)
+            ).delete(synchronize_session=False)
+
             # Delete existing assignments
             db.query(TeacherClassSectionSubject).filter(
                 TeacherClassSectionSubject.teacher_id == teacher.id
-            ).delete()
+            ).delete(synchronize_session=False)
             # Add new assignments
             if teacher.id:
                 new_assignments = [

@@ -31,6 +31,7 @@ from app.utils.email_utility import send_dynamic_email
 from app.utils.permission import require_roles, require_self_signed_teacher_active
 from app.utils.s3 import upload_to_s3, upload_base64_to_s3
 from app.core.security import create_verification_token
+from app.core.config import get_verification_base_url
 from app.utils.staff_logging import log_action
 from app.models.staff import ActionType, ResourceType
 
@@ -759,7 +760,7 @@ def create_student_for_self_signed_teacher(
         email_error = None
         try:
             token = create_verification_token(user.id)
-            verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
+            verification_link = f"{get_verification_base_url('https://school.beingideal.com')}/users/verify-account?token={token}"
 
             send_dynamic_email(
                 context_key="account_verification.html",
@@ -1068,7 +1069,7 @@ def join_self_signed_teacher_by_invite(
     # Send verification email (non-blocking)
     try:
         token = create_verification_token(user.id)
-        verification_link = f"https://testapi.vidyawings.com/users/verify-account?token={token}"
+        verification_link = f"{get_verification_base_url('https://school.beingideal.com')}/users/verify-account?token={token}"
         send_dynamic_email(
             context_key="account_verification.html",
             subject="Student Account Verification",
