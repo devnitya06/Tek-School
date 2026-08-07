@@ -48,6 +48,8 @@ from app.utils.permission import (
     require_roles_allow_listing_school,
     verify_school_business_access,
 )
+from app.utils.email_utility import generate_password, send_dynamic_email
+from app.core.security import get_password_hash
 from typing import List, Optional, Literal
 from app.utils.s3 import upload_to_s3
 from calendar import month_name
@@ -149,6 +151,117 @@ def _get_school_for_attendance_qr_link(db: Session, current_user: User) -> Schoo
     if not school:
         raise HTTPException(status_code=404, detail="School profile not found.")
     return school
+
+
+@router.post("/claim/")
+def claim_school(
+    data: SchoolClaimRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    School claims its admin-created account by providing school_id and the registered school email.
+    New credentials are sent via email.
+    On success:
+    - followup is closed (status → 'completed')
+    - claim_status is set to 'claimed'
+    """
+    school = db.query(School).filter(School.id == data.school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    if school.school_email.lower() != data.email.lower():
+        raise HTTPException(status_code=400, detail="Email does not match the registered school email.")
+
+    user = db.query(User).filter(User.id == school.user_id).first()
+    if not user:
+        raise HTTPException(status_code=500, detail="School user record is missing.")
+
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc)
+
+    password = generate_password(prefix=school.school_name)
+    user.hashed_password = get_password_hash(password)
+    user.is_verified = True
+
+    # Close the followup (if active)
+    if school.followup_enabled and school.followup_status not in ("completed", "stopped"):
+        school.followup_status = "completed"
+        school.followup_completed_at = now
+
+    # Mark the claim as done
+    school.claim_status = "claimed"
+    school.claim_completed_at = now
+
+    db.commit()
+
+    send_dynamic_email(
+        context_key="credential.html",
+        subject="Your BeingIdeal School Account Credentials",
+        recipient_email=school.school_email,
+        context_data={
+            "name": school.school_name,
+            "application_name": "beingideal",
+            "email": school.school_email,
+            "password": password,
+            "note": school.followup_note,
+            "current_year": datetime.now().year,
+        },
+        db=db,
+    )
+
+    return {
+        "detail": "Credentials sent to registered school email.",
+        "claim_status": school.claim_status,
+        "followup_status": school.followup_status,
+    }
+
+
+
+@router.get(
+    "/school",
+    summary="Get school's own profile with followup and claim status",
+    description=(
+        "Returns the authenticated school's profile, followup status, and claim status. "
+        "Schools created by admin can use this to see if their followup has been completed "
+        "and whether their account has been claimed (logged in with sent credentials)."
+    ),
+)
+def get_school_self(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+):
+    """
+    GET /school/school  
+    Authenticated school sees its own profile + followup + claim data.
+    """
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    account_type_val = None
+    if school.account_type:
+        account_type_val = school.account_type.value if hasattr(school.account_type, "value") else str(school.account_type)
+
+    return {
+        "school_id": school.id,
+        "school_name": school.school_name,
+        "school_email": school.school_email,
+        "school_phone": school.school_phone,
+        "account_type": account_type_val,
+        "is_active": school.is_active,
+        "is_verified": school.is_verified,
+        "created_by_admin": school.created_by_admin,
+        "created_at": school.created_at,
+        # Followup
+        "followup_enabled": school.followup_enabled,
+        "followup_status": school.followup_status,
+        "followup_note": school.followup_note,
+        "followup_last_sent_at": school.followup_last_sent_at,
+        "followup_completed_at": school.followup_completed_at,
+        # Claim
+        "claim_status": getattr(school, "claim_status", "unclaimed"),
+        "claim_completed_at": getattr(school, "claim_completed_at", None),
+    }
 
 
 @router.patch("/school-profile")

@@ -232,6 +232,7 @@ def create_student(
                 context_data={
                     "name": f"{data.first_name} {data.last_name}",
                     "verification_link": verification_link,
+                    "current_year": datetime.now().year,
                 },
                 db=db
             )

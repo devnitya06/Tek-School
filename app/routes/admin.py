@@ -18,6 +18,7 @@ from app.models.school import (
     SchoolBoard,
     SchoolMedium,
     SchoolType,
+    SchoolAccountType,
     HomeAssignment,
     SupportPlus,
     SupportPlusStatus,
@@ -35,6 +36,9 @@ from app.schemas.school import (
     SupportPlusResponse,
     SupportPlusStatusUpdate,
     BusinessInquiryResponse,
+    AdminSchoolCreateRequest,
+    FollowupRequest,
+    FollowupResponse,
 )
 from app.services.students import update_admin_exam_class_ranks
 from app.models.admin import *
@@ -72,7 +76,8 @@ from app.utils.staff_compensation import (
     serialize_employee_compensation,
     staff_designation_for_display,
 )
-from app.utils.email_utility import send_dynamic_email
+from app.utils.email_utility import generate_password, send_dynamic_email
+from app.core.security import get_password_hash
 
 from app.models.admin import HolidayMaster
 from app.schemas.admin import HolidayMasterResponse
@@ -139,7 +144,12 @@ def create_platform_staff(
         context_key="credential.html",
         subject="Your Staff Account Credentials",
         recipient_email=staff.email,
-        context_data={"email": staff.email, "password": data.password},
+        context_data={
+            "email": staff.email,
+            "password": data.password,
+            "application_name": "beingideal",
+            "current_year": datetime.now().year,
+        },
         db=db,
     )
 
@@ -1386,6 +1396,194 @@ def get_pending_business_signups(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching pending business signups: {str(e)}",
         )
+
+
+@router.post(
+    "/schools/",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a listing school account by admin",
+)
+def create_school_account(
+    data: AdminSchoolCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    existing_user = db.query(User).filter(User.email == data.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already exists.")
+
+    password = generate_password(prefix=data.name)
+
+    try:
+        user = User(
+            name=data.name,
+            email=data.email,
+            phone=data.phone,
+            location=data.location,
+            website=data.website,
+            role=UserRole.SCHOOL,
+            hashed_password=get_password_hash(password),
+            is_verified=True,
+        )
+        db.add(user)
+        db.flush()
+
+        followup_enabled = bool(data.auto_followup)
+        followup_status = "pending" if followup_enabled else "inactive"
+
+        school = School(
+            user_id=user.id,
+            school_name=data.name,
+            school_email=data.email,
+            school_phone=data.phone,
+            school_website=data.website,
+            school_location=data.location,
+            account_type=SchoolAccountType.LISTING,
+            is_business_approved=False,
+            is_verified=True,
+            default_settlement_channel="cash_offline",
+            created_by_admin=True,
+            followup_enabled=followup_enabled,
+            followup_status=followup_status,
+            followup_note=data.followup_note,
+        )
+        db.add(school)
+        db.commit()
+
+        send_dynamic_email(
+            context_key="credential.html",
+            subject="Your BeingIdeal School Account Credentials",
+            recipient_email=data.email,
+            context_data={
+                "name": data.name,
+                "application_name": "beingideal",
+                "email": data.email,
+                "password": password,
+                "note": data.followup_note,
+                "current_year": datetime.now().year,
+            },
+            db=db,
+        )
+
+        if followup_enabled:
+            school.followup_last_sent_at = datetime.now(timezone.utc)
+            db.commit()
+
+        return {
+            "detail": "School account created and credentials sent.",
+            "school_id": school.id,
+            "user_id": user.id,
+            "followup_status": school.followup_status,
+            "auto_followup": school.followup_enabled,
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create school account: {str(e)}")
+
+
+@router.post("/schools/{school_id}/followup/")
+def update_school_followup(
+    school_id: str,
+    data: FollowupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    # --- BLOCK if school has already claimed its account ---
+    if getattr(school, "claim_status", "unclaimed") == "claimed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This school has already claimed its account. "
+                "Follow-up actions are closed and cannot be sent."
+            ),
+        )
+
+    if data.action == "stop":
+        school.followup_enabled = False
+        school.followup_status = "stopped"
+        if data.note:
+            school.followup_note = data.note
+        db.commit()
+        return {
+            "detail": "Follow-up stopped.",
+            "followup_status": school.followup_status,
+            "auto_followup": school.followup_enabled,
+            "followup_note": school.followup_note,
+        }
+
+    if data.auto_followup is not None:
+        school.followup_enabled = data.auto_followup
+    if data.note is not None:
+        school.followup_note = data.note
+
+    if data.action == "start" or school.followup_enabled:
+        school.followup_enabled = True
+        if school.followup_status != "completed":
+            school.followup_status = "pending"
+
+        if school.user:
+            password = generate_password(prefix=school.school_name)
+            school.user.hashed_password = get_password_hash(password)
+            school.user.is_verified = True
+            send_dynamic_email(
+                context_key="credential.html",
+                subject="Your BeingIdeal School Account Credentials",
+                recipient_email=school.school_email,
+                context_data={
+                    "name": school.school_name,
+                    "application_name": "beingideal",
+                    "email": school.school_email,
+                    "password": password,
+                    "note": school.followup_note,
+                    "current_year": datetime.now().year,
+                },
+                db=db,
+            )
+            school.followup_last_sent_at = datetime.now(timezone.utc)
+
+    if school.followup_enabled and school.followup_status == "inactive":
+        school.followup_status = "pending"
+
+    db.commit()
+
+    return {
+        "detail": "Follow-up settings updated.",
+        "followup_status": school.followup_status,
+        "auto_followup": school.followup_enabled,
+        "followup_note": school.followup_note,
+        "followup_last_sent_at": school.followup_last_sent_at,
+    }
+
+
+@router.get("/schools/{school_id}/followup/", response_model=FollowupResponse)
+def get_school_followup_status(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    """
+    Get follow-up and claim status for a school created by admin.
+    Returns both followup fields and claim_status / claim_completed_at.
+    """
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    return FollowupResponse(
+        school_id=school.id,
+        auto_followup=school.followup_enabled,
+        followup_status=school.followup_status,
+        followup_note=school.followup_note,
+        followup_last_sent_at=school.followup_last_sent_at,
+        followup_completed_at=school.followup_completed_at,
+        created_by_admin=school.created_by_admin,
+        claim_status=getattr(school, "claim_status", "unclaimed"),
+        claim_completed_at=getattr(school, "claim_completed_at", None),
+    )
 
 
 @router.put("/schools/{school_id}/approve-business/")

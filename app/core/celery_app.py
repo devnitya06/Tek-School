@@ -13,4 +13,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.student_tasks.check_student_renewals",
         "schedule": 86400,  # every 24 hours
     },
+    # Runs daily at midnight IST; internally only sends on 7th, 14th, 22nd, 28th
+    "send-monthly-followup-emails": {
+        "task": "app.tasks.followup_tasks.send_monthly_followup_emails",
+        "schedule": 86400,  # every 24 hours
+    },
 }

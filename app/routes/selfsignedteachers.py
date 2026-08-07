@@ -769,6 +769,7 @@ def create_student_for_self_signed_teacher(
                 context_data={
                     "name": f"{student_data.first_name} {student_data.last_name}",
                     "verification_link": verification_link,
+                    "current_year": datetime.now().year,
                 },
                 db=db
             )
@@ -1074,7 +1075,11 @@ def join_self_signed_teacher_by_invite(
             context_key="account_verification.html",
             subject="Student Account Verification",
             recipient_email=user.email,
-            context_data={"name": f"{join_data.first_name} {join_data.last_name}", "verification_link": verification_link},
+            context_data={
+                "name": f"{join_data.first_name} {join_data.last_name}",
+                "verification_link": verification_link,
+                "current_year": datetime.now().year,
+            },
             db=db,
         )
     except Exception:

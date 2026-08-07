@@ -37,6 +37,10 @@ class TopicCreate(BaseModel):
     reference_video_link: Optional[str] = None
 
 
+class TopicBulkCreate(BaseModel):
+    topics: List[TopicCreate]
+
+
 class TopicUpdate(BaseModel):
     topic_title: Optional[str] = None
     topic_content: Optional[str] = None

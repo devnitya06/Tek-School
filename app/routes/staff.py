@@ -129,7 +129,12 @@ def create_staff(
         context_key="credential.html",
         subject="Your Staff Account Credentials",
         recipient_email=staff.email,
-        context_data={"email": staff.email, "password": data.password},
+        context_data={
+            "email": staff.email,
+            "password": data.password,
+            "application_name": "beingideal",
+            "current_year": datetime.now().year,
+        },
         db=db,
     )
 

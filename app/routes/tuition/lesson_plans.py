@@ -13,6 +13,7 @@ from app.schemas.tuition.lesson_plan import (
     LessonCreate,
     LessonUpdate,
     TopicCreate,
+    TopicBulkCreate,
     TopicUpdate,
     TopicReorderRequest,
     TopicFileResponse,
@@ -315,13 +316,27 @@ def lesson_detail(lesson_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/lesson-plans/lessons/{lesson_id}/topics", response_model=TopicResponse)
-def create_topic_endpoint(lesson_id: str, payload: TopicCreate, db: Session = Depends(get_db), current_user: object = Depends(require_roles(UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER, UserRole.ADMIN, UserRole.SUPERADMIN))):
+@router.post("/lesson-plans/lessons/{lesson_id}/topics", response_model=list[TopicResponse])
+def create_topic_endpoint(
+    lesson_id: str,
+    payload: TopicBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: object = Depends(require_roles(UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER, UserRole.ADMIN, UserRole.SUPERADMIN))
+):
     lesson = _get_lesson_or_404(db, lesson_id)
     if not can_edit_lesson_plan(lesson.lesson_plan):
         raise HTTPException(status_code=403, detail="Topics can only be changed for active lesson plans")
-    topic = create_topic(db, lesson_id=lesson_id, topic_title=payload.topic_title, topic_content=payload.topic_content, reference_video_link=payload.reference_video_link)
-    return topic
+    created = []
+    for item in payload.topics:
+        topic = create_topic(
+            db,
+            lesson_id=lesson_id,
+            topic_title=item.topic_title,
+            topic_content=item.topic_content,
+            reference_video_link=item.reference_video_link,
+        )
+        created.append(topic)
+    return created
 
 
 @router.put("/lesson-plans/topics/{topic_id}", response_model=TopicResponse)

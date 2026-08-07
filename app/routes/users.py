@@ -119,7 +119,11 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
             context_key="otp_verify.html",
             subject="Your OTP Code",
             recipient_email=user.email,
-            context_data={"email": user.email, "OTP": otp},
+            context_data={
+                "email": user.email,
+                "OTP": otp,
+                "current_year": datetime.now().year,
+            },
             db=db
         )
 
@@ -205,6 +209,8 @@ def verify_otp(data: OtpVerify, db: Session = Depends(get_db)):
         context_data={
             "email": user.email,
             "password": raw_password,
+            "application_name": "beingideal",
+            "current_year": datetime.now().year,
         },
         db=db
     )
@@ -248,6 +254,8 @@ def verify_account(token: str = Query(...), db: Session = Depends(get_db)):
         context_data={
             "email": user.email,
             "password": raw_password,
+            "application_name": "beingideal",
+            "current_year": datetime.now().year,
         },
         db=db
     )
@@ -280,6 +288,7 @@ def resend_otp(data:ResendOtpRequest, db: Session = Depends(get_db)):
             context_data={
                 "email": user.email,
                 "OTP": otp,
+                "current_year": datetime.now().year,
             },
             db=db
         )

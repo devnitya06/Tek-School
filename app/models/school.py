@@ -177,6 +177,16 @@ class School(Base):
     )
     is_business_approved = Column(Boolean, default=False)
     is_promotion_pending = Column(Boolean, default=False)
+    created_by_admin = Column(Boolean, default=False)
+    followup_enabled = Column(Boolean, default=False)
+    followup_days = Column(Integer, default=0)
+    followup_status = Column(String, default="inactive")
+    followup_note = Column(String, nullable=True)
+    followup_last_sent_at = Column(DateTime, nullable=True)
+    followup_completed_at = Column(DateTime, nullable=True)
+    # Claim tracking: set to 'claimed' when school logs in or posts /school/claim/
+    claim_status = Column(String, default="unclaimed", nullable=True)
+    claim_completed_at = Column(DateTime, nullable=True)
     # When no bank account exists, fees/payments default to cash (offline) ledger.
     default_settlement_channel = Column(
         String(32),

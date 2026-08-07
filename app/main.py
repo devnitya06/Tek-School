@@ -17,6 +17,8 @@ from app.db.session import (
     ensure_staff_school_id_nullable,
     ensure_staff_teacher_boss_columns,
     ensure_school_settlement_schema,
+    ensure_school_followup_columns,
+    ensure_school_claim_columns,
     ensure_self_signed_student_teacher_id_column,
     ensure_self_signed_teacher_teaching_configuration_table,
     ensure_self_signed_student_additional_columns,
@@ -62,6 +64,10 @@ app.include_router(tuition_class_session_router)
 
 @app.on_event("startup")
 def on_startup():
+    # Allow skipping heavy DB/schema startup work when debugging locally.
+    if os.getenv("SKIP_STARTUP_SCHEMA", "false").lower() == "true":
+        print("Skipping startup schema operations due to SKIP_STARTUP_SCHEMA=true")
+        return
     # Always ensure attendance mark-in/out columns exist.
     # Prevents runtime failures when code is updated before a manual migration.
     try:
@@ -83,6 +89,8 @@ def on_startup():
         ensure_self_signed_student_additional_columns()
         ensure_tuition_teaching_setup_schema()
         ensure_tuition_class_session_schema()
+        ensure_school_followup_columns()
+        ensure_school_claim_columns()
         create_tables()
         ensure_assignment_tables()
         ensure_academic_results_tables()

@@ -62,6 +62,68 @@ class SchoolProfileOut(SchoolProfileBase):
     model_config = {"from_attributes": True, "arbitrary_types_allowed": True}
 
 
+class AdminSchoolCreateRequest(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+    location: str
+    website: Optional[str] = None
+    auto_followup: Optional[bool] = False
+    followup_note: Optional[str] = None
+
+
+class FollowupRequest(BaseModel):
+    action: Optional[Literal["start", "stop", "update"]]
+    auto_followup: Optional[bool] = None
+    note: Optional[str] = None
+
+
+class FollowupResponse(BaseModel):
+    school_id: str
+    auto_followup: bool
+    followup_status: str
+    followup_note: Optional[str] = None
+    followup_last_sent_at: Optional[datetime] = None
+    followup_completed_at: Optional[datetime] = None
+    created_by_admin: Optional[bool] = None
+    # Claim tracking fields
+    claim_status: Optional[str] = None
+    claim_completed_at: Optional[datetime] = None
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class SchoolClaimRequest(BaseModel):
+    school_id: str
+    email: EmailStr
+
+
+class SchoolSelfResponse(BaseModel):
+    """Response for school viewing its own profile, followup and claim status."""
+    school_id: str
+    school_name: str
+    school_email: str
+    school_phone: Optional[str] = None
+    account_type: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_verified: Optional[bool] = None
+    created_by_admin: Optional[bool] = None
+    # Followup
+    followup_enabled: bool
+    followup_status: str
+    followup_note: Optional[str] = None
+    followup_last_sent_at: Optional[datetime] = None
+    followup_completed_at: Optional[datetime] = None
+    # Claim
+    claim_status: Optional[str] = None
+    claim_completed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class SchoolProfileUpdate(BaseModel):
     school_name: Optional[str] = None
     school_type: Optional[str] = None

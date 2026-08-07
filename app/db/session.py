@@ -378,6 +378,37 @@ def ensure_school_settlement_schema():
         )
 
 
+def ensure_school_followup_columns():
+    """Ensure school follow-up and admin-created account columns exist."""
+    followup_columns = [
+        ("created_by_admin", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("followup_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("followup_days", "INTEGER NOT NULL DEFAULT 0"),
+        ("followup_status", "VARCHAR(255) NOT NULL DEFAULT 'inactive'"),
+        ("followup_note", "VARCHAR NULL"),
+        ("followup_last_sent_at", "TIMESTAMP NULL"),
+        ("followup_completed_at", "TIMESTAMP NULL"),
+    ]
+    with engine.begin() as conn:
+        for col_name, ddl in followup_columns:
+            if column_exists("schools", col_name):
+                continue
+            conn.execute(text(f'ALTER TABLE schools ADD COLUMN IF NOT EXISTS "{col_name}" {ddl}'))
+
+
+def ensure_school_claim_columns():
+    """Ensure school claim tracking columns exist."""
+    claim_columns = [
+        ("claim_status", "VARCHAR(50) DEFAULT 'unclaimed'"),
+        ("claim_completed_at", "TIMESTAMP NULL"),
+    ]
+    with engine.begin() as conn:
+        for col_name, ddl in claim_columns:
+            if column_exists("schools", col_name):
+                continue
+            conn.execute(text(f'ALTER TABLE schools ADD COLUMN IF NOT EXISTS "{col_name}" {ddl}'))
+
+
 def ensure_self_signed_student_teacher_id_column():
     """Ensure the nullable foreign key column exists for self-signed student teacher links."""
     if column_exists("self_signed_students", "self_signed_teacher_id"):

@@ -213,6 +213,7 @@ def create_teacher(
             context_data={
                 "name": f"{data.first_name} {data.last_name}",
                 "verification_link": verification_link,
+                "current_year": datetime.now().year,
             },
             db=db
         )
@@ -997,6 +998,34 @@ def get_teacher_classes(
     current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
+    # --- Self-signed teacher: derive classes from teaching configurations ---
+    if current_user.role == UserRole.SELF_SIGNED_TEACHER:
+        sst = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.user_id == current_user.id).first()
+        if not sst:
+            raise HTTPException(status_code=404, detail="Teacher profile not found")
+
+        configs = (
+            db.query(SelfSignedTeacherTeachingConfiguration)
+            .filter(SelfSignedTeacherTeachingConfiguration.self_signed_teacher_id == sst.id)
+            .all()
+        )
+
+        seen_class_ids = set()
+        classes = []
+        for config in configs:
+            if config.class_id not in seen_class_ids:
+                seen_class_ids.add(config.class_id)
+                class_row = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == config.class_id).first()
+                if class_row:
+                    classes.append({
+                        "id": class_row.id,
+                        "name": class_row.class_name,
+                        "board": class_row.school_board.value if hasattr(class_row.school_board, "value") else class_row.school_board,
+                        "is_active": config.is_active,
+                    })
+        return classes
+
+    # --- School teacher: derive classes from TeacherClassSectionSubject ---
     if current_user.role != UserRole.TEACHER:
         raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
 
@@ -1040,6 +1069,41 @@ def get_teacher_subjects(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # --- Self-signed teacher: derive subjects from teaching configurations ---
+    if current_user.role == UserRole.SELF_SIGNED_TEACHER:
+        sst = db.query(SelfSignedTeacher).filter(SelfSignedTeacher.user_id == current_user.id).first()
+        if not sst:
+            raise HTTPException(status_code=404, detail="Teacher profile not found")
+
+        configs = (
+            db.query(SelfSignedTeacherTeachingConfiguration)
+            .filter(SelfSignedTeacherTeachingConfiguration.self_signed_teacher_id == sst.id)
+            .all()
+        )
+
+        all_subject_ids: set = set()
+        for config in configs:
+            all_subject_ids.update(config.subject_ids or [])
+
+        if not all_subject_ids:
+            return []
+
+        subject_rows = (
+            db.query(SchoolClassSubject)
+            .filter(SchoolClassSubject.id.in_(all_subject_ids))
+            .all()
+        )
+        return [
+            {
+                "id": s.id,
+                "name": s.subject,
+                "class_name": s.class_name,
+                "board": s.school_board.value if hasattr(s.school_board, "value") else s.school_board,
+            }
+            for s in subject_rows
+        ]
+
+    # --- School teacher: existing logic ---
     if current_user.role != UserRole.TEACHER:
         raise HTTPException(status_code=403, detail="Only teachers can access this resource.")
 

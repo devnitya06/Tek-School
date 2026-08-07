@@ -65,6 +65,30 @@ async def login(
                     status_code=423,
                     detail="Your account is not verified yet by admin."
                 )
+            if school.followup_enabled and school.followup_status == "pending":
+                school.followup_status = "completed"
+                school.followup_completed_at = datetime.now(timezone.utc)
+                db.commit()
+                # 🎉 First-time login — send congratulation email (non-blocking)
+                try:
+                    send_dynamic_email(
+                        context_key="congratulation.html",
+                        subject="🎉 Congratulations! Welcome to BeingIdeal",
+                        recipient_email=school.school_email,
+                        context_data={
+                            "name": school.school_name,
+                            "school_name": school.school_name,
+                            "current_year": datetime.now().year,
+                        },
+                        db=db,
+                    )
+                except Exception:
+                    pass  # Never block login due to email failure
+            # Close claim when school logs in successfully (credentials won/used)
+            if getattr(school, "claim_status", "unclaimed") != "claimed":
+                school.claim_status = "claimed"
+                school.claim_completed_at = datetime.now(timezone.utc)
+            db.commit()
         response_role = "business_school" if (school and school.is_business_approved) else "listing_school"
     elif user.role == UserRole.STAFF:
         response_role = user.role.value
@@ -280,6 +304,7 @@ async def forgot_password(
             context_data={
                 "email": user.email,
                 "OTP": otp,
+                "current_year": datetime.now().year,
             },
             db=db
         )

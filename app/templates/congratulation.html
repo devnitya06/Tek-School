@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify Your Account</title>
+  <title>Welcome to BeingIdeal</title>
 </head>
 
 <body style="
@@ -33,35 +33,22 @@
                 Hello, <strong>{{ name }}</strong>
               </p>
 
-              <p style="margin: 0 0 25px; font-size: 15px; line-height: 24px">
-                Thanks for joining as a teacher. Please verify your account to
-                unlock your login credentials and get started.
+              <p style="margin: 0 0 15px; font-size: 15px; line-height: 24px">
+                Welcome to BeingIdeal. Your account has been activated and
+                <strong>{{ school_name }}</strong> is now set up on the platform.
               </p>
 
-              <p style="margin: 0 0 25px; text-align: center">
-                <a href="{{ verification_link }}" target="_blank" style="
-                      display: inline-block;
-                      padding: 12px 28px;
-                      background: #2563eb;
-                      color: #ffffff;
-                      text-decoration: none;
-                      font-weight: bold;
-                      font-size: 15px;
-                    ">
-                  Verify My Account
-                </a>
+              <p style="margin: 0 0 10px; font-size: 15px; font-weight: bold">
+                Next steps:
               </p>
-
-              <p style="margin: 0 0 20px; font-size: 13px; line-height: 20px; color: #666666">
-                If the button doesn't work, copy and paste this link into your
-                browser:<br />
-                <a href="{{ verification_link }}" style="color: #2563eb; word-break: break-all">{{ verification_link
-                  }}</a>
-              </p>
+              <ul style="margin: 0 0 20px; padding-left: 20px; font-size: 15px; line-height: 24px; color: #444444">
+                <li>Complete your school profile</li>
+                <li>Add teachers and students</li>
+                <li>Explore the BeingIdeal platform</li>
+              </ul>
 
               <p style="margin: 20px 0 0; font-size: 14px; line-height: 22px; color: #666666">
-                If you didn't request this, you can safely ignore this email.
-                For any questions, feel free to reach out to our support team.
+                If you have any questions, feel free to reach out to our support team.
               </p>
             </td>
           </tr>
