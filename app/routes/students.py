@@ -29,7 +29,7 @@ from app.core.dependencies import get_current_user
 from app.utils.permission import require_roles, verify_school_business_access
 from app.core.security import create_verification_token
 from app.core.config import get_verification_base_url
-from app.utils.email_utility import send_dynamic_email
+from app.utils.email_utility import send_dynamic_email, send_raw_email
 from datetime import datetime, timedelta, date
 from typing import List, Optional
 from calendar import monthrange
@@ -3188,7 +3188,7 @@ def send_payment_reminder(
                 <p>Please fill the payment form in the student portal.</p>
                 <p>Thank you.</p>
                 """
-                send_dynamic_email(
+                send_raw_email(
                     recipient_email=student.parent.email,
                     subject=email_subject,
                     body=email_body

@@ -29,6 +29,29 @@ def generate_password(prefix: str = None) -> str:
 def generate_otp(length: int = 6) -> str:
     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
 
+def send_raw_email(
+    recipient_email: str,
+    subject: str,
+    body: str,
+):
+    """Send an email with a pre-rendered HTML body string (no template file needed)."""
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
+        msg["To"] = recipient_email
+
+        msg.attach(MIMEText(body, "html"))
+
+        with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT) as server:
+            server.starttls()
+            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+            server.sendmail(settings.MAIL_FROM, recipient_email, msg.as_string())
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to send email: {e}")
+
+
 def send_dynamic_email(
     context_key: str,
     subject: str,
