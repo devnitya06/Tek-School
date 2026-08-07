@@ -37,6 +37,65 @@ def can_delete_lesson_plan(lesson_plan: TuitionLessonPlan) -> bool:
     )
 
 
+def _resolve_admin_class_subject_ids(
+    db: Session,
+    sst_class_id: int,
+    sst_subject_id: int,
+) -> tuple[int, int]:
+    """
+    For self-signed teachers, their class_id and subject_id point to
+    school_classes_subjects (SchoolClassSubject) rows — which store class/subject as
+    plain strings (class_name, subject). This function resolves those strings to
+    the real `classes.id` and `subjects.id` in the admin tables so the FK on
+    tuition_batches is satisfied.
+    """
+    from app.models.admin import SchoolClassSubject
+    from app.models.school import Class, Subject
+    from sqlalchemy import func
+
+    # Look up the admin SchoolClassSubject row for class
+    class_row = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == sst_class_id).first()
+    if not class_row:
+        raise HTTPException(status_code=400, detail=f"Teaching configuration class (id={sst_class_id}) not found.")
+
+    class_name_str = class_row.class_name  # e.g. "Class 10"
+
+    # Match to classes table by name (case-insensitive)
+    matched_class = (
+        db.query(Class)
+        .filter(func.lower(Class.name) == func.lower(class_name_str))
+        .first()
+    )
+    if not matched_class:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No admin class found matching name '{class_name_str}'. "
+                   "Please ensure the class exists in the system.",
+        )
+
+    # Look up the admin SchoolClassSubject row for subject
+    subject_row = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == sst_subject_id).first()
+    if not subject_row:
+        raise HTTPException(status_code=400, detail=f"Teaching configuration subject (id={sst_subject_id}) not found.")
+
+    subject_name_str = subject_row.subject  # e.g. "Mathematics"
+
+    # Match to subjects table by name (case-insensitive)
+    matched_subject = (
+        db.query(Subject)
+        .filter(func.lower(Subject.name) == func.lower(subject_name_str))
+        .first()
+    )
+    if not matched_subject:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No admin subject found matching name '{subject_name_str}'. "
+                   "Please ensure the subject exists in the system.",
+        )
+
+    return matched_class.id, matched_subject.id
+
+
 def _resolve_lesson_plan_batch_ids(
     db: Session,
     batch_inputs: list[str],
@@ -46,6 +105,11 @@ def _resolve_lesson_plan_batch_ids(
     owner_teacher_id: Optional[str],
     owner_self_signed_teacher_id: Optional[int],
 ) -> list[str]:
+    # For self-signed teachers, class_id/subject_id from the payload are
+    # SchoolClassSubject IDs — resolve them to admin classes/subjects IDs via name matching.
+    if owner_self_signed_teacher_id and class_id and subject_id:
+        class_id, subject_id = _resolve_admin_class_subject_ids(db, class_id, subject_id)
+
     resolved_batch_ids: list[str] = []
     for ident in batch_inputs:
         batch = db.query(TuitionBatch).filter(TuitionBatch.id == ident, TuitionBatch.is_deleted.is_(False)).first()
@@ -85,8 +149,8 @@ def _resolve_lesson_plan_batch_ids(
         new_batch = TuitionBatch(
             batch_name=ident,
             board_id=board,
-            class_id=class_id,
-            subject_id=subject_id,
+            class_id=class_id,     # always admin's classes.id
+            subject_id=subject_id,  # always admin's subjects.id
             teacher_id=owner_teacher_id if owner_teacher_id else None,
             self_signed_teacher_id=owner_self_signed_teacher_id if owner_self_signed_teacher_id else None,
             created_by_user_id=owner_teacher_id if owner_teacher_id else None,
@@ -96,6 +160,7 @@ def _resolve_lesson_plan_batch_ids(
         resolved_batch_ids.append(new_batch.id)
 
     return resolved_batch_ids
+
 
 
 def create_lesson_plan_service(db: Session, *, current_user, payload: LessonPlanCreate):

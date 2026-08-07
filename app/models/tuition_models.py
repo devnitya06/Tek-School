@@ -197,6 +197,8 @@ class TuitionBatchSchedule(Base):
 
     id = Column(String, primary_key=True, default=lambda: generate_short_id("SCH"))
     batch_id = Column(String, ForeignKey("tuition_batches.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     class_date = Column(Date, nullable=False)
     topic = Column(String(255), nullable=True)
     start_time = Column(Time, nullable=False)
