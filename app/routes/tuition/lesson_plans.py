@@ -59,9 +59,14 @@ def _get_lesson_plan_or_404(db: Session, lesson_plan_id: str):
 
 
 def _choose_self_signed_teacher_class_subject(db: Session, current_user: object, lesson_plan: TuitionLessonPlan):
+    """
+    Returns (class_id, subject_id, class_name, subject_name) for a self-signed teacher.
+    class_id and subject_id are SchoolClassSubject.id values from the teaching config.
+    Falls back to the admin-table values on the lesson plan if no config is found.
+    """
     teacher = getattr(current_user, 'self_signed_teacher_profile', None)
     if not teacher:
-        return lesson_plan.class_name, lesson_plan.subject_name
+        return lesson_plan.class_id, lesson_plan.subject_id, lesson_plan.class_name, lesson_plan.subject_name
 
     configs = (
         db.query(SelfSignedTeacherTeachingConfiguration)
@@ -72,8 +77,9 @@ def _choose_self_signed_teacher_class_subject(db: Session, current_user: object,
         .all()
     )
     if not configs:
-        return lesson_plan.class_name, lesson_plan.subject_name
+        return lesson_plan.class_id, lesson_plan.subject_id, lesson_plan.class_name, lesson_plan.subject_name
 
+    # Pick the config that matches the lesson plan's board; fall back to the first
     preferred = None
     if len(configs) == 1:
         preferred = configs[0]
@@ -85,17 +91,29 @@ def _choose_self_signed_teacher_class_subject(db: Session, current_user: object,
                 break
         preferred = preferred or configs[0]
 
+    # class_id in teaching config is a SchoolClassSubject.id
     class_group = db.query(SchoolClassSubject).filter(SchoolClassSubject.id == preferred.class_id).first()
+    sst_class_id = preferred.class_id  # SchoolClassSubject ID
+    sst_class_name = class_group.class_name if class_group else lesson_plan.class_name
+
+    # subject_ids[0] in teaching config is also a SchoolClassSubject.id
+    sst_subject_id = None
     subject_name = None
     if preferred.subject_ids:
+        sst_subject_id = preferred.subject_ids[0]  # SchoolClassSubject ID
         subject_row = (
             db.query(SchoolClassSubject)
-            .filter(SchoolClassSubject.id == preferred.subject_ids[0])
+            .filter(SchoolClassSubject.id == sst_subject_id)
             .first()
         )
         subject_name = subject_row.subject if subject_row else None
 
-    return class_group.class_name if class_group else lesson_plan.class_name, subject_name or lesson_plan.subject_name
+    return (
+        sst_class_id,
+        sst_subject_id or lesson_plan.subject_id,
+        sst_class_name,
+        subject_name or lesson_plan.subject_name,
+    )
 
 
 def _choose_school_teacher_class_subject(db: Session, current_user: object, lesson_plan: TuitionLessonPlan):
@@ -124,9 +142,17 @@ def _choose_school_teacher_class_subject(db: Session, current_user: object, less
 
 
 def _map_lesson_plan_response(db: Session, lesson_plan: TuitionLessonPlan, current_user: object):
-    class_name, subject_name = lesson_plan.class_name, lesson_plan.subject_name
+    # Defaults from the admin-table IDs stored on the batch
+    class_id = lesson_plan.class_id
+    subject_id = lesson_plan.subject_id
+    class_name = lesson_plan.class_name
+    subject_name = lesson_plan.subject_name
+
     if getattr(current_user, 'role', None) == UserRole.SELF_SIGNED_TEACHER:
-        class_name, subject_name = _choose_self_signed_teacher_class_subject(db, current_user, lesson_plan)
+        # For self-signed teachers return SchoolClassSubject IDs from their teaching config
+        class_id, subject_id, class_name, subject_name = _choose_self_signed_teacher_class_subject(
+            db, current_user, lesson_plan
+        )
     elif getattr(current_user, 'role', None) == UserRole.TEACHER:
         class_name, subject_name = _choose_school_teacher_class_subject(db, current_user, lesson_plan)
 
@@ -146,9 +172,9 @@ def _map_lesson_plan_response(db: Session, lesson_plan: TuitionLessonPlan, curre
         'id': lesson_plan.id,
         'title': lesson_plan.title,
         'board': lesson_plan.board,
-        'class_id': lesson_plan.class_id,
+        'class_id': class_id,
         'class_name': class_name,
-        'subject_id': lesson_plan.subject_id,
+        'subject_id': subject_id,
         'subject_name': subject_name,
         'batch_ids': lesson_plan.batch_ids,
         'batches': [
