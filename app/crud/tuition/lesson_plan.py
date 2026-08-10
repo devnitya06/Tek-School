@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlalchemy import func, update, case
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, with_loader_criteria
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.models.tuition import (
@@ -320,7 +320,10 @@ def list_lesson_plans_for_user(db: Session, *, created_by_user_id: Optional[int]
 
     return (
         db.query(TuitionLessonPlan)
-        .options(selectinload(TuitionLessonPlan.lessons))
+        .options(
+            selectinload(TuitionLessonPlan.lessons),
+            with_loader_criteria(TuitionLesson, TuitionLesson.is_deleted.is_(False)),
+        )
         .filter(TuitionLessonPlan.id.in_(lesson_plan_ids))
         .order_by(TuitionLessonPlan.created_at.desc())
         .all()
