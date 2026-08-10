@@ -96,6 +96,53 @@ def _resolve_admin_class_subject_ids(
     return matched_class.id, matched_subject.id
 
 
+def _resolve_class_subject_ids_by_name(
+    db: Session,
+    class_name: Optional[str],
+    subject_name: Optional[str],
+) -> tuple[Optional[int], Optional[int]]:
+    """
+    Resolves human-readable class_name / subject_name strings to the admin
+    `classes.id` and `subjects.id` integers required by tuition_batches FKs.
+    Returns (None, None) if both names are absent.
+    """
+    from app.models.school import Class, Subject
+    from sqlalchemy import func
+
+    resolved_class_id: Optional[int] = None
+    resolved_subject_id: Optional[int] = None
+
+    if class_name:
+        matched_class = (
+            db.query(Class)
+            .filter(func.lower(Class.name) == func.lower(class_name))
+            .first()
+        )
+        if not matched_class:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No class found matching name '{class_name}'. "
+                       "Please ensure the class exists in the system.",
+            )
+        resolved_class_id = matched_class.id
+
+    if subject_name:
+        matched_subject = (
+            db.query(Subject)
+            .filter(func.lower(Subject.name) == func.lower(subject_name))
+            .first()
+        )
+        if not matched_subject:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No subject found matching name '{subject_name}'. "
+                       "Please ensure the subject exists in the system.",
+            )
+        resolved_subject_id = matched_subject.id
+
+    return resolved_class_id, resolved_subject_id
+
+
 def _resolve_lesson_plan_batch_ids(
     db: Session,
     batch_inputs: list[str],
@@ -105,10 +152,8 @@ def _resolve_lesson_plan_batch_ids(
     owner_teacher_id: Optional[str],
     owner_self_signed_teacher_id: Optional[int],
 ) -> list[str]:
-    # For self-signed teachers, class_id/subject_id from the payload are
-    # SchoolClassSubject IDs — resolve them to admin classes/subjects IDs via name matching.
-    if owner_self_signed_teacher_id and class_id and subject_id:
-        class_id, subject_id = _resolve_admin_class_subject_ids(db, class_id, subject_id)
+    # class_id and subject_id are already resolved to admin classes.id / subjects.id
+    # by _resolve_class_subject_ids_by_name before this function is called.
 
     resolved_batch_ids: list[str] = []
     for ident in batch_inputs:
@@ -167,27 +212,41 @@ def create_lesson_plan_service(db: Session, *, current_user, payload: LessonPlan
     owner_user_id = current_user.id if current_user else None
     owner_teacher_id = getattr(current_user.teacher_profile, 'id', None) if getattr(current_user, 'teacher_profile', None) else None
     owner_self_signed_teacher_id = getattr(current_user.self_signed_teacher_profile, 'id', None) if getattr(current_user, 'self_signed_teacher_profile', None) else None
+
+    # Resolve class_name / subject_name → admin class_id / subject_id
+    resolved_class_id, resolved_subject_id = _resolve_class_subject_ids_by_name(
+        db, payload.class_name, payload.subject_name
+    )
+
     resolved_batch_ids = _resolve_lesson_plan_batch_ids(
         db,
-        payload.batch_ids or [],
+        payload.batch_names or [],
         payload.board,
-        payload.class_id,
-        payload.subject_id,
+        resolved_class_id,
+        resolved_subject_id,
         owner_teacher_id,
         owner_self_signed_teacher_id,
     )
+
+    # ── Deduplication ────────────────────────────────────────────────────────
+    # Only ONE lesson plan is allowed per teacher per board/class_name/subject_name.
+    # Match by name (case-insensitive) — no integer IDs needed for this check.
+    from app.models.school import Class, Subject
+    from sqlalchemy import func as sa_func
 
     existing_plan = (
         db.query(TuitionLessonPlan)
         .join(TuitionLessonPlanBatch, TuitionLessonPlan.id == TuitionLessonPlanBatch.lesson_plan_id)
         .join(TuitionBatch, TuitionLessonPlanBatch.batch_id == TuitionBatch.id)
+        .join(Class, TuitionBatch.class_id == Class.id)
+        .join(Subject, TuitionBatch.subject_id == Subject.id)
         .filter(
             TuitionLessonPlan.is_deleted.is_(False),
             TuitionLessonPlan.status == LessonPlanStatus.ACTIVE.value,
-            TuitionLessonPlan.lesson_title == (payload.title or "Untitled Lesson Plan"),
             TuitionBatch.board_id == payload.board,
-            TuitionBatch.class_id == payload.class_id,
-            TuitionBatch.subject_id == payload.subject_id,
+            sa_func.lower(Class.name) == sa_func.lower(payload.class_name),
+            sa_func.lower(Subject.name) == sa_func.lower(payload.subject_name),
+            TuitionBatch.is_deleted.is_(False),
         )
     )
     if owner_teacher_id:
@@ -197,14 +256,15 @@ def create_lesson_plan_service(db: Session, *, current_user, payload: LessonPlan
     existing_plan = existing_plan.first()
 
     if existing_plan is not None:
+        # Merge new batches into the existing lesson plan (no duplicate created)
         return crud_create_lesson_plan(
             db,
             owner_user_id=owner_user_id,
             owner_teacher_id=owner_teacher_id,
             owner_self_signed_teacher_id=owner_self_signed_teacher_id,
             board_id=payload.board,
-            class_id=payload.class_id,
-            subject_id=payload.subject_id,
+            class_id=resolved_class_id,
+            subject_id=resolved_subject_id,
             title=payload.title,
             batch_ids=resolved_batch_ids,
             merge_existing=True,
@@ -217,8 +277,8 @@ def create_lesson_plan_service(db: Session, *, current_user, payload: LessonPlan
         owner_teacher_id=owner_teacher_id,
         owner_self_signed_teacher_id=owner_self_signed_teacher_id,
         board_id=payload.board,
-        class_id=payload.class_id,
-        subject_id=payload.subject_id,
+        class_id=resolved_class_id,
+        subject_id=resolved_subject_id,
         title=payload.title,
         batch_ids=resolved_batch_ids,
     )
@@ -231,10 +291,18 @@ def update_lesson_plan_service(db: Session, lesson_plan: TuitionLessonPlan, *, c
 
     kwargs = payload.model_dump(exclude_unset=True)
     board = kwargs.pop('board', None)
-    class_id = kwargs.pop('class_id', None)
-    subject_id = kwargs.pop('subject_id', None)
+    # Resolve class_name / subject_name → admin IDs; pop names from kwargs
+    class_name = kwargs.pop('class_name', None)
+    subject_name = kwargs.pop('subject_name', None)
+    # Pop batch_names — will be resolved to batch_ids below
+    kwargs.pop('batch_names', None)
+    resolved_class_id, resolved_subject_id = _resolve_class_subject_ids_by_name(db, class_name, subject_name)
 
-    if payload.batch_ids is not None:
+    # Fall back to the existing batch's class/subject if not supplied
+    class_id = resolved_class_id
+    subject_id = resolved_subject_id
+
+    if payload.batch_names is not None:
         if board is None or class_id is None or subject_id is None:
             first_batch = lesson_plan.batches[0] if lesson_plan.batches else None
             if first_batch is not None:
@@ -244,7 +312,7 @@ def update_lesson_plan_service(db: Session, lesson_plan: TuitionLessonPlan, *, c
 
         kwargs['batch_ids'] = _resolve_lesson_plan_batch_ids(
             db,
-            payload.batch_ids,
+            payload.batch_names,
             board,
             class_id,
             subject_id,

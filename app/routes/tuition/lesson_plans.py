@@ -142,15 +142,11 @@ def _choose_school_teacher_class_subject(db: Session, current_user: object, less
 
 
 def _map_lesson_plan_response(db: Session, lesson_plan: TuitionLessonPlan, current_user: object):
-    # Defaults from the admin-table IDs stored on the batch
-    class_id = lesson_plan.class_id
-    subject_id = lesson_plan.subject_id
     class_name = lesson_plan.class_name
     subject_name = lesson_plan.subject_name
 
     if getattr(current_user, 'role', None) == UserRole.SELF_SIGNED_TEACHER:
-        # For self-signed teachers return SchoolClassSubject IDs from their teaching config
-        class_id, subject_id, class_name, subject_name = _choose_self_signed_teacher_class_subject(
+        _, _, class_name, subject_name = _choose_self_signed_teacher_class_subject(
             db, current_user, lesson_plan
         )
     elif getattr(current_user, 'role', None) == UserRole.TEACHER:
@@ -172,9 +168,7 @@ def _map_lesson_plan_response(db: Session, lesson_plan: TuitionLessonPlan, curre
         'id': lesson_plan.id,
         'title': lesson_plan.title,
         'board': lesson_plan.board,
-        'class_id': class_id,
         'class_name': class_name,
-        'subject_id': subject_id,
         'subject_name': subject_name,
         'batch_ids': lesson_plan.batch_ids,
         'batches': [
