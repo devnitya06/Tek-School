@@ -306,6 +306,7 @@ def get_school_self(
         "internship": school.internship,
         "lms_facility": school.lms_facility,
         "alumni_network": school.alumni_network,
+        "institution_class": school.institution_class,
         "library": school.library,
         "available_classes": school.available_classes,
         "have_digital_board": school.have_digital_board,
@@ -413,6 +414,8 @@ async def update_school_profile(
             school.lms_facility = data.lms_facility
         if data.alumni_network is not None:
             school.alumni_network = data.alumni_network
+        if data.institution_class is not None:
+            school.institution_class = data.institution_class
         if data.library is not None:
             school.library = data.library
         if data.available_classes is not None:
@@ -524,6 +527,7 @@ async def update_school_profile(
             "internship": school.internship,
             "lms_facility": school.lms_facility,
             "alumni_network": school.alumni_network,
+            "institution_class": school.institution_class,
             "library": school.library,
             "available_classes": school.available_classes,
             "have_digital_board": school.have_digital_board,
@@ -971,6 +975,7 @@ async def get_school_profile(
         "internship": school.internship,
         "lms_facility": school.lms_facility,
         "alumni_network": school.alumni_network,
+        "institution_class": school.institution_class,
         "library": school.library,
         "available_classes": school.available_classes,
         "have_digital_board": school.have_digital_board,

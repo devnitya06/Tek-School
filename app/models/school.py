@@ -41,11 +41,21 @@ class SchoolMedium(str, Enum):
 
 
 class SchoolBoard(str, Enum):
-    CBSE = "cbse"
-    ICSE = "icse"
-    STATE = "stateboard"
-    IB = "ib"
-    OTHER = "other"
+    CBSE = "cbse"                                      # Central Board of Secondary Education
+    ICSE = "icse"                                      # Indian Certificate of Secondary Education
+    STATE = "stateboard"                               # State Board
+    IB = "ib"                                          # International Baccalaureate
+    OTHER = "other"                                    # Other boards
+    PRE_BOARD_EDUCATION = "pre_board_education"        # Pre Board Education
+    CISCE = "cisce"                                    # CISCE (ICSE / ISC)
+    CAMBRIDGE = "cambridge"                            # Cambridge (CAIE / IGCSE)
+    NIOS = "nios"                                      # NIOS
+    HIGHER_EDUCATION = "higher_education"              # Higher Education
+    PROFESSIONAL_EDUCATION = "professional_education"  # Professional Education
+    MEDICAL_PHARMA = "medical_pharma"                  # Medical & Pharma
+    UNIVERSITY = "university"                          # University
+    TRAINING_COACHING = "training_coaching"            # Training & Coaching
+    CREATIVE_TRAINING = "creative_training"            # Creative Training
 
 
 class ExamTypeEnum(str, Enum):
@@ -205,6 +215,7 @@ class School(Base):
     internship = Column(String, nullable=True)
     lms_facility = Column(Boolean, nullable=True, default=False)
     alumni_network = Column(Boolean, nullable=True, default=False)
+    institution_class = Column(String, nullable=True)
     library = Column(Boolean, nullable=True, default=False)
     available_classes = Column(ARRAY(String), nullable=True)
     have_digital_board = Column(Boolean, nullable=True, default=False)

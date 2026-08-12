@@ -45,6 +45,7 @@ class SchoolProfileBase(BaseModel):
     internship: Optional[str] = None
     lms_facility: Optional[bool] = False
     alumni_network: Optional[bool] = False
+    institution_class: Optional[str] = None
     library: Optional[bool] = False
     available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = False
@@ -174,6 +175,7 @@ class SchoolProfileUpdate(BaseModel):
     internship: Optional[str] = None
     lms_facility: Optional[bool] = None
     alumni_network: Optional[bool] = None
+    institution_class: Optional[str] = None
     library: Optional[bool] = None
     available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = None
