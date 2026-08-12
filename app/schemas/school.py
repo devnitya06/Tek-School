@@ -41,6 +41,10 @@ class SchoolProfileBase(BaseModel):
     computer_lab: Optional[bool] = False
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
+    admission_process: Optional[str] = None
+    internship: Optional[str] = None
+    lms_facility: Optional[bool] = False
+    alumni_network: Optional[bool] = False
     library: Optional[bool] = False
     available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = False
@@ -64,6 +68,10 @@ class SchoolProfileOut(SchoolProfileBase):
     computer_lab: Optional[bool] = None
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
+    admission_process: Optional[str] = None
+    internship: Optional[str] = None
+    lms_facility: Optional[bool] = None
+    alumni_network: Optional[bool] = None
     library: Optional[bool] = None
     available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = None
@@ -162,6 +170,10 @@ class SchoolProfileUpdate(BaseModel):
     computer_lab: Optional[bool] = None
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
+    admission_process: Optional[str] = None
+    internship: Optional[str] = None
+    lms_facility: Optional[bool] = None
+    alumni_network: Optional[bool] = None
     library: Optional[bool] = None
     available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = None

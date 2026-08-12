@@ -4,6 +4,7 @@ import os
 import base64
 from io import BytesIO
 from app.core.config import settings
+from urllib.parse import urlparse
 
 s3_client = boto3.client(
     "s3",
@@ -163,4 +164,28 @@ def upload_to_s3(file_data, filename_prefix: str):
 
     url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_filename}"
     return url
+
+
+def delete_s3_object(file_url: str) -> bool:
+    """Delete an object from the configured S3 bucket using its public URL.
+
+    Returns True on success, raises ValueError on obvious input problems, or
+    re-raises boto3 exceptions on failure.
+    """
+    if not file_url:
+        raise ValueError("Empty file_url provided")
+
+    parsed = urlparse(file_url)
+    # Path contains the object key (leading slash present)
+    key = parsed.path.lstrip("/")
+    if not key:
+        # Attempt fallback: strip known bucket host prefix
+        raise ValueError(f"Could not determine S3 object key from URL: {file_url}")
+
+    try:
+        s3_client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+        return True
+    except Exception as e:
+        # Let caller handle/log the exception as needed
+        raise
 

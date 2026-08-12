@@ -178,6 +178,12 @@ def claim_school(
     if school.school_email.lower() != data.email.lower():
         raise HTTPException(status_code=400, detail="Email does not match the registered school email.")
 
+    if not school.created_by_admin:
+        raise HTTPException(
+            status_code=400,
+            detail="Claim is only available for admin-created school accounts."
+        )
+
     user = db.query(User).filter(User.id == school.user_id).first()
     if not user:
         raise HTTPException(status_code=500, detail="School user record is missing.")
@@ -249,24 +255,73 @@ def get_school_self(
         account_type_val = school.account_type.value if hasattr(school.account_type, "value") else str(school.account_type)
 
     return {
-        "school_id": school.id,
+        "id": school.id,
+        "user_id": school.user_id,
         "school_name": school.school_name,
+        "school_type": (school.school_type.value if school.school_type else None),
+        "school_medium": (school.school_medium.value if school.school_medium else None),
+        "school_board": (school.school_board.value if school.school_board else None),
+        "school_logo": school.profile_pic_url,
+        "school_banner": school.banner_pic_url,
+        "establishment_year": school.establishment_year,
+        "establishment_month": school.establishment_month,
+        "register_no": school.register_no,
+        "pin_code": school.pin_code,
+        "block_division": school.block_division,
+        "district": school.district,
+        "state": school.state,
+        "country": school.country,
         "school_email": school.school_email,
         "school_phone": school.school_phone,
-        "account_type": account_type_val,
+        "school_alt_phone": school.school_alt_phone,
+        "school_website": school.school_website,
+        "school_other_email": school.school_other_email,
+        "school_location": school.school_location,
+        "principal_name": school.principal_name,
+        "principal_designation": school.principal_designation,
+        "principal_email": school.principal_email,
+        "principal_phone": school.principal_phone,
         "is_active": school.is_active,
         "is_verified": school.is_verified,
+        "account_type": account_type_val,
+        "is_business_approved": school.is_business_approved,
+        "is_promotion_pending": school.is_promotion_pending,
         "created_by_admin": school.created_by_admin,
-        "created_at": school.created_at,
-        # Followup
         "followup_enabled": school.followup_enabled,
+        "followup_days": school.followup_days,
         "followup_status": school.followup_status,
         "followup_note": school.followup_note,
         "followup_last_sent_at": school.followup_last_sent_at,
         "followup_completed_at": school.followup_completed_at,
-        # Claim
         "claim_status": getattr(school, "claim_status", "unclaimed"),
         "claim_completed_at": getattr(school, "claim_completed_at", None),
+        "default_settlement_channel": school.default_settlement_channel,
+        "created_at": school.created_at,
+        "institution_categories": school.institution_categories,
+        "hostel": school.hostel,
+        "computer_lab": school.computer_lab,
+        "medical_faculties": school.medical_faculties,
+        "job_assurance": school.job_assurance,
+        "admission_process": school.admission_process,
+        "internship": school.internship,
+        "lms_facility": school.lms_facility,
+        "alumni_network": school.alumni_network,
+        "library": school.library,
+        "available_classes": school.available_classes,
+        "have_digital_board": school.have_digital_board,
+        "have_cctv_in_campus": school.have_cctv_in_campus,
+        "have_scholarship_opportunities": school.have_scholarship_opportunities,
+        "have_extra_curricular_activities": school.have_extra_curricular_activities,
+        "total_teachers": school.total_teachers,
+        "total_students": school.total_students,
+        "class_from": school.class_from,
+        "class_to": school.class_to,
+        "due_installment_type": school.due_installment_type,
+        "transportation_facility": school.transportation_facility,
+        "playground_facility": school.playground_facility,
+        "teaching_method": school.teaching_method,
+        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token,
+        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token,
     }
 
 
@@ -350,6 +405,14 @@ async def update_school_profile(
             school.medical_faculties = data.medical_faculties
         if data.job_assurance is not None:
             school.job_assurance = data.job_assurance
+        if data.admission_process is not None:
+            school.admission_process = data.admission_process
+        if data.internship is not None:
+            school.internship = data.internship
+        if data.lms_facility is not None:
+            school.lms_facility = data.lms_facility
+        if data.alumni_network is not None:
+            school.alumni_network = data.alumni_network
         if data.library is not None:
             school.library = data.library
         if data.available_classes is not None:
@@ -457,6 +520,10 @@ async def update_school_profile(
             "computer_lab": school.computer_lab,
             "medical_faculties": school.medical_faculties,
             "job_assurance": school.job_assurance,
+            "admission_process": school.admission_process,
+            "internship": school.internship,
+            "lms_facility": school.lms_facility,
+            "alumni_network": school.alumni_network,
             "library": school.library,
             "available_classes": school.available_classes,
             "have_digital_board": school.have_digital_board,
@@ -900,6 +967,10 @@ async def get_school_profile(
         "computer_lab": school.computer_lab,
         "medical_faculties": school.medical_faculties,
         "job_assurance": school.job_assurance,
+        "admission_process": school.admission_process,
+        "internship": school.internship,
+        "lms_facility": school.lms_facility,
+        "alumni_network": school.alumni_network,
         "library": school.library,
         "available_classes": school.available_classes,
         "have_digital_board": school.have_digital_board,
@@ -914,6 +985,9 @@ async def get_school_profile(
         "transportation_facility": school.transportation_facility,
         "playground_facility": school.playground_facility,
         "teaching_method": school.teaching_method,
+        "default_settlement_channel": school.default_settlement_channel,
+        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token,
+        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token,
         "rating_count": rating_count,
         "average_rating": average_rating,
     }

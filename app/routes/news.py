@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from datetime import date
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user_optional
@@ -17,9 +19,18 @@ from app.schemas.news import (
 from app.schemas.users import UserRole
 from app.utils.email_utility import generate_otp, send_raw_email
 from app.utils.permission import require_roles_allow_listing_school
-from app.utils.s3 import upload_to_s3
+from app.utils.s3 import upload_to_s3, delete_s3_object
+from app.db.session import SessionLocal
 
 router = APIRouter()
+
+
+def _to_utc_datetime(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _upload_news_images(images: Optional[List[UploadFile]], school_id: str) -> List[str]:
@@ -36,6 +47,55 @@ def _upload_news_images(images: Optional[List[UploadFile]], school_id: str) -> L
             raise HTTPException(status_code=400, detail=f"Image upload failed: {str(exc)}")
 
     return uploaded_urls
+
+
+def _cleanup_expired_unverified(db: Session) -> None:
+    """Delete expired, unverified news submissions and their S3 images.
+
+    This is a best-effort cleanup: image deletion errors are logged but do not
+    stop the DB record from being removed.
+    """
+    now = datetime.now(timezone.utc)
+    expired = (
+        db.query(NewsSubmission)
+        .filter(NewsSubmission.is_verified.is_(False))
+        .filter(NewsSubmission.otp_expires_at != None)
+        .filter(NewsSubmission.otp_expires_at < now)
+        .all()
+    )
+    if not expired:
+        return
+
+    for sub in expired:
+        # Attempt to delete any uploaded images
+        if sub.images:
+            for img in list(sub.images):
+                try:
+                    delete_s3_object(img)
+                except Exception as e:
+                    print(f"Warning: failed to delete S3 image {img}: {e}")
+        try:
+            db.delete(sub)
+        except Exception as e:
+            print(f"Warning: failed to delete DB record for news id={getattr(sub, 'id', None)}: {e}")
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Warning: failed to commit news cleanup: {e}")
+
+
+def _cleanup_expired_unverified_background() -> None:
+    """Background wrapper that creates its own DB session for cleanup."""
+    db = SessionLocal()
+    try:
+        _cleanup_expired_unverified(db)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 def _resolve_school_for_public_or_auth(
@@ -175,7 +235,8 @@ def verify_news_public(
     if submission.is_verified:
         raise HTTPException(status_code=400, detail="News submission is already verified.")
 
-    if submission.otp_expires_at and submission.otp_expires_at < datetime.now(timezone.utc):
+    expires_at = _to_utc_datetime(submission.otp_expires_at)
+    if expires_at and expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="OTP has expired.")
 
     if submission.otp_code != payload.otp_code:
@@ -205,8 +266,18 @@ def list_news_public(
     school_id: str = Query(..., description="School ID is required for public news listing."),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
+    background_tasks: BackgroundTasks = None,
 ):
     school = _resolve_school_for_public_or_auth(current_user, db, school_id)
+    # Schedule cleanup in background to avoid blocking the request
+    try:
+        if background_tasks is not None:
+            background_tasks.add_task(_cleanup_expired_unverified_background)
+        else:
+            # Fallback to synchronous cleanup if BackgroundTasks not available
+            _cleanup_expired_unverified(db)
+    except Exception as e:
+        print(f"Warning: scheduling cleanup failed before public list: {e}")
     query = db.query(NewsSubmission).filter(NewsSubmission.school_id == school.id)
     if current_user is None:
         query = query.filter(NewsSubmission.is_verified.is_(True)).filter(
@@ -337,18 +408,63 @@ def create_news_school(
 @router.get("/school/news")
 def list_news_school(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin."),
+    status: Optional[str] = Query(None, description="Optional filter by status: pending, approved, rejected"),
+    user_type: Optional[str] = Query(None, description="Optional filter by user_type: visitor or school"),
+    from_date: Optional[date] = Query(None, description="Filter from this date (inclusive)"),
+    to_date: Optional[date] = Query(None, description="Filter up to this date (inclusive)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+    background_tasks: BackgroundTasks = None,
 ):
     school = _resolve_school_for_school_or_admin(current_user, db, school_id)
-    items = (
+    # Schedule background cleanup so admin/school view doesn't show stale pending items
+    try:
+        if background_tasks is not None:
+            background_tasks.add_task(_cleanup_expired_unverified_background)
+        else:
+            _cleanup_expired_unverified(db)
+    except Exception as e:
+        print(f"Warning: scheduling cleanup failed before school list: {e}")
+    query = (
         db.query(NewsSubmission)
         .filter(NewsSubmission.school_id == school.id)
-        .order_by(NewsSubmission.created_at.desc())
-        .all()
+        .filter(NewsSubmission.is_verified.is_(True))
     )
+
+    if status:
+        query = query.filter(NewsSubmission.status == status.strip().lower())
+
+    if user_type:
+        query = query.filter(NewsSubmission.user_type == user_type.strip().lower())
+
+    if from_date:
+        query = query.filter(NewsSubmission.created_at >= datetime.combine(from_date, datetime.min.time(), tzinfo=timezone.utc))
+
+    if to_date:
+        end_of_day = datetime.combine(to_date, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
+        query = query.filter(NewsSubmission.created_at <= end_of_day)
+
+    total_items = query.count()
+    total_pages = (total_items + page_size - 1) // page_size if total_items else 0
+    offset = (page - 1) * page_size
+    items = query.order_by(NewsSubmission.created_at.desc()).offset(offset).limit(page_size).all()
+
     return {
         "school_id": school.id,
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_previous": page > 1,
+        "filters": {
+            "status": status,
+            "user_type": user_type,
+            "from_date": from_date.isoformat() if from_date else None,
+            "to_date": to_date.isoformat() if to_date else None,
+        },
         "items": [
             {
                 "id": item.id,

@@ -22,11 +22,11 @@ def add_school_profile_fields():
             AND column_name IN (
                 'register_no', 'establishment_month',
                 'hostel', 'computer_lab', 'medical_faculties',
-                'job_assurance', 'library', 'available_classes',
-                'photo_gallery_batches'
+                'job_assurance', 'admission_process', 'internship',
+                'lms_facility', 'alumni_network', 'library',
+                'available_classes', 'photo_gallery_batches'
             )
         """))
-
         existing_columns = [row[0] for row in result.fetchall()]
 
         if 'register_no' in existing_columns:
@@ -70,6 +70,34 @@ def add_school_profile_fields():
             print("➕ Adding job_assurance column...")
             db.execute(text("ALTER TABLE schools ADD COLUMN job_assurance VARCHAR"))
             print("✅ job_assurance column added")
+
+        if 'admission_process' in existing_columns:
+            print("ℹ️  admission_process column already exists")
+        else:
+            print("➕ Adding admission_process column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN admission_process VARCHAR"))
+            print("✅ admission_process column added")
+
+        if 'internship' in existing_columns:
+            print("ℹ️  internship column already exists")
+        else:
+            print("➕ Adding internship column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN internship VARCHAR"))
+            print("✅ internship column added")
+
+        if 'lms_facility' in existing_columns:
+            print("ℹ️  lms_facility column already exists")
+        else:
+            print("➕ Adding lms_facility column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN lms_facility BOOLEAN"))
+            print("✅ lms_facility column added")
+
+        if 'alumni_network' in existing_columns:
+            print("ℹ️  alumni_network column already exists")
+        else:
+            print("➕ Adding alumni_network column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN alumni_network BOOLEAN"))
+            print("✅ alumni_network column added")
 
         if 'library' in existing_columns:
             print("ℹ️  library column already exists")

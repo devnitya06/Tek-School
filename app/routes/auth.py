@@ -85,7 +85,7 @@ async def login(
                 except Exception:
                     pass  # Never block login due to email failure
             # Close claim when school logs in successfully (credentials won/used)
-            if getattr(school, "claim_status", "unclaimed") != "claimed":
+            if school.created_by_admin and getattr(school, "claim_status", "unclaimed") != "claimed":
                 school.claim_status = "claimed"
                 school.claim_completed_at = datetime.now(timezone.utc)
             db.commit()
