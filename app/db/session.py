@@ -64,6 +64,7 @@ from app.models.staff import *
 from app.models.progress_reports import *
 from app.models.academic_results import *
 from app.models.tuition import *
+from app.models.news import *
 
 def create_tables():
     """Create all tables that don't exist yet"""

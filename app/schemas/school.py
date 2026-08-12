@@ -37,6 +37,12 @@ class SchoolProfileBase(BaseModel):
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    hostel: Optional[List[str]] = None
+    computer_lab: Optional[bool] = False
+    medical_faculties: Optional[str] = None
+    job_assurance: Optional[str] = None
+    library: Optional[bool] = False
+    available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = False
     have_cctv_in_campus: Optional[bool] = False
     have_scholarship_opportunities: Optional[bool] = False
@@ -54,6 +60,12 @@ class SchoolProfileOut(SchoolProfileBase):
     school_medium: Optional[str] = None
     school_board: Optional[str] = None
     institution_categories: Optional[List[str]] = None
+    hostel: Optional[List[str]] = None
+    computer_lab: Optional[bool] = None
+    medical_faculties: Optional[str] = None
+    job_assurance: Optional[str] = None
+    library: Optional[bool] = None
+    available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = None
     have_cctv_in_campus: Optional[bool] = None
     have_scholarship_opportunities: Optional[bool] = None
@@ -146,6 +158,12 @@ class SchoolProfileUpdate(BaseModel):
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    hostel: Optional[List[str]] = None
+    computer_lab: Optional[bool] = None
+    medical_faculties: Optional[str] = None
+    job_assurance: Optional[str] = None
+    library: Optional[bool] = None
+    available_classes: Optional[List[str]] = None
     have_digital_board: Optional[bool] = None
     have_cctv_in_campus: Optional[bool] = None
     have_scholarship_opportunities: Optional[bool] = None
@@ -165,6 +183,11 @@ class SchoolProfileUpdate(BaseModel):
     school_logo: Optional[str] = (
         None  # URL or base64 data URL (data:image/...;base64,...)
     )
+
+
+class PhotoGalleryBatch(BaseModel):
+    name: str
+    photos: List[str] = Field(default_factory=list)
 
 
 class SubjectItem(BaseModel):

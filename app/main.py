@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
@@ -57,6 +57,7 @@ app.include_router(exams.router,prefix="/exam",tags=["Exam"])
 app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business Inquiry"])
 app.include_router(progress_reports.router, prefix="/progress-reports", tags=["Progress Reports"])
 app.include_router(academic_results.router, prefix="/academic-results", tags=["Academic Results"])
+app.include_router(news.router, tags=["News"])
 app.include_router(assignment_routes, tags=["Assignments"])
 app.include_router(tuition_lesson_plan_router)
 app.include_router(tuition_teaching_setup_router)

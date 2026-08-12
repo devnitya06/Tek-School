@@ -5,11 +5,12 @@ Run this script to update the database schema.
 
 import sys
 from sqlalchemy import text
-from app.db.session import SessionLocal, engine
+from sqlalchemy.exc import SQLAlchemyError
+from app.db.session import SessionLocal
 
 def add_school_profile_fields():
     """
-    Add register_no and establishment_month columns to the schools table.
+    Add register_no, establishment_month, and new school profile columns to the schools table.
     """
     db = SessionLocal()
     try:
@@ -18,7 +19,12 @@ def add_school_profile_fields():
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'schools'
-            AND column_name IN ('register_no', 'establishment_month')
+            AND column_name IN (
+                'register_no', 'establishment_month',
+                'hostel', 'computer_lab', 'medical_faculties',
+                'job_assurance', 'library', 'available_classes',
+                'photo_gallery_batches'
+            )
         """))
 
         existing_columns = [row[0] for row in result.fetchall()]
@@ -37,6 +43,55 @@ def add_school_profile_fields():
             db.execute(text("ALTER TABLE schools ADD COLUMN establishment_month INTEGER"))
             print("✅ establishment_month column added")
 
+        if 'hostel' in existing_columns:
+            print("ℹ️  hostel column already exists")
+        else:
+            print("➕ Adding hostel column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN hostel VARCHAR[]"))
+            print("✅ hostel column added")
+
+        if 'computer_lab' in existing_columns:
+            print("ℹ️  computer_lab column already exists")
+        else:
+            print("➕ Adding computer_lab column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN computer_lab BOOLEAN"))
+            print("✅ computer_lab column added")
+
+        if 'medical_faculties' in existing_columns:
+            print("ℹ️  medical_faculties column already exists")
+        else:
+            print("➕ Adding medical_faculties column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN medical_faculties VARCHAR"))
+            print("✅ medical_faculties column added")
+
+        if 'job_assurance' in existing_columns:
+            print("ℹ️  job_assurance column already exists")
+        else:
+            print("➕ Adding job_assurance column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN job_assurance VARCHAR"))
+            print("✅ job_assurance column added")
+
+        if 'library' in existing_columns:
+            print("ℹ️  library column already exists")
+        else:
+            print("➕ Adding library column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN library BOOLEAN"))
+            print("✅ library column added")
+
+        if 'available_classes' in existing_columns:
+            print("ℹ️  available_classes column already exists")
+        else:
+            print("➕ Adding available_classes column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN available_classes VARCHAR[]"))
+            print("✅ available_classes column added")
+
+        if 'photo_gallery_batches' in existing_columns:
+            print("ℹ️  photo_gallery_batches column already exists")
+        else:
+            print("➕ Adding photo_gallery_batches column...")
+            db.execute(text("ALTER TABLE schools ADD COLUMN photo_gallery_batches JSON"))
+            print("✅ photo_gallery_batches column added")
+
         # Commit changes
         db.commit()
         print("\n" + "="*50)
@@ -46,9 +101,9 @@ def add_school_profile_fields():
         print("  - establishment_month (INTEGER, 1-12)")
         print("="*50)
 
-    except Exception as e:
+    except SQLAlchemyError as e:
         db.rollback()
-        print(f"❌ Error during migration: {str(e)}")
+        print(f"❌ Error during migration: {e!s}")
         sys.exit(1)
     finally:
         db.close()

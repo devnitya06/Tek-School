@@ -2,6 +2,7 @@ import calendar
 from datetime import datetime, date, timedelta
 from datetime import time as dt_time
 import json
+import re
 from fastapi import (
     APIRouter,
     Depends,
@@ -85,6 +86,11 @@ _MAX_IMAGES_PER_UPLOAD_MESSAGE = (
 
 def timer():
     return time.perf_counter()
+
+
+def _slugify_batch_name(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
+    return slug or "batch"
 
 
 def _get_school_for_admin_or_school(
@@ -336,6 +342,18 @@ async def update_school_profile(
             school.school_location = data.school_location
         if data.institution_categories is not None:
             school.institution_categories = data.institution_categories
+        if data.hostel is not None:
+            school.hostel = data.hostel
+        if data.computer_lab is not None:
+            school.computer_lab = data.computer_lab
+        if data.medical_faculties is not None:
+            school.medical_faculties = data.medical_faculties
+        if data.job_assurance is not None:
+            school.job_assurance = data.job_assurance
+        if data.library is not None:
+            school.library = data.library
+        if data.available_classes is not None:
+            school.available_classes = data.available_classes
         if data.have_digital_board is not None:
             school.have_digital_board = data.have_digital_board
         if data.have_cctv_in_campus is not None:
@@ -435,6 +453,12 @@ async def update_school_profile(
             "school_other_email": school.school_other_email,
             "school_location": school.school_location,
             "institution_categories": school.institution_categories,
+            "hostel": school.hostel,
+            "computer_lab": school.computer_lab,
+            "medical_faculties": school.medical_faculties,
+            "job_assurance": school.job_assurance,
+            "library": school.library,
+            "available_classes": school.available_classes,
             "have_digital_board": school.have_digital_board,
             "have_cctv_in_campus": school.have_cctv_in_campus,
             "have_scholarship_opportunities": school.have_scholarship_opportunities,
@@ -618,6 +642,7 @@ async def get_catalogue(
 
 @router.post("/photo-gallery", status_code=status.HTTP_201_CREATED)
 async def add_photo_gallery_images(
+    name: Optional[str] = Form(None, description="Optional gallery group name"),
     images: List[UploadFile] = File(...),
     school_id: Optional[str] = Query(
         None, description="Required when accessing as admin"
@@ -631,8 +656,11 @@ async def add_photo_gallery_images(
     school = _get_school_for_admin_or_school(current_user, db, school_id)
     if len(images) > MAX_SCHOOL_IMAGES_PER_UPLOAD:
         raise HTTPException(status_code=400, detail=_MAX_IMAGES_PER_UPLOAD_MESSAGE)
+
     uploaded_urls = []
     errors = []
+    group_name = (name or "").strip() if name is not None else None
+
     for image in images:
         try:
             url = upload_to_s3(image, f"schools/{school.id}/photo_gallery")
@@ -643,11 +671,31 @@ async def add_photo_gallery_images(
     if errors and not uploaded_urls:
         raise HTTPException(status_code=400, detail="; ".join(errors))
 
-    # Update photo gallery - append new URLs to existing ones
     if school.photo_gallery is None:
         school.photo_gallery = uploaded_urls
     else:
         school.photo_gallery = list(school.photo_gallery) + uploaded_urls
+
+    if group_name:
+        existing_groups = school.photo_gallery_batches or []
+        if not isinstance(existing_groups, list):
+            existing_groups = []
+
+        created_group = None
+        for group in existing_groups:
+            if isinstance(group, dict) and group.get("name") == group_name:
+                existing_photos = group.get("photos") or []
+                if not isinstance(existing_photos, list):
+                    existing_photos = []
+                group["photos"] = existing_photos + uploaded_urls
+                created_group = group
+                break
+
+        if created_group is None:
+            created_group = {"name": group_name, "photos": uploaded_urls}
+            existing_groups.append(created_group)
+
+        school.photo_gallery_batches = existing_groups
 
     try:
         db.commit()
@@ -658,7 +706,7 @@ async def add_photo_gallery_images(
             status_code=500, detail=f"Database error: {str(e.__cause__)}"
         )
 
-    return {
+    response = {
         "detail": f"Successfully added {len(uploaded_urls)} image(s) to photo gallery",
         "uploaded_urls": uploaded_urls,
         "errors": errors if errors else None,
@@ -666,6 +714,12 @@ async def add_photo_gallery_images(
         if school.photo_gallery
         else 0,
     }
+    if group_name:
+        response["gallery_group"] = {
+            "name": group_name,
+            "photos": uploaded_urls,
+        }
+    return response
 
 
 @router.delete("/photo-gallery")
@@ -758,22 +812,23 @@ async def get_photo_gallery(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get photo gallery images for the school with pagination. Public: pass school_id; no auth required."""
+    """Get photo gallery images and named gallery groups for the school."""
     school = _get_school_public_or_auth(current_user, db, school_id)
 
     gallery_list = list(school.photo_gallery) if school.photo_gallery else []
     total_images = len(gallery_list)
-
-    # Calculate pagination
     total_pages = (total_images + page_size - 1) // page_size if total_images > 0 else 0
     start_index = (page - 1) * page_size
     end_index = start_index + page_size
-
-    # Get paginated results
     paginated_gallery = gallery_list[start_index:end_index]
+
+    groups = school.photo_gallery_batches or []
+    if not isinstance(groups, list):
+        groups = []
 
     return {
         "photo_gallery": paginated_gallery,
+        "gallery_groups": groups,
         "pagination": {
             "page": page,
             "page_size": page_size,
@@ -841,6 +896,12 @@ async def get_school_profile(
         "school_other_email": school.school_other_email,
         "school_location": school.school_location,
         "institution_categories": school.institution_categories,
+        "hostel": school.hostel,
+        "computer_lab": school.computer_lab,
+        "medical_faculties": school.medical_faculties,
+        "job_assurance": school.job_assurance,
+        "library": school.library,
+        "available_classes": school.available_classes,
         "have_digital_board": school.have_digital_board,
         "have_cctv_in_campus": school.have_cctv_in_campus,
         "have_scholarship_opportunities": school.have_scholarship_opportunities,

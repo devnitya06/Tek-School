@@ -197,6 +197,12 @@ class School(Base):
 
     school_other_email = Column(String, nullable=True)
     institution_categories = Column(ARRAY(String), nullable=True)
+    hostel = Column(ARRAY(String), nullable=True)
+    computer_lab = Column(Boolean, nullable=True, default=False)
+    medical_faculties = Column(String, nullable=True)
+    job_assurance = Column(String, nullable=True)
+    library = Column(Boolean, nullable=True, default=False)
+    available_classes = Column(ARRAY(String), nullable=True)
     have_digital_board = Column(Boolean, nullable=True, default=False)
     have_cctv_in_campus = Column(Boolean, nullable=True, default=False)
     have_scholarship_opportunities = Column(Boolean, nullable=True, default=False)
@@ -212,6 +218,7 @@ class School(Base):
     teaching_method = Column(JSON, nullable=True)
     catalogue = Column(ARRAY(String), nullable=True)
     photo_gallery = Column(ARRAY(String), nullable=True)
+    photo_gallery_batches = Column(JSON, nullable=True)
     # Teacher/staff attendance QR: latest token per mode only; regenerating overwrites and invalidates the old one.
     attendance_qr_mark_in_token = Column(String(64), nullable=True)
     attendance_qr_mark_out_token = Column(String(64), nullable=True)
