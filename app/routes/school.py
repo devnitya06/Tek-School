@@ -235,20 +235,25 @@ def claim_school(
     description=(
         "Returns the authenticated school's profile, followup status, and claim status. "
         "Schools created by admin can use this to see if their followup has been completed "
-        "and whether their account has been claimed (logged in with sent credentials)."
+        "and whether their account has been claimed (logged in with sent credentials). "
+        "Admin users can view any school profile by providing school_id parameter."
     ),
 )
 def get_school_self(
+    school_id: Optional[str] = Query(
+        None, description="Required when accessing as admin"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL)),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)
+    ),
 ):
     """
     GET /school/school  
     Authenticated school sees its own profile + followup + claim data.
+    Admin can view any school by providing school_id.
     """
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        raise HTTPException(status_code=404, detail="School profile not found.")
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
 
     account_type_val = None
     if school.account_type:
