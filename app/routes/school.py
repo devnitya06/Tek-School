@@ -14,6 +14,7 @@ from fastapi import (
     Form,
     Request,
     Body,
+    Path,
 )
 from app.models.users import User
 from app.models.teachers import (
@@ -328,6 +329,124 @@ def get_school_self(
         "teaching_method": school.teaching_method,
         "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token,
         "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token,
+    }
+
+
+@router.get("/institution-class-summary")
+def get_school_institution_class_summary(
+    db: Session = Depends(get_db),
+):
+    """Public no-auth summary of schools grouped by institution_class."""
+    rows = (
+        db.query(
+            School.institution_class.label("institution_class"),
+            func.count(School.id).label("school_count"),
+        )
+        .filter(School.institution_class.isnot(None), School.institution_class != "")
+        .group_by(School.institution_class)
+        .order_by(func.count(School.id).desc(), School.institution_class.asc())
+        .all()
+    )
+
+    summary = [
+        {
+            "institution_class": row.institution_class,
+            "school_count": row.school_count,
+        }
+        for row in rows
+    ]
+
+    return {
+        "institution_class_list": [row.institution_class for row in rows],
+        "counts_by_institution_class": summary,
+        "total_institution_class_groups": len(summary),
+        "total_schools": sum(row.school_count for row in rows),
+    }
+
+
+@router.get("/similar-schools")
+def get_similar_schools(
+    school_id: str = Query(..., description="School ID to compare against other schools"),
+    limit: int = Query(10, ge=1, le=50, description="Number of similar schools to return"),
+    db: Session = Depends(get_db),
+):
+    """Public no-auth endpoint to get similar active+verified schools."""
+    target = db.query(School).filter(School.id == school_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="School not found.")
+
+    target_board = target.school_board.value if hasattr(target.school_board, "value") else target.school_board
+    if not target_board or not target.institution_class:
+        raise HTTPException(
+            status_code=400,
+            detail="school_board and institution_class are required for similarity matching.",
+        )
+
+    candidate_schools = (
+        db.query(School)
+        .filter(
+            School.id != target.id,
+            School.is_active.is_(True),
+            School.is_verified.is_(True),
+            School.school_board.isnot(None),
+            School.institution_class.isnot(None),
+            School.institution_class != "",
+            School.school_board == target_board,
+            School.institution_class == target.institution_class,
+        )
+        .all()
+    )
+
+    if not candidate_schools:
+        return {
+            "school_id": target.id,
+            "school_name": target.school_name,
+            "similar_schools": [],
+            "total": 0,
+        }
+
+    def school_rank(school: School) -> tuple:
+        score = 0
+        if (school.state or "").strip().lower() == (target.state or "").strip().lower():
+            score += 100
+        if (school.district or "").strip().lower() == (target.district or "").strip().lower():
+            score += 70
+        if (school.pin_code or "").strip() == (target.pin_code or "").strip():
+            score += 90
+        if school.school_board and target.school_board:
+            score += 50
+        if school.institution_class and target.institution_class:
+            score += 50
+        return (score, school.is_verified, school.is_active, school.school_name.lower())
+
+    ranked = sorted(candidate_schools, key=school_rank, reverse=True)[:limit]
+
+    return {
+        "school_id": target.id,
+        "school_name": target.school_name,
+        "target_school_board": target_board,
+        "target_institution_class": target.institution_class,
+        "similar_schools": [
+            {
+                "id": school.id,
+                "school_name": school.school_name,
+                "school_board": school.school_board.value if hasattr(school.school_board, "value") else school.school_board,
+                "institution_class": school.institution_class,
+                "state": school.state,
+                "district": school.district,
+                "pin_code": school.pin_code,
+                "is_active": school.is_active,
+                "is_verified": school.is_verified,
+                "match_score": (
+                    (100 if (school.state or "").strip().lower() == (target.state or "").strip().lower() else 0)
+                    + (70 if (school.district or "").strip().lower() == (target.district or "").strip().lower() else 0)
+                    + (90 if (school.pin_code or "").strip() == (target.pin_code or "").strip() else 0)
+                    + 50 + 50
+                ),
+            }
+            for school in ranked
+        ],
+        "total": len(ranked),
     }
 
 
@@ -10711,12 +10830,106 @@ def list_business_inquiry(
             standard_in_academic=r.standard_in_academic,
             inquiry_for_class=r.inquiry_for_class,
             desire_to_know=r.desire_to_know,
+            prefer_time=r.prefer_time,
             files=r.files,
             message=r.message,
+            remark=r.remark,
+            is_seen=r.is_seen,
+            seen_at=r.seen_at,
             created_at=r.created_at,
         )
         for r in rows
     ]
+
+
+@router.get("/business-inquiry/{inquiry_id}", response_model=BusinessInquiryResponse)
+def get_business_inquiry_detail(
+    inquiry_id: int = Path(..., description="Business inquiry ID"),
+    school_id: Optional[str] = Query(
+        None,
+        description="School ID (required for public access; for admin/school filter)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Get business inquiry details. Auto-marks as seen on first view.
+    Public: pass school_id (no auth). Auth: school gets own; admin can pass school_id.
+    """
+    school = _get_school_public_or_auth(current_user, db, school_id)
+    
+    inquiry = db.query(BusinessInquiry).filter(
+        BusinessInquiry.id == inquiry_id,
+        BusinessInquiry.school_ids.contains([school.id])
+    ).first()
+    
+    if not inquiry:
+        raise HTTPException(status_code=404, detail="Business inquiry not found.")
+    
+    # Auto-mark as seen on first view
+    if not inquiry.is_seen:
+        from datetime import timezone as _tz
+        inquiry.is_seen = True
+        inquiry.seen_at = datetime.now(_tz.utc)
+        db.commit()
+    
+    return BusinessInquiryResponse(
+        id=inquiry.id,
+        school_ids=inquiry.school_ids,
+        guardian_name=inquiry.guardian_name,
+        phone=inquiry.phone,
+        email=inquiry.email,
+        location=inquiry.location,
+        student_name=inquiry.student_name,
+        standard_in_academic=inquiry.standard_in_academic,
+        inquiry_for_class=inquiry.inquiry_for_class,
+        desire_to_know=inquiry.desire_to_know,
+        prefer_time=inquiry.prefer_time,
+        files=inquiry.files,
+        message=inquiry.message,
+        remark=inquiry.remark,
+        is_seen=inquiry.is_seen,
+        seen_at=inquiry.seen_at,
+        created_at=inquiry.created_at,
+    )
+
+
+@router.patch("/business-inquiry/{inquiry_id}/remark")
+async def add_business_inquiry_remark(
+    inquiry_id: int,
+    request: Request,
+    school_id: Optional[str] = Query(
+        None,
+        description="School ID (required for admin)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
+):
+    """Add or update remark from school side."""
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    
+    inquiry = db.query(BusinessInquiry).filter(
+        BusinessInquiry.id == inquiry_id,
+        BusinessInquiry.school_ids.contains([school.id])
+    ).first()
+    
+    if not inquiry:
+        raise HTTPException(status_code=404, detail="Business inquiry not found.")
+    
+    try:
+        body = await request.json()
+        remark = body.get("remark", "").strip()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+    
+    inquiry.remark = remark if remark else None
+    db.commit()
+    
+    return {
+        "detail": "Remark updated successfully",
+        "inquiry_id": inquiry.id,
+        "remark": inquiry.remark,
+    }
 
 
 @router.get("/backup-users", response_model=list[BackupUserResponse])

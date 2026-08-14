@@ -1105,11 +1105,30 @@ class BusinessInquiryResponse(BaseModel):
     standard_in_academic: Optional[str] = None
     inquiry_for_class: Optional[List[str]] = None
     desire_to_know: Optional[List[str]] = None
+    prefer_time: Optional[str] = None
     files: Optional[List[str]] = None
     message: Optional[str] = None
+    remark: Optional[str] = None
+    is_seen: bool = False
+    seen_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class BusinessInquiryCreate(BaseModel):
+    """Single inquiry data (with school_ids, used in bulk operations)."""
+    school_ids: List[str]
+    guardian_name: str
+    phone: str
+    email: str
+    location: Optional[str] = None
+    student_name: Optional[str] = None
+    standard_in_academic: Optional[str] = None
+    inquiry_for_class: Optional[List[str]] = None
+    desire_to_know: Optional[List[str]] = None
+    prefer_time: Optional[str] = None
+    message: Optional[str] = None
 
 
 class BusinessInquiryListFilter(BaseModel):

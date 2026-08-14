@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Body
 
 from app.db.session import get_db
 from app.models.school import BusinessInquiry, School
@@ -32,6 +32,7 @@ async def create_business_inquiry(
     standard_in_academic: Optional[str] = Form(None),
     inquiry_for_class: Optional[str] = Form(None, description="Comma-separated classes, e.g. Class 1,Class 2"),
     desire_to_know: Optional[str] = Form(None, description="Comma-separated items"),
+    prefer_time: Optional[str] = Form(None, description="Preferred time: Morning/Afternoon/Any"),
     message: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
@@ -74,8 +75,11 @@ async def create_business_inquiry(
         standard_in_academic=standard_in_academic.strip() if standard_in_academic else None,
         inquiry_for_class=inquiry_for_class_list or None,
         desire_to_know=desire_to_know_list or None,
+        prefer_time=prefer_time.strip() if prefer_time else None,
         files=uploaded_urls if uploaded_urls else None,
         message=message.strip() if message else None,
+        is_seen=False,
+        seen_at=None,
     )
     db.add(record)
     try:
@@ -100,3 +104,4 @@ async def create_business_inquiry(
         message=record.message,
         created_at=record.created_at,
     )
+

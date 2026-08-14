@@ -1381,8 +1381,12 @@ class BusinessInquiry(Base):
     standard_in_academic = Column(String(100), nullable=True)  # e.g. Class 10
     inquiry_for_class = Column(PG_ARRAY(String), nullable=True)  # multiple classes
     desire_to_know = Column(PG_ARRAY(String), nullable=True)  # list of strings
+    prefer_time = Column(String(50), nullable=True)  # Morning/Afternoon/Any
     files = Column(PG_ARRAY(String), nullable=True)  # uploaded file URLs
     message = Column(Text, nullable=True)
+    remark = Column(Text, nullable=True)  # School side remarks/comments
+    is_seen = Column(Boolean, nullable=False, default=False)  # Viewed status
+    seen_at = Column(DateTime(timezone=True), nullable=True)  # When first viewed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
