@@ -11,7 +11,15 @@ SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
-    echo=False
+    pool_size=10,              # Max 10 connections in pool
+    max_overflow=20,           # Allow up to 20 overflow connections
+    pool_recycle=3600,         # Recycle connections every 1 hour to avoid stale connections
+    pool_reset_on_return='rollback',  # Reset connections on return
+    echo=False,
+    connect_args={
+        "connect_timeout": 10,
+        "application_name": "tekschool_app"
+    }
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

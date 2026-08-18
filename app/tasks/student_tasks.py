@@ -8,36 +8,41 @@ from sqlalchemy.orm import joinedload
 CREDIT_COST_PER_STUDENT = 30
 @shared_task
 def check_student_renewals():
+    """Check and mark expired student subscriptions as inactive.
+    
+    Uses bulk update instead of looping to prevent:
+    - N+1 queries (1000s of UPDATE statements)
+    - Connection pool exhaustion
+    - PostgreSQL CPU spikes
+    """
     db = SessionLocal()
     try:
-        # 1️⃣ Get all students whose renewal date has expired
-        expired_students = (
-            db.query(Student)
-            .filter(Student.status_expiry_date != None)
-            .filter(Student.status_expiry_date < datetime.utcnow())
-            .filter(Student.status != StudentStatus.INACTIVE.value)
-            .all()
+        # ✅ Use bulk update for School students (efficient)
+        expired_count = db.query(Student).filter(
+            Student.status_expiry_date != None,
+            Student.status_expiry_date < datetime.utcnow(),
+            Student.status != StudentStatus.INACTIVE.value
+        ).update(
+            {Student.status: StudentStatus.INACTIVE.value},
+            synchronize_session=False
         )
+        print(f"🚫 Marked {expired_count} school-created students as inactive.")
 
-        for student in expired_students:
-            student.status = StudentStatus.INACTIVE.value
-            print(f"🚫 Student {student.id} trial/subscription expired. Marked inactive.")
-
-        # Check SelfSignedStudent renewals
-        expired_self_signed = (
-            db.query(SelfSignedStudent)
-            .filter(SelfSignedStudent.status_expiry_date != None)
-            .filter(SelfSignedStudent.status_expiry_date < datetime.utcnow())
-            .filter(SelfSignedStudent.status != StudentStatus.INACTIVE.value)
-            .all()
+        # ✅ Use bulk update for Self-Signed students (efficient)
+        expired_self_signed_count = db.query(SelfSignedStudent).filter(
+            SelfSignedStudent.status_expiry_date != None,
+            SelfSignedStudent.status_expiry_date < datetime.utcnow(),
+            SelfSignedStudent.status != StudentStatus.INACTIVE.value
+        ).update(
+            {SelfSignedStudent.status: StudentStatus.INACTIVE.value},
+            synchronize_session=False
         )
+        print(f"🚫 Marked {expired_self_signed_count} self-signed students as inactive.")
 
-        for student in expired_self_signed:
-            student.status = StudentStatus.INACTIVE.value
-            print(f"🚫 Self-signed student {student.id} trial/subscription expired. Marked inactive.")
-
+        # Single commit for all updates (not in loop)
         db.commit()
-        print("🎉 Renewal check completed successfully!")
+        total = expired_count + expired_self_signed_count
+        print(f"🎉 Renewal check completed! Total marked inactive: {total}")
 
     except Exception as e:
         db.rollback()

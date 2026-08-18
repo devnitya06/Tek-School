@@ -48,6 +48,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
+      POSTGRES_INITDB_ARGS: "-c max_connections=50 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

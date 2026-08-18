@@ -64,14 +64,16 @@ def send_monthly_followup_emails():
                     )
 
                 school.followup_last_sent_at = today
-                db.commit()
                 sent_count += 1
                 print(f"✅ Followup sent to school: {school.school_name} ({school.school_email})")
 
             except Exception as e:
-                db.rollback()
+                # Don't rollback inside loop; log and continue to other schools
                 print(f"❌ Failed to send followup to {school.school_email}: {e}")
+                # Skip this school's commit, continue with others
 
+        # ✅ Single commit after all schools processed (not inside loop)
+        db.commit()
         print(f"🎉 Monthly followup complete — {sent_count} email(s) sent.")
 
     except Exception as e:
