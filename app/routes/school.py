@@ -866,31 +866,41 @@ async def add_photo_gallery_images(
     if errors and not uploaded_urls:
         raise HTTPException(status_code=400, detail="; ".join(errors))
 
-    if school.photo_gallery is None:
-        school.photo_gallery = uploaded_urls
-    else:
-        school.photo_gallery = list(school.photo_gallery) + uploaded_urls
+    existing_gallery = list(school.photo_gallery) if school.photo_gallery else []
+    school.photo_gallery = list(dict.fromkeys(existing_gallery + uploaded_urls))
 
     if group_name:
         existing_groups = school.photo_gallery_batches or []
         if not isinstance(existing_groups, list):
             existing_groups = []
 
-        created_group = None
+        normalized_groups = []
         for group in existing_groups:
-            if isinstance(group, dict) and group.get("name") == group_name:
+            if not isinstance(group, dict):
+                continue
+            group_name_value = (group.get("name") or "").strip()
+            photos = group.get("photos") or []
+            if not isinstance(photos, list):
+                photos = []
+            normalized_groups.append(
+                {
+                    "name": group_name_value,
+                    "photos": list(dict.fromkeys(photos)),
+                }
+            )
+
+        updated_group = None
+        for group in normalized_groups:
+            if group.get("name") == group_name:
                 existing_photos = group.get("photos") or []
-                if not isinstance(existing_photos, list):
-                    existing_photos = []
-                group["photos"] = existing_photos + uploaded_urls
-                created_group = group
+                group["photos"] = list(dict.fromkeys(existing_photos + uploaded_urls))
+                updated_group = group
                 break
 
-        if created_group is None:
-            created_group = {"name": group_name, "photos": uploaded_urls}
-            existing_groups.append(created_group)
+        if updated_group is None:
+            normalized_groups.append({"name": group_name, "photos": list(dict.fromkeys(uploaded_urls))})
 
-        school.photo_gallery_batches = existing_groups
+        school.photo_gallery_batches = normalized_groups
 
     try:
         db.commit()
@@ -1021,9 +1031,23 @@ async def get_photo_gallery(
     if not isinstance(groups, list):
         groups = []
 
+    normalized_groups = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        photos = group.get("photos") or []
+        if not isinstance(photos, list):
+            photos = []
+        normalized_groups.append(
+            {
+                "name": (group.get("name") or "").strip(),
+                "photos": list(dict.fromkeys(photos)),
+            }
+        )
+
     return {
         "photo_gallery": paginated_gallery,
-        "gallery_groups": groups,
+        "gallery_groups": normalized_groups,
         "pagination": {
             "page": page,
             "page_size": page_size,
