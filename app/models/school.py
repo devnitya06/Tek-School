@@ -151,9 +151,9 @@ class School(Base):
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
     # School Information
     school_name = Column(String, nullable=False)
-    school_type = Column(SQLEnum(SchoolType), nullable=True)
-    school_medium = Column(SQLEnum(SchoolMedium), nullable=True)
-    school_board = Column(SQLEnum(SchoolBoard), nullable=True)
+    school_type = Column(SchoolAccountTypeDecorator(SchoolType, length=50), nullable=True)
+    school_medium = Column(SchoolAccountTypeDecorator(SchoolMedium, length=50), nullable=True)
+    school_board = Column(SchoolAccountTypeDecorator(SchoolBoard, length=50), nullable=True)
     establishment_year = Column(Integer, nullable=True)
     establishment_month = Column(Integer, nullable=True)
     register_no = Column(String, nullable=True)

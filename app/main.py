@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news
+from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news, placement
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
@@ -28,6 +28,7 @@ from app.db.session import (
     ensure_worker_payment_settlement_columns,
     ensure_academic_results_tables,
     ensure_progress_report_tables,
+    ensure_placement_schema,
     ensure_studentstatus_pending_enum_value,
 )
 import os
@@ -58,6 +59,8 @@ app.include_router(business_inquiry.router, prefix="/inquiry", tags=["Business I
 app.include_router(progress_reports.router, prefix="/progress-reports", tags=["Progress Reports"])
 app.include_router(academic_results.router, prefix="/academic-results", tags=["Academic Results"])
 app.include_router(news.router, tags=["News"])
+app.include_router(placement.router, tags=["Placement"])
+app.include_router(placement.public_router, tags=["Public Placement"])
 app.include_router(assignment_routes, tags=["Assignments"])
 app.include_router(tuition_lesson_plan_router)
 app.include_router(tuition_teaching_setup_router)
@@ -96,6 +99,7 @@ def on_startup():
         ensure_assignment_tables()
         ensure_academic_results_tables()
         ensure_progress_report_tables()
+        ensure_placement_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 

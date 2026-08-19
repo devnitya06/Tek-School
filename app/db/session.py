@@ -73,6 +73,7 @@ from app.models.progress_reports import *
 from app.models.academic_results import *
 from app.models.tuition import *
 from app.models.news import *
+from app.models.placement import *
 
 def create_tables():
     """Create all tables that don't exist yet"""
@@ -176,6 +177,43 @@ def ensure_progress_report_tables():
     """Ensure progress report tables exist."""
     from app.models.progress_reports import ProgressReport
     ProgressReport.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_placement_schema():
+    """Ensure placement tables use the current campus_month column."""
+    from app.models.placement import PlacementAchiever, PlacementPartner
+
+    PlacementPartner.__table__.create(bind=engine, checkfirst=True)
+    PlacementAchiever.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect_engine()
+    columns = {column["name"]: column for column in inspector.get_columns("placement_partners")}
+    if "campus_date" in columns and "campus_month" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE placement_partners RENAME COLUMN campus_date TO campus_month")
+            )
+        columns = {
+            column["name"]: column
+            for column in inspect_engine().get_columns("placement_partners")
+        }
+
+    if "campus_month" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE placement_partners ADD COLUMN campus_month INTEGER NULL")
+            )
+        return
+
+    if "date" in str(columns["campus_month"]["type"]).lower():
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE placement_partners "
+                    "ALTER COLUMN campus_month TYPE INTEGER "
+                    "USING EXTRACT(MONTH FROM campus_month)::INTEGER"
+                )
+            )
 
 
 def ensure_attendance_verified_at_column():
