@@ -38,18 +38,18 @@ class SchoolProfileBase(BaseModel):
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
     hostel: Optional[List[str]] = None
-    computer_lab: Optional[bool] = False
+    computer_lab: Optional[FacilityStatusEnum] = None
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
     admission_process: Optional[str] = None
-    internship: Optional[str] = None
+    internship: Optional[YesNoNotApplicableEnum] = None
     lms_facility: Optional[bool] = False
     alumni_network: Optional[bool] = False
     institution_class: Optional[str] = None
-    library: Optional[bool] = False
+    library: Optional[FacilityStatusEnum] = None
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[bool] = False
-    have_cctv_in_campus: Optional[bool] = False
+    have_digital_board: Optional[FacilityStatusEnum] = None
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
     have_scholarship_opportunities: Optional[bool] = False
     have_extra_curricular_activities: Optional[bool] = False
 
@@ -66,19 +66,21 @@ class SchoolProfileOut(SchoolProfileBase):
     school_board: Optional[str] = None
     institution_categories: Optional[List[str]] = None
     hostel: Optional[List[str]] = None
-    computer_lab: Optional[bool] = None
+    computer_lab: Optional[FacilityStatusEnum] = None
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
     admission_process: Optional[str] = None
-    internship: Optional[str] = None
+    internship: Optional[YesNoNotApplicableEnum] = None
     lms_facility: Optional[bool] = None
     alumni_network: Optional[bool] = None
-    library: Optional[bool] = None
+    library: Optional[FacilityStatusEnum] = None
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[bool] = None
-    have_cctv_in_campus: Optional[bool] = None
+    have_digital_board: Optional[FacilityStatusEnum] = None
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
     have_scholarship_opportunities: Optional[bool] = None
     have_extra_curricular_activities: Optional[bool] = None
+    transportation_facility: Optional[YesNoNotApplicableEnum] = None
+    playground_facility: Optional[PlaygroundFacilityEnum] = None
 
     model_config = {"from_attributes": True, "arbitrary_types_allowed": True}
 
@@ -168,18 +170,18 @@ class SchoolProfileUpdate(BaseModel):
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
     hostel: Optional[List[str]] = None
-    computer_lab: Optional[bool] = None
+    computer_lab: Optional[FacilityStatusEnum] = None
     medical_faculties: Optional[str] = None
     job_assurance: Optional[str] = None
     admission_process: Optional[str] = None
-    internship: Optional[str] = None
+    internship: Optional[YesNoNotApplicableEnum] = None
     lms_facility: Optional[bool] = None
     alumni_network: Optional[bool] = None
     institution_class: Optional[str] = None
-    library: Optional[bool] = None
+    library: Optional[FacilityStatusEnum] = None
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[bool] = None
-    have_cctv_in_campus: Optional[bool] = None
+    have_digital_board: Optional[FacilityStatusEnum] = None
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
     have_scholarship_opportunities: Optional[bool] = None
     have_extra_curricular_activities: Optional[bool] = None
     school_other_email: Optional[str] = None
@@ -189,8 +191,8 @@ class SchoolProfileUpdate(BaseModel):
     class_from: Optional[str] = None
     class_to: Optional[str] = None
     due_installment_type: Optional[List[str]] = None
-    transportation_facility: Optional[bool] = None
-    playground_facility: Optional[bool] = None
+    transportation_facility: Optional[YesNoNotApplicableEnum] = None
+    playground_facility: Optional[PlaygroundFacilityEnum] = None
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None

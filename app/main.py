@@ -30,6 +30,7 @@ from app.db.session import (
     ensure_progress_report_tables,
     ensure_placement_schema,
     ensure_studentstatus_pending_enum_value,
+    ensure_school_facility_enum_columns,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -75,6 +76,7 @@ def on_startup():
     # Always ensure attendance mark-in/out columns exist.
     # Prevents runtime failures when code is updated before a manual migration.
     try:
+        ensure_school_facility_enum_columns()
         ensure_studentstatus_pending_enum_value()
         # Ensure assignmentstatus enum labels include required values used by the code
         from app.db.session import ensure_assignmentstatus_enum_values

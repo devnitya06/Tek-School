@@ -732,6 +732,79 @@ def ensure_assignmentstatus_enum_values():
         print(f"Skipping or failed to ensure assignmentstatus enum values: {e}")
 
 
+def ensure_school_facility_enum_columns():
+    """
+    Convert any remaining Boolean facility columns on the schools table to VARCHAR(50).
+
+    These six columns were originally BOOLEAN and are now enum-backed VARCHAR fields.
+    The canonical migration is scripts/migrate_school_facility_enums.py; this function
+    acts as a safety net that runs at every startup so new deployments never crash
+    because of a missing migration run.
+
+    Mapping: TRUE -> 'yes' | FALSE -> 'no' | NULL -> NULL
+    Idempotent: columns already VARCHAR are left untouched.
+    """
+    boolean_columns = [
+        "have_digital_board",
+        "computer_lab",
+        "library",
+        "transportation_facility",
+        "playground_facility",
+        "have_cctv_in_campus",
+    ]
+
+    def _get_col_type(conn, column):
+        row = conn.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'schools' AND column_name = :c"
+            ),
+            {"c": column},
+        ).fetchone()
+        return row[0].lower() if row else ""
+
+    try:
+        for col in boolean_columns:
+            with engine.connect() as probe:
+                col_type = _get_col_type(probe, col)
+
+            if not col_type or col_type in ("character varying", "varchar", "text"):
+                # Missing or already converted — nothing to do.
+                continue
+
+            if col_type != "boolean":
+                print(
+                    f"[startup] ensure_school_facility_enum_columns: "
+                    f"'{col}' has unexpected type '{col_type}' — skipping."
+                )
+                continue
+
+            # Convert BOOLEAN -> VARCHAR using a temp-column swap (safe for live DBs)
+            tmp = f"_tmp_{col}"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f'ALTER TABLE schools ADD COLUMN IF NOT EXISTS "{tmp}" VARCHAR(50)')
+                )
+                conn.execute(
+                    text(
+                        f'UPDATE schools SET "{tmp}" = CASE '
+                        f'WHEN "{col}" IS TRUE THEN \'yes\' '
+                        f'WHEN "{col}" IS FALSE THEN \'no\' '
+                        f'ELSE NULL END'
+                    )
+                )
+                conn.execute(text(f'ALTER TABLE schools DROP COLUMN "{col}"'))
+                conn.execute(
+                    text(f'ALTER TABLE schools RENAME COLUMN "{tmp}" TO "{col}"')
+                )
+            print(
+                f"[startup] ensure_school_facility_enum_columns: "
+                f"converted '{col}' BOOLEAN -> VARCHAR."
+            )
+    except Exception as exc:
+        print(f"[startup] ensure_school_facility_enum_columns failed (non-fatal): {exc}")
+
+
 # Dependency to get DB session
 def get_db():
     db = SessionLocal()

@@ -98,6 +98,39 @@ class AchievementLevel(str, Enum):
     INTERNATIONAL = "international"
 
 
+# ---------------------------------------------------------------------------
+# Facility / feature enum types used on the School model
+# ---------------------------------------------------------------------------
+
+class FacilityStatusEnum(str, Enum):
+    """For facilities that can be available, absent, or in progress."""
+    YES = "yes"
+    NO = "no"
+    UNDER_PROGRESS = "under_progress"
+
+
+class YesNoNotApplicableEnum(str, Enum):
+    """For facilities that are either present, absent, or not applicable."""
+    YES = "yes"
+    NO = "no"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class PlaygroundFacilityEnum(str, Enum):
+    """Playground-specific options including indoor variant."""
+    YES = "yes"
+    NO = "no"
+    INDOOR_PLAYGROUND = "indoor_playground"
+    UNDER_PROGRESS = "under_progress"
+
+
+class CctvFacilityEnum(str, Enum):
+    """CCTV coverage options."""
+    YES = "yes"
+    NO = "no"
+    ONLY_WHERE_REQUIRED = "only_where_required"
+
+
 class SchoolAccountTypeDecorator(TypeDecorator):
     """Custom type decorator to handle case-insensitive enum mapping"""
 
@@ -208,18 +241,18 @@ class School(Base):
     school_other_email = Column(String, nullable=True)
     institution_categories = Column(ARRAY(String), nullable=True)
     hostel = Column(ARRAY(String), nullable=True)
-    computer_lab = Column(Boolean, nullable=True, default=False)
+    computer_lab = Column(SchoolAccountTypeDecorator(FacilityStatusEnum, length=50), nullable=True)
     medical_faculties = Column(String, nullable=True)
     job_assurance = Column(String, nullable=True)
     admission_process = Column(String, nullable=True)
-    internship = Column(String, nullable=True)
+    internship = Column(SchoolAccountTypeDecorator(YesNoNotApplicableEnum, length=50), nullable=True)
     lms_facility = Column(Boolean, nullable=True, default=False)
     alumni_network = Column(Boolean, nullable=True, default=False)
     institution_class = Column(String, nullable=True)
-    library = Column(Boolean, nullable=True, default=False)
+    library = Column(SchoolAccountTypeDecorator(FacilityStatusEnum, length=50), nullable=True)
     available_classes = Column(ARRAY(String), nullable=True)
-    have_digital_board = Column(Boolean, nullable=True, default=False)
-    have_cctv_in_campus = Column(Boolean, nullable=True, default=False)
+    have_digital_board = Column(SchoolAccountTypeDecorator(FacilityStatusEnum, length=50), nullable=True)
+    have_cctv_in_campus = Column(SchoolAccountTypeDecorator(CctvFacilityEnum, length=50), nullable=True)
     have_scholarship_opportunities = Column(Boolean, nullable=True, default=False)
     have_extra_curricular_activities = Column(Boolean, nullable=True, default=False)
     school_location = Column(String, nullable=True)
@@ -228,8 +261,8 @@ class School(Base):
     class_from = Column(String, nullable=True)
     class_to = Column(String, nullable=True)
     due_installment_type = Column(JSON, nullable=True)
-    transportation_facility = Column(Boolean, nullable=True, default=False)
-    playground_facility = Column(Boolean, nullable=True, default=False)
+    transportation_facility = Column(SchoolAccountTypeDecorator(YesNoNotApplicableEnum, length=50), nullable=True)
+    playground_facility = Column(SchoolAccountTypeDecorator(PlaygroundFacilityEnum, length=50), nullable=True)
     teaching_method = Column(JSON, nullable=True)
     catalogue = Column(ARRAY(String), nullable=True)
     photo_gallery = Column(ARRAY(String), nullable=True)
