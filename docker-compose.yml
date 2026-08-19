@@ -1,7 +1,72 @@
+# services:
+#   web:
+#     build: .
+#     container_name: fastapi-app
+#     ports:
+#       - "8001:8001"
+#     env_file:
+#       - .env
+#     depends_on:
+#       db:
+#         condition: service_healthy
+#     volumes:
+#       - .:/app
+#     command: >
+#       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
+#   celery_worker:
+#     build: .
+#     container_name: celery-worker
+#     command: celery -A app.core.celery_app worker --loglevel=info
+#     env_file:
+#       - .env
+#     depends_on:
+#       - redis
+#       - db
+
+#   celery_beat:
+#     build: .
+#     container_name: celery-beat
+#     command: celery -A app.core.celery_app beat --loglevel=info
+#     env_file:
+#       - .env
+#     depends_on:
+#       - redis
+#       - db
+
+#   redis:
+#     image: redis:7
+#     container_name: redis
+#     restart: always
+#     ports:
+#       - "6380:6379"
+
+#   db:
+#     image: postgres:15
+#     container_name: postgres-db
+#     restart: always
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: root
+#       POSTGRES_DB: tek_school
+#       POSTGRES_INITDB_ARGS: "-c max_connections=50 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB"
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     ports:
+#       - "5433:5432"
+#     healthcheck:
+#       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "tek_school"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+
+# volumes:
+#   postgres_data:
+
 services:
   web:
     build: .
     container_name: fastapi-app
+    restart: always
     ports:
       - "8001:8001"
     env_file:
@@ -11,27 +76,42 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
+
   celery_worker:
     build: .
     container_name: celery-worker
+    restart: always
     command: celery -A app.core.celery_app worker --loglevel=info
     env_file:
       - .env
     depends_on:
       - redis
       - db
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   celery_beat:
     build: .
     container_name: celery-beat
+    restart: always
     command: celery -A app.core.celery_app beat --loglevel=info
     env_file:
       - .env
     depends_on:
       - redis
       - db
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   redis:
     image: redis:7
@@ -39,6 +119,10 @@ services:
     restart: always
     ports:
       - "6380:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   db:
     image: postgres:15
@@ -48,16 +132,20 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
-      POSTGRES_INITDB_ARGS: "-c max_connections=50 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB"
+      POSTGRES_INITDB_ARGS: "-c max_connections=50 -c shared_buffers=256MB -c effective_cache_size=1G"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "tek_school"]
+      test: [ "CMD", "pg_isready", "-U", "postgres", "-d", "tek_school" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
 
 volumes:
   postgres_data:
