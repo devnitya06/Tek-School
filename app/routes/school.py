@@ -9853,7 +9853,7 @@ def delete_team_member(
     return None
 
 
-# ==================== Excellent Student List (school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark) ====================
+# ==================== Excellent Student List ====================
 
 
 @router.post(
@@ -9865,7 +9865,7 @@ def create_excellent_student(
     school_id: Optional[str] = Query(
         None, description="Required when accessing as admin"
     ),
-    school_name: Optional[str] = Form(None),
+    student_name: Optional[str] = Form(None),
     gender: Optional[str] = Form(None),
     phone_no: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
@@ -9873,16 +9873,22 @@ def create_excellent_student(
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
     total_mark: Optional[float] = Form(None),
-    secured_percentage: Optional[float] = Form(None),
+    grade: Optional[str] = Form(None),
+    about_student: Optional[str] = Form(
+        None, description="Student description (minimum 250 characters)"
+    ),
     student_photo: Optional[UploadFile] = File(
-        None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"
+        None, description="Student profile photo (jpg, jpeg, png, gif, max 5MB)"
+    ),
+    certificate_photos: Optional[List[UploadFile]] = File(
+        None, description="Certificate/achievement photos (jpg, jpeg, png, gif, max 5MB each)"
     ),
     current_user: User = Depends(
         require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)
     ),
     db: Session = Depends(get_db),
 ):
-    """Create excellent student. School: own school; Admin: pass school_id. Use multipart/form-data; student_photo is file upload."""
+    """Create excellent student. School: own school; Admin: pass school_id. Use multipart/form-data."""
     if current_user.role == UserRole.ADMIN:
         if not school_id:
             raise HTTPException(
@@ -9894,6 +9900,16 @@ def create_excellent_student(
     if not school:
         raise HTTPException(status_code=404, detail="School not found.")
 
+    # Auto-calculate secured_percentage
+    calculated_percentage = None
+    if secure_mark is not None and total_mark is not None:
+        if total_mark == 0:
+            raise HTTPException(
+                status_code=400, detail="total_mark cannot be zero."
+            )
+        calculated_percentage = round((secure_mark / total_mark) * 100, 2)
+
+    # Upload profile photo
     student_photo_url = None
     if student_photo and student_photo.filename:
         try:
@@ -9903,10 +9919,23 @@ def create_excellent_student(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    # Upload certificate photos
+    cert_urls = []
+    if certificate_photos:
+        for cert_file in certificate_photos:
+            if cert_file and cert_file.filename:
+                try:
+                    url = upload_to_s3(
+                        cert_file,
+                        f"schools/{school.id}/excellent_students/certificates",
+                    )
+                    cert_urls.append(url)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
     obj = ExcellentStudent(
         school_id=school.id,
-        school_name=(school_name.strip() if school_name else None)
-        or getattr(school, "school_name", None),
+        student_name=student_name.strip() if student_name else None,
         gender=gender.strip() if gender else None,
         phone_no=phone_no.strip() if phone_no else None,
         email=email.strip() if email else None,
@@ -9914,7 +9943,10 @@ def create_excellent_student(
         batch_of_student=batch_of_student.strip() if batch_of_student else None,
         secure_mark=secure_mark,
         total_mark=total_mark,
-        secured_percentage=secured_percentage,
+        secured_percentage=calculated_percentage,
+        grade=grade.strip() if grade else None,
+        about_student=about_student.strip() if about_student else None,
+        certificate_photos=cert_urls if cert_urls else None,
         student_photo=student_photo_url,
     )
     db.add(obj)
@@ -9923,44 +9955,74 @@ def create_excellent_student(
     return obj
 
 
-@router.get("/excellent-students/", response_model=List[ExcellentStudentResponse])
+@router.get("/excellent-students/", response_model=ExcellentStudentListResponse)
 def list_excellent_students(
     school_id: Optional[str] = Query(
         None, description="School ID (required for public access; for admin filter)"
     ),
+    # Pagination
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(10, ge=1, le=100, description="Results per page (max 100)"),
+    # Filters
+    student_name: Optional[str] = Query(None, description="Filter by student name (partial match)"),
+    class_name: Optional[str] = Query(None, description="Filter by class name"),
+    batch_of_student: Optional[str] = Query(None, description="Filter by batch"),
+    gender: Optional[str] = Query(None, description="Filter by gender"),
+    grade: Optional[str] = Query(None, description="Filter by grade"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List excellent students. Public: pass school_id (no auth). School: own only; Admin: all or filter by school_id."""
+    """List excellent students with pagination and filtering.
+    Public: pass school_id (no auth). School: own only. Admin: all or filter by school_id."""
+    from math import ceil
+
+    # --- Build base query based on access level ---
     if current_user is None:
         if not school_id:
             raise HTTPException(
                 status_code=400, detail="school_id is required for public access."
             )
-        return (
-            db.query(ExcellentStudent)
-            .filter(ExcellentStudent.school_id == school_id)
-            .order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc())
-            .all()
-        )
-    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        q = db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id)
+    elif current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if school_id:
-            q = db.query(ExcellentStudent).filter(
-                ExcellentStudent.school_id == school_id
-            )
+            q = db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school_id)
         else:
             q = db.query(ExcellentStudent)
-        return q.order_by(
-            ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc()
-        ).all()
-    school = db.query(School).filter(School.user_id == current_user.id).first()
-    if not school:
-        return []
-    return (
-        db.query(ExcellentStudent)
-        .filter(ExcellentStudent.school_id == school.id)
-        .order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc())
-        .all()
+    else:
+        school = db.query(School).filter(School.user_id == current_user.id).first()
+        if not school:
+            return ExcellentStudentListResponse(
+                items=[], total=0, page=page, page_size=page_size, total_pages=0
+            )
+        q = db.query(ExcellentStudent).filter(ExcellentStudent.school_id == school.id)
+
+    # --- Apply filters ---
+    if student_name:
+        q = q.filter(ExcellentStudent.student_name.ilike(f"%{student_name}%"))
+    if class_name:
+        q = q.filter(ExcellentStudent.class_name.ilike(f"%{class_name}%"))
+    if batch_of_student:
+        q = q.filter(ExcellentStudent.batch_of_student.ilike(f"%{batch_of_student}%"))
+    if gender:
+        q = q.filter(ExcellentStudent.gender.ilike(f"%{gender}%"))
+    if grade:
+        q = q.filter(ExcellentStudent.grade.ilike(f"%{grade}%"))
+
+    # --- Ordering ---
+    q = q.order_by(ExcellentStudent.class_name, ExcellentStudent.secure_mark.desc())
+
+    # --- Count before pagination ---
+    total = q.count()
+    total_pages = ceil(total / page_size) if page_size else 1
+    offset = (page - 1) * page_size
+    items = q.offset(offset).limit(page_size).all()
+
+    return ExcellentStudentListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
     )
 
 
@@ -10002,7 +10064,7 @@ def get_excellent_student(
     obj = db.query(ExcellentStudent).filter(ExcellentStudent.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Excellent student not found.")
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(status_code=404, detail="Not found or access denied.")
@@ -10013,7 +10075,7 @@ def get_excellent_student(
 @router.put("/excellent-students/{id}", response_model=ExcellentStudentResponse)
 def update_excellent_student(
     id: int,
-    school_name: Optional[str] = Form(None),
+    student_name: Optional[str] = Form(None),
     gender: Optional[str] = Form(None),
     phone_no: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
@@ -10021,20 +10083,26 @@ def update_excellent_student(
     batch_of_student: Optional[str] = Form(None),
     secure_mark: Optional[float] = Form(None),
     total_mark: Optional[float] = Form(None),
-    secured_percentage: Optional[float] = Form(None),
+    grade: Optional[str] = Form(None),
+    about_student: Optional[str] = Form(
+        None, description="Student description (minimum 250 characters if provided)"
+    ),
     student_photo: Optional[UploadFile] = File(
-        None, description="Student photo (jpg, jpeg, png, gif, max 5MB)"
+        None, description="Student profile photo (jpg, jpeg, png, gif, max 5MB)"
+    ),
+    certificate_photos: Optional[List[UploadFile]] = File(
+        None, description="Certificate/achievement photos — replaces existing list"
     ),
     current_user: User = Depends(
         require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)
     ),
     db: Session = Depends(get_db),
 ):
-    """Update excellent student. Use multipart/form-data; student_photo is file upload."""
+    """Update excellent student. Use multipart/form-data. Providing certificate_photos replaces the existing list."""
     obj = db.query(ExcellentStudent).filter(ExcellentStudent.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Excellent student not found.")
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(
@@ -10042,8 +10110,8 @@ def update_excellent_student(
                 detail="You can only update your own school's excellent students.",
             )
 
-    if school_name is not None:
-        obj.school_name = school_name.strip() if school_name else None
+    if student_name is not None:
+        obj.student_name = student_name.strip() if student_name else None
     if gender is not None:
         obj.gender = gender.strip() if gender else None
     if phone_no is not None:
@@ -10054,12 +10122,27 @@ def update_excellent_student(
         obj.class_name = class_name.strip() if class_name else None
     if batch_of_student is not None:
         obj.batch_of_student = batch_of_student.strip() if batch_of_student else None
+    if grade is not None:
+        obj.grade = grade.strip() if grade else None
+    if about_student is not None:
+        obj.about_student = about_student.strip() if about_student else None
     if secure_mark is not None:
         obj.secure_mark = secure_mark
     if total_mark is not None:
         obj.total_mark = total_mark
-    if secured_percentage is not None:
-        obj.secured_percentage = secured_percentage
+
+    # Recalculate secured_percentage whenever marks change
+    effective_secure = obj.secure_mark
+    effective_total = obj.total_mark
+    if effective_secure is not None and effective_total is not None:
+        if effective_total == 0:
+            raise HTTPException(
+                status_code=400, detail="total_mark cannot be zero."
+            )
+        obj.secured_percentage = round(
+            (effective_secure / effective_total) * 100, 2
+        )
+
     if student_photo and student_photo.filename:
         try:
             obj.student_photo = upload_to_s3(
@@ -10067,6 +10150,22 @@ def update_excellent_student(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    # Upload new certificate photos (replaces existing list)
+    if certificate_photos:
+        valid_certs = [f for f in certificate_photos if f and f.filename]
+        if valid_certs:
+            cert_urls = []
+            for cert_file in valid_certs:
+                try:
+                    url = upload_to_s3(
+                        cert_file,
+                        f"schools/{obj.school_id}/excellent_students/certificates",
+                    )
+                    cert_urls.append(url)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+            obj.certificate_photos = cert_urls
 
     db.commit()
     db.refresh(obj)

@@ -1289,7 +1289,7 @@ class SchoolTeamMember(Base):
 
 
 class ExcellentStudent(Base):
-    """Excellent student list under school. Fields: school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark. School and admin can CRUD."""
+    """Excellent student list under school. Fields: school_id, student_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark, grade, about_student, certificate_photos. School and admin can CRUD."""
 
     __tablename__ = "excellent_students"
 
@@ -1297,7 +1297,7 @@ class ExcellentStudent(Base):
     school_id = Column(
         String, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    school_name = Column(String(200), nullable=True)
+    student_name = Column(String(200), nullable=True)
     gender = Column(String(20), nullable=True)
     student_photo = Column(String(500), nullable=True)  # URL (file upload)
     phone_no = Column(String(20), nullable=True)
@@ -1307,6 +1307,9 @@ class ExcellentStudent(Base):
     secure_mark = Column(Float, nullable=True)
     total_mark = Column(Float, nullable=True)
     secured_percentage = Column(Float, nullable=True)
+    grade = Column(String(50), nullable=True)
+    about_student = Column(Text, nullable=True)
+    certificate_photos = Column(JSON, nullable=True)  # List of S3 URLs
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

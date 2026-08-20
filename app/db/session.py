@@ -822,6 +822,58 @@ def ensure_school_facility_enum_columns():
         print(f"[startup] ensure_school_facility_enum_columns failed (non-fatal): {exc}")
 
 
+
+def ensure_excellent_student_schema():
+    """
+    Migrate the excellent_students table to the new schema:
+      - Rename school_name → student_name (preserving existing data)
+      - Add grade, about_student, certificate_photos columns
+    Idempotent — safe to run on every startup.
+    """
+    if not inspect_engine().has_table("excellent_students"):
+        return  # table will be created fresh with correct schema by create_tables()
+
+    with engine.begin() as conn:
+        # 1. Rename school_name → student_name (one-time migration, preserves data)
+        existing = [
+            col["name"]
+            for col in inspect_engine().get_columns("excellent_students")
+        ]
+        if "school_name" in existing and "student_name" not in existing:
+            conn.execute(
+                text(
+                    "ALTER TABLE excellent_students "
+                    "RENAME COLUMN school_name TO student_name"
+                )
+            )
+
+        # 2. Add new columns if missing
+        conn.execute(
+            text(
+                "ALTER TABLE excellent_students "
+                "ADD COLUMN IF NOT EXISTS student_name VARCHAR(200) NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE excellent_students "
+                "ADD COLUMN IF NOT EXISTS grade VARCHAR(50) NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE excellent_students "
+                "ADD COLUMN IF NOT EXISTS about_student TEXT NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE excellent_students "
+                "ADD COLUMN IF NOT EXISTS certificate_photos JSON NULL"
+            )
+        )
+
+
 # Dependency to get DB session
 # Retries on transient errors (recovery mode, restart, brief unavailability).
 # PostgreSQL WAL recovery can take 10-60s after an OOM-kill — we wait instead of 500-ing.

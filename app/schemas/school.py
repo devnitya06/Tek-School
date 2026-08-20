@@ -986,36 +986,46 @@ class SchoolTeamMemberResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ExcellentStudent: school_id, school_name, gender, student_photo, phone_no, email, class_name, batch_of_student, secure_mark
+# ExcellentStudent schemas
 class ExcellentStudentCreate(BaseModel):
     school_id: Optional[str] = None
-    school_name: Optional[str] = None
+    student_name: Optional[str] = None
     gender: Optional[str] = None
     phone_no: Optional[str] = None
     email: Optional[str] = None
     class_name: Optional[str] = None
     batch_of_student: Optional[str] = None
-    secure_mark: Optional[float] = Field(None, ge=0, le=100)
-    total_mark: Optional[float] = None
-    secured_percentage: Optional[float] = Field(None, ge=0, le=100)
+    secure_mark: Optional[float] = Field(None, ge=0)
+    total_mark: Optional[float] = Field(None, ge=0)
+    grade: Optional[str] = None
+    about_student: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Student description (max 2000 characters)",
+    )
 
 
 class ExcellentStudentUpdate(BaseModel):
-    school_name: Optional[str] = None
+    student_name: Optional[str] = None
     gender: Optional[str] = None
     phone_no: Optional[str] = None
     email: Optional[str] = None
     class_name: Optional[str] = None
     batch_of_student: Optional[str] = None
-    secure_mark: Optional[float] = Field(None, ge=0, le=100)
-    total_mark: Optional[float] = None
-    secured_percentage: Optional[float] = Field(None, ge=0, le=100)
+    secure_mark: Optional[float] = Field(None, ge=0)
+    total_mark: Optional[float] = Field(None, ge=0)
+    grade: Optional[str] = None
+    about_student: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Student description (max 2000 characters)",
+    )
 
 
 class ExcellentStudentResponse(BaseModel):
     id: int
     school_id: str
-    school_name: Optional[str] = None
+    student_name: Optional[str] = None
     gender: Optional[str] = None
     student_photo: Optional[str] = None
     phone_no: Optional[str] = None
@@ -1025,10 +1035,21 @@ class ExcellentStudentResponse(BaseModel):
     secure_mark: Optional[float] = None
     total_mark: Optional[float] = None
     secured_percentage: Optional[float] = None
+    grade: Optional[str] = None
+    about_student: Optional[str] = None
+    certificate_photos: Optional[List[str]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class ExcellentStudentListResponse(BaseModel):
+    items: List[ExcellentStudentResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class BackupUserResponse(BaseModel):

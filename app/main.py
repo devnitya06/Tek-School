@@ -31,6 +31,7 @@ from app.db.session import (
     ensure_placement_schema,
     ensure_studentstatus_pending_enum_value,
     ensure_school_facility_enum_columns,
+    ensure_excellent_student_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -97,6 +98,7 @@ def on_startup():
         ensure_tuition_class_session_schema()
         ensure_school_followup_columns()
         ensure_school_claim_columns()
+        ensure_excellent_student_schema()
         create_tables()
         ensure_assignment_tables()
         ensure_academic_results_tables()
