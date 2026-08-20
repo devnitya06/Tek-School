@@ -6,6 +6,10 @@ celery_app = Celery(
     "tek_school",
     broker=settings.REDIS_URL,     # e.g. redis://redis:6379/0
     backend=settings.REDIS_URL,
+    include=[
+        "app.tasks.student_tasks",
+        "app.tasks.followup_tasks",
+    ],
 )
 
 celery_app.conf.timezone = "Asia/Kolkata"
