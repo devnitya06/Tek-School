@@ -1,6 +1,7 @@
 from datetime import timezone, datetime, timedelta
 from app.db.session import SessionLocal
-from app.models import Student, SelfSignedStudent, CreditMaster, StudentStatus
+from app.models.students import Student, SelfSignedStudent, StudentStatus
+from app.models.admin import CreditMaster
 # pyrefly: ignore [missing-import]
 from celery import shared_task
 from sqlalchemy.orm import joinedload
