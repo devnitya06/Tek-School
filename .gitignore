@@ -17,6 +17,12 @@ alembic.ini
 
 # Logs
 *.log
+logs/
+
+# Celery Beat schedule (stale on deploy — always delete before restarting beat)
+celerybeat-schedule.bak
+celerybeat-schedule.dat
+celerybeat-schedule.dir
 
 # IDEs
 .vscode/

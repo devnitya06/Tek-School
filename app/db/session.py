@@ -11,10 +11,10 @@ SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,               # Max 5 persistent connections per process
-    max_overflow=10,           # Allow up to 10 overflow connections → 15 total per process
+    pool_size=3,               # 3 persistent connections always ready
+    max_overflow=5,            # 5 extra burst connections if needed → 8 total max
     pool_recycle=3600,         # Recycle connections every 1 hour to avoid stale connections
-    pool_timeout=30,           # Raise error after 30s if no connection available (prevents thread stalls)
+    pool_timeout=20,           # Raise error after 20s if no connection available
     pool_reset_on_return='rollback',  # Reset connections on return
     echo=False,
     connect_args={
@@ -28,6 +28,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _is_recovery_mode_error(exc: Exception) -> bool:
+    """Return True if the error is PostgreSQL refusing connections during WAL recovery."""
+    msg = str(exc).lower()
+    return "recovery mode" in msg or "the database system is starting up" in msg
+
+
 def retry_db_operation(operation, retries=3, delay=1):
     last_exception = None
     for attempt in range(retries):
@@ -36,7 +42,9 @@ def retry_db_operation(operation, retries=3, delay=1):
         except OperationalError as exc:
             last_exception = exc
             engine.dispose()
-            time.sleep(delay)
+            # Recovery mode needs more time — PostgreSQL replays WAL before accepting connections
+            wait = 5 if _is_recovery_mode_error(exc) else delay
+            time.sleep(wait)
     raise last_exception or RuntimeError("DB operation failed after retries")
 
 
@@ -815,9 +823,30 @@ def ensure_school_facility_enum_columns():
 
 
 # Dependency to get DB session
+# Retries on transient errors (recovery mode, restart, brief unavailability).
+# PostgreSQL WAL recovery can take 10-60s after an OOM-kill — we wait instead of 500-ing.
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    max_attempts = 5
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+            return  # success — exit generator cleanly
+        except OperationalError as exc:
+            last_exc = exc
+            if _is_recovery_mode_error(exc):
+                wait = min(2 ** attempt, 30)  # 2s, 4s, 8s, 16s, 30s
+                print(
+                    f"[get_db] PostgreSQL in recovery mode (attempt {attempt}/{max_attempts}), "
+                    f"retrying in {wait}s..."
+                )
+                engine.dispose()   # discard stale connections from the pool
+                time.sleep(wait)
+            else:
+                raise  # non-recovery errors propagate immediately
+    # All retries exhausted
+    raise last_exc or RuntimeError("PostgreSQL unavailable after retries")

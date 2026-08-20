@@ -12,6 +12,7 @@ from app.db.session import SessionLocal
 from app.models.school import School
 from app.utils.email_utility import send_dynamic_email, generate_password
 from app.core.security import get_password_hash
+from app.core.logger import logger
 
 # Fixed monthly send dates
 FOLLOWUP_DATES = {7, 14, 22, 28}
@@ -34,10 +35,10 @@ def send_monthly_followup_emails(self):
     """
     today = datetime.now(timezone.utc)
     if today.day not in FOLLOWUP_DATES:
-        print(f"ℹ️ Today is the {today.day}th — no scheduled followup date. Skipping.")
+        logger.info(f"[followup_emails] Today is {today.day}th — not a send date. Skipping.")
         return
 
-    print(f"📅 Today is the {today.day}th — running monthly followup emails...")
+    logger.info(f"[followup_emails] Today is {today.day}th — starting monthly followup emails...")
 
     db = SessionLocal()
     try:
@@ -76,20 +77,23 @@ def send_monthly_followup_emails(self):
 
                 school.followup_last_sent_at = today
                 sent_count += 1
-                print(f"✅ Followup sent to school: {school.school_name} ({school.school_email})")
+                logger.info(f"[followup_emails] ✅ Sent to: {school.school_name} ({school.school_email})")
 
             except Exception as e:
                 # Don't rollback inside loop; log and continue to other schools
-                print(f"❌ Failed to send followup to {school.school_email}: {e}")
-                # Skip this school's commit, continue with others
+                logger.error(
+                    f"[followup_emails] ❌ Failed for {school.school_email} "
+                    f"— {type(e).__name__}: {e}",
+                    exc_info=True
+                )
 
         # ✅ Single commit after all schools processed (not inside loop)
         db.commit()
-        print(f"🎉 Monthly followup complete — {sent_count} email(s) sent.")
+        logger.info(f"[followup_emails] ✅ Done — {sent_count} email(s) sent.")
 
     except Exception as e:
         db.rollback()
-        print(f"❌ Error in monthly followup task: {e}")
+        logger.error(f"[followup_emails] ❌ CRASH — {type(e).__name__}: {e}", exc_info=True)
 
     finally:
         db.close()

@@ -4,6 +4,7 @@ from app.models import Student, SelfSignedStudent, CreditMaster, StudentStatus
 # pyrefly: ignore [missing-import]
 from celery import shared_task
 from sqlalchemy.orm import joinedload
+from app.core.logger import logger
 
 CREDIT_COST_PER_STUDENT = 30
 @shared_task(
@@ -24,6 +25,7 @@ def check_student_renewals(self):
     """
     db = SessionLocal()
     try:
+        logger.info("[check_student_renewals] Task started")
         # ✅ Use bulk update for School students (efficient)
         expired_count = db.query(Student).filter(
             Student.status_expiry_date != None,
@@ -33,7 +35,7 @@ def check_student_renewals(self):
             {Student.status: StudentStatus.INACTIVE.value},
             synchronize_session=False
         )
-        print(f"🚫 Marked {expired_count} school-created students as inactive.")
+        logger.info(f"[check_student_renewals] Marked {expired_count} school students inactive")
 
         # ✅ Use bulk update for Self-Signed students (efficient)
         expired_self_signed_count = db.query(SelfSignedStudent).filter(
@@ -44,16 +46,16 @@ def check_student_renewals(self):
             {SelfSignedStudent.status: StudentStatus.INACTIVE.value},
             synchronize_session=False
         )
-        print(f"🚫 Marked {expired_self_signed_count} self-signed students as inactive.")
+        logger.info(f"[check_student_renewals] Marked {expired_self_signed_count} self-signed students inactive")
 
         # Single commit for all updates (not in loop)
         db.commit()
         total = expired_count + expired_self_signed_count
-        print(f"🎉 Renewal check completed! Total marked inactive: {total}")
+        logger.info(f"[check_student_renewals] ✅ Done — total marked inactive: {total}")
 
     except Exception as e:
         db.rollback()
-        print(f"❌ Error in renewal check: {str(e)}")
+        logger.error(f"[check_student_renewals] ❌ CRASH — {type(e).__name__}: {e}", exc_info=True)
 
     finally:
         db.close()
