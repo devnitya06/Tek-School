@@ -265,10 +265,20 @@ def get_platform_staff_permissions(
     description="Admin or superadmin only. Returns all self-signed teacher profiles for review.",
 )
 def list_self_signed_teachers(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Results per page"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
 ):
-    return db.query(SelfSignedTeacher).options(joinedload(SelfSignedTeacher.user)).all()
+    offset = (page - 1) * page_size
+    return (
+        db.query(SelfSignedTeacher)
+        .options(joinedload(SelfSignedTeacher.user))
+        .order_by(SelfSignedTeacher.id.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
 
 
 @router.get(

@@ -39,9 +39,9 @@ class Student(Base):
 
     driver_id = Column(Integer, ForeignKey("transports.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    school_id = Column(String, ForeignKey("schools.id"), nullable=True)
-    status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False)
-    status_expiry_date = Column(DateTime, nullable=True)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=True, index=True)  # indexed for school-scoped queries
+    status = Column(Enum(StudentStatus), default=StudentStatus.TRIAL.value, nullable=False, index=True)  # indexed for renewal task
+    status_expiry_date = Column(DateTime, nullable=True, index=True)  # indexed for renewal task
     created_at = Column(DateTime, default=func.now())
     pickup_point = Column(String(150), nullable=True)
     pickup_time = Column(String(50), nullable=True)
@@ -154,8 +154,8 @@ class SelfSignedStudent(Base):
     state = Column(String(100), nullable=True)
 
     plot = Column(String(255), nullable=True)
-    status = Column(Enum(StudentStatus), default=StudentStatus.PENDING.value, nullable=False)
-    status_expiry_date = Column(DateTime, nullable=True)
+    status = Column(Enum(StudentStatus), default=StudentStatus.PENDING.value, nullable=False, index=True)  # indexed for renewal task
+    status_expiry_date = Column(DateTime, nullable=True, index=True)  # indexed for renewal task
 
     #parent details
     parent_name = Column(String(100), nullable=True)

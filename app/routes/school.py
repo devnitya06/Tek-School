@@ -382,8 +382,31 @@ def get_similar_schools(
             detail="school_board and institution_class are required for similarity matching.",
         )
 
-    candidate_schools = (
-        db.query(School)
+    # ✅ Push scoring into SQL using CASE expressions so we never load all rows into memory.
+    # The query fetches only the columns we actually serialise (no full ORM hydration of unused fields).
+    from sqlalchemy import case as sa_case
+
+    score_expr = (
+        sa_case((School.state == target.state, 100), else_=0)
+        + sa_case((School.district == target.district, 70), else_=0)
+        + sa_case((School.pin_code == target.pin_code, 90), else_=0)
+        + 50  # board match is already guaranteed by the filter below
+        + 50  # institution_class match is already guaranteed by the filter below
+    ).label("match_score")
+
+    rows = (
+        db.query(
+            School.id,
+            School.school_name,
+            School.school_board,
+            School.institution_class,
+            School.state,
+            School.district,
+            School.pin_code,
+            School.is_active,
+            School.is_verified,
+            score_expr,
+        )
         .filter(
             School.id != target.id,
             School.is_active.is_(True),
@@ -394,32 +417,18 @@ def get_similar_schools(
             School.school_board == target_board,
             School.institution_class == target.institution_class,
         )
+        .order_by(score_expr.desc(), School.school_name.asc())
+        .limit(limit)  # ✅ Limit in SQL, not Python — never loads unbounded result sets
         .all()
     )
 
-    if not candidate_schools:
+    if not rows:
         return {
             "school_id": target.id,
             "school_name": target.school_name,
             "similar_schools": [],
             "total": 0,
         }
-
-    def school_rank(school: School) -> tuple:
-        score = 0
-        if (school.state or "").strip().lower() == (target.state or "").strip().lower():
-            score += 100
-        if (school.district or "").strip().lower() == (target.district or "").strip().lower():
-            score += 70
-        if (school.pin_code or "").strip() == (target.pin_code or "").strip():
-            score += 90
-        if school.school_board and target.school_board:
-            score += 50
-        if school.institution_class and target.institution_class:
-            score += 50
-        return (score, school.is_verified, school.is_active, school.school_name.lower())
-
-    ranked = sorted(candidate_schools, key=school_rank, reverse=True)[:limit]
 
     return {
         "school_id": target.id,
@@ -428,25 +437,20 @@ def get_similar_schools(
         "target_institution_class": target.institution_class,
         "similar_schools": [
             {
-                "id": school.id,
-                "school_name": school.school_name,
-                "school_board": school.school_board.value if hasattr(school.school_board, "value") else school.school_board,
-                "institution_class": school.institution_class,
-                "state": school.state,
-                "district": school.district,
-                "pin_code": school.pin_code,
-                "is_active": school.is_active,
-                "is_verified": school.is_verified,
-                "match_score": (
-                    (100 if (school.state or "").strip().lower() == (target.state or "").strip().lower() else 0)
-                    + (70 if (school.district or "").strip().lower() == (target.district or "").strip().lower() else 0)
-                    + (90 if (school.pin_code or "").strip() == (target.pin_code or "").strip() else 0)
-                    + 50 + 50
-                ),
+                "id": row.id,
+                "school_name": row.school_name,
+                "school_board": row.school_board.value if hasattr(row.school_board, "value") else row.school_board,
+                "institution_class": row.institution_class,
+                "state": row.state,
+                "district": row.district,
+                "pin_code": row.pin_code,
+                "is_active": row.is_active,
+                "is_verified": row.is_verified,
+                "match_score": row.match_score,
             }
-            for school in ranked
+            for row in rows
         ],
-        "total": len(ranked),
+        "total": len(rows),
     }
 
 

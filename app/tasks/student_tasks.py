@@ -6,11 +6,18 @@ from celery import shared_task
 from sqlalchemy.orm import joinedload
 
 CREDIT_COST_PER_STUDENT = 30
-@shared_task
-def check_student_renewals():
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300,   # 5-minute base delay; doubles each retry with retry_backoff
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=3600,    # Cap at 1-hour wait between retries
+)
+def check_student_renewals(self):
     """Check and mark expired student subscriptions as inactive.
-    
-    Uses bulk update instead of looping to prevent:
+
+    Uses bulk UPDATE instead of looping to prevent:
     - N+1 queries (1000s of UPDATE statements)
     - Connection pool exhaustion
     - PostgreSQL CPU spikes

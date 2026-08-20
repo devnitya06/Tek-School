@@ -7,6 +7,7 @@ Runs daily; only fires on those four dates.
 
 from datetime import datetime, timezone
 from celery import shared_task
+from sqlalchemy.orm import joinedload
 from app.db.session import SessionLocal
 from app.models.school import School
 from app.utils.email_utility import send_dynamic_email, generate_password
@@ -16,11 +17,18 @@ from app.core.security import get_password_hash
 FOLLOWUP_DATES = {7, 14, 22, 28}
 
 
-@shared_task
-def send_monthly_followup_emails():
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300,   # 5-minute base delay; doubles each retry with retry_backoff
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=3600,    # Cap at 1-hour wait between retries
+)
+def send_monthly_followup_emails(self):
     """
-    Runs every day. On the 7th, 14th, 22nd, and 28th of the month it sends
-    a follow-up credential email to all schools where:
+    Runs on the 7th, 14th, 22nd, and 28th of each month (via crontab in celery_app.py).
+    Sends a follow-up credential email to all schools where:
       - followup_enabled is True
       - followup_status is 'pending' (not stopped / not completed)
     """
@@ -33,8 +41,11 @@ def send_monthly_followup_emails():
 
     db = SessionLocal()
     try:
+        # joinedload(School.user) prevents N+1: loads all users in one JOIN
+        # instead of firing a separate SELECT for each school in the loop below.
         schools = (
             db.query(School)
+            .options(joinedload(School.user))
             .filter(School.followup_enabled.is_(True))
             .filter(School.followup_status == "pending")
             .all()

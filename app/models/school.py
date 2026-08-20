@@ -221,9 +221,9 @@ class School(Base):
     is_business_approved = Column(Boolean, default=False)
     is_promotion_pending = Column(Boolean, default=False)
     created_by_admin = Column(Boolean, default=False)
-    followup_enabled = Column(Boolean, default=False)
+    followup_enabled = Column(Boolean, default=False, index=True)   # indexed for nightly followup task
     followup_days = Column(Integer, default=0)
-    followup_status = Column(String, default="inactive")
+    followup_status = Column(String, default="inactive", index=True) # indexed for nightly followup task
     followup_note = Column(String, nullable=True)
     followup_last_sent_at = Column(DateTime, nullable=True)
     followup_completed_at = Column(DateTime, nullable=True)

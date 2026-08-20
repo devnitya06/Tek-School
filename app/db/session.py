@@ -11,9 +11,10 @@ SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=10,              # Max 10 connections in pool
-    max_overflow=20,           # Allow up to 20 overflow connections
+    pool_size=5,               # Max 5 persistent connections per process
+    max_overflow=10,           # Allow up to 10 overflow connections → 15 total per process
     pool_recycle=3600,         # Recycle connections every 1 hour to avoid stale connections
+    pool_timeout=30,           # Raise error after 30s if no connection available (prevents thread stalls)
     pool_reset_on_return='rollback',  # Reset connections on return
     echo=False,
     connect_args={
@@ -359,6 +360,8 @@ def ensure_staff_teacher_boss_columns():
     """
     Ensure both legacy/current boss column spellings exist and stay mirrored.
     Some databases have `immediate_boss`, others have `immidiate_boss`.
+    The UPDATE is guarded with a WHERE clause so it only touches rows that
+    actually have a mismatch — not a full-table scan on every startup.
     """
     with engine.begin() as conn:
         # staff table
@@ -374,12 +377,15 @@ def ensure_staff_teacher_boss_columns():
         conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "subjects" VARCHAR NULL'))
         conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "assigned_class" VARCHAR(255) NULL'))
         conn.execute(text('ALTER TABLE staff ADD COLUMN IF NOT EXISTS "assigned_subjects" JSON NULL'))
+        # ✅ WHERE guard: only update rows that actually have a mismatch → prevents full-table scan
         conn.execute(
             text(
                 """
                 UPDATE staff
                 SET immidiate_boss = COALESCE(immidiate_boss, immediate_boss),
                     immediate_boss = COALESCE(immediate_boss, immidiate_boss)
+                WHERE (immidiate_boss IS NULL AND immediate_boss IS NOT NULL)
+                   OR (immediate_boss IS NULL AND immidiate_boss IS NOT NULL)
                 """
             )
         )
@@ -395,12 +401,15 @@ def ensure_staff_teacher_boss_columns():
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "is_active_hr_service" BOOLEAN NULL'))
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "avg_rating" FLOAT DEFAULT 0.0'))
         conn.execute(text('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS "rating_count" INTEGER DEFAULT 0'))
+        # ✅ WHERE guard: only update rows that actually have a mismatch → prevents full-table scan
         conn.execute(
             text(
                 """
                 UPDATE teachers
                 SET immidiate_boss = COALESCE(immidiate_boss, immediate_boss),
                     immediate_boss = COALESCE(immediate_boss, immidiate_boss)
+                WHERE (immidiate_boss IS NULL AND immediate_boss IS NOT NULL)
+                   OR (immediate_boss IS NULL AND immidiate_boss IS NOT NULL)
                 """
             )
         )
