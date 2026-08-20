@@ -36,7 +36,7 @@ class SchoolProfileBase(BaseModel):
     principal_designation: Optional[str] = None
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
-    institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    institution_categories: Optional[List[str]] = Field(default=None, max_length=5)
     hostel: Optional[List[str]] = None
     computer_lab: Optional[FacilityStatusEnum] = None
     medical_faculties: Optional[str] = None
@@ -168,7 +168,7 @@ class SchoolProfileUpdate(BaseModel):
     principal_designation: Optional[str] = None
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
-    institution_categories: Optional[List[str]] = Field(default=None, max_length=3)
+    institution_categories: Optional[List[str]] = Field(default=None, max_length=5)
     hostel: Optional[List[str]] = None
     computer_lab: Optional[FacilityStatusEnum] = None
     medical_faculties: Optional[str] = None
