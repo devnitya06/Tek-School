@@ -1,5 +1,5 @@
 # dependencies.py
-from fastapi import Depends, HTTPException, status,UploadFile,File
+from fastapi import Depends, HTTPException, Request, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.core.security import decode_token
@@ -10,20 +10,26 @@ from typing import Optional
 from app.utils.s3 import upload_to_s3
 
 security = HTTPBearer()
-security_optional = HTTPBearer(auto_error=False)
+# NOTE: Do NOT use HTTPBearer(auto_error=False) for optional auth — it still raises 403
+# in some FastAPI/Starlette versions when no Authorization header is present.
+# Instead we read the header manually via Request so missing auth silently returns None.
 
 
 def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> Optional[User]:
     """
     Get current user from JWT if present; otherwise return None (public access).
-    Use for endpoints that allow both authenticated and anonymous access (e.g. public catalogue by school_id).
+    Use for endpoints that allow both authenticated and anonymous access.
+    No 403 is raised when Authorization header is absent — the endpoint stays public.
     """
-    if not credentials:
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if not auth_header or not auth_header.lower().startswith("bearer "):
         return None
-    token = credentials.credentials
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
     payload = decode_token(token)
     if not payload:
         return None

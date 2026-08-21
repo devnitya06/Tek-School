@@ -233,35 +233,34 @@ def claim_school(
 
 @router.get(
     "/school",
-    summary="Get school's own profile with followup and claim status",
+    summary="Get school profile (public or authenticated)",
     description=(
-        "Returns the authenticated school's profile, followup status, and claim status. "
-        "Schools created by admin can use this to see if their followup has been completed "
-        "and whether their account has been claimed (logged in with sent credentials). "
-        "Admin users can view any school profile by providing school_id parameter."
+        "Public: pass school_id to view any school's profile without authentication. "
+        "Authenticated school: returns own profile with followup and claim status. "
+        "Admin: pass school_id to view any school's profile."
     ),
 )
 def get_school_self(
     school_id: Optional[str] = Query(
-        None, description="Required when accessing as admin"
+        None, description="School ID — required for public access; optional for admin"
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)
-    ),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
-    GET /school/school  
-    Authenticated school sees its own profile + followup + claim data.
-    Admin can view any school by providing school_id.
+    GET /school/school
+    Public: school_id required, no auth needed.
+    Authenticated SCHOOL: sees own profile + followup + claim data.
+    Authenticated ADMIN: pass school_id to view any school.
     """
-    school = _get_school_for_admin_or_school(current_user, db, school_id)
+    school = _get_school_public_or_auth(current_user, db, school_id)
+    is_authenticated = current_user is not None
 
     account_type_val = None
     if school.account_type:
         account_type_val = school.account_type.value if hasattr(school.account_type, "value") else str(school.account_type)
 
-    return {
+    data = {
         "id": school.id,
         "user_id": school.user_id,
         "school_name": school.school_name,
@@ -293,16 +292,6 @@ def get_school_self(
         "account_type": account_type_val,
         "is_business_approved": school.is_business_approved,
         "is_promotion_pending": school.is_promotion_pending,
-        "created_by_admin": school.created_by_admin,
-        "followup_enabled": school.followup_enabled,
-        "followup_days": school.followup_days,
-        "followup_status": school.followup_status,
-        "followup_note": school.followup_note,
-        "followup_last_sent_at": school.followup_last_sent_at,
-        "followup_completed_at": school.followup_completed_at,
-        "claim_status": getattr(school, "claim_status", "unclaimed"),
-        "claim_completed_at": getattr(school, "claim_completed_at", None),
-        "default_settlement_channel": school.default_settlement_channel,
         "created_at": school.created_at,
         "institution_categories": school.institution_categories,
         "hostel": school.hostel,
@@ -328,9 +317,27 @@ def get_school_self(
         "transportation_facility": school.transportation_facility.value if hasattr(school.transportation_facility, "value") else school.transportation_facility,
         "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
         "teaching_method": school.teaching_method,
-        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token,
-        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token,
+        "default_settlement_channel": school.default_settlement_channel,
+        # QR tokens are internal — only expose to authenticated users
+        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if is_authenticated else None,
+        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
     }
+
+    # Extra fields only available to authenticated users (internal/admin data)
+    if is_authenticated:
+        data.update({
+            "created_by_admin": school.created_by_admin,
+            "followup_enabled": school.followup_enabled,
+            "followup_days": school.followup_days,
+            "followup_status": school.followup_status,
+            "followup_note": school.followup_note,
+            "followup_last_sent_at": school.followup_last_sent_at,
+            "followup_completed_at": school.followup_completed_at,
+            "claim_status": getattr(school, "claim_status", "unclaimed"),
+            "claim_completed_at": getattr(school, "claim_completed_at", None),
+        })
+
+    return data
 
 
 @router.get("/institution-class-summary")
@@ -1144,8 +1151,9 @@ async def get_school_profile(
         "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
         "teaching_method": school.teaching_method,
         "default_settlement_channel": school.default_settlement_channel,
-        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token,
-        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token,
+        # QR attendance tokens are internal secrets — only expose to authenticated users
+        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if current_user is not None else None,
+        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if current_user is not None else None,
         "rating_count": rating_count,
         "average_rating": average_rating,
     }
