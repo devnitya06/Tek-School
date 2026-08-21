@@ -874,6 +874,35 @@ def ensure_excellent_student_schema():
         )
 
 
+def ensure_digital_prospectus_schema():
+    """Ensure the digital_prospectus table exists. One PDF record per school."""
+    from app.models.school import DigitalProspectus
+    DigitalProspectus.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_class_fee_schema():
+    """
+    Migrate school_class_fees table to add hostel_fee and duration columns.
+    Idempotent — safe to run on every startup.
+    """
+    if not inspect_engine().has_table("school_class_fees"):
+        return  # will be created fresh by create_tables()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE school_class_fees "
+                "ADD COLUMN IF NOT EXISTS hostel_fee FLOAT NULL DEFAULT 0"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE school_class_fees "
+                "ADD COLUMN IF NOT EXISTS duration FLOAT NULL"
+            )
+        )
+
+
 # Dependency to get DB session
 # Retries on transient errors (recovery mode, restart, brief unavailability).
 # PostgreSQL WAL recovery can take 10-60s after an OOM-kill — we wait instead of 500-ing.

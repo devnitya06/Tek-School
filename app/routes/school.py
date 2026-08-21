@@ -74,6 +74,7 @@ from app.models.staff import ActionType, ResourceType
 from app.schemas.school import SchoolHolidayResponse, SchoolHolidaySelectRequest
 from app.models.admin import HolidayMaster
 from app.utils.school_settlement import record_settlement_entry
+from app.models.news import NewsSubmission
 
 router = APIRouter()
 
@@ -9386,6 +9387,8 @@ def create_school_class_fee(
         admission_fee=data.admission_fee if data.admission_fee is not None else 0,
         course_fee=data.course_fee if data.course_fee is not None else 0,
         transport_fee=data.transport_fee if data.transport_fee is not None else 0,
+        hostel_fee=data.hostel_fee if data.hostel_fee is not None else 0,
+        duration=data.duration,
     )
     db.add(obj)
     db.commit()
@@ -9518,11 +9521,13 @@ def update_school_class_fee(
             )
         obj.class_name = data.class_name.strip()
     update_data = data.model_dump(exclude_unset=True)
-    for field in ("admission_fee", "course_fee", "transport_fee"):
+    for field in ("admission_fee", "course_fee", "transport_fee", "hostel_fee"):
         if field in update_data:
             setattr(
                 obj, field, update_data[field] if update_data[field] is not None else 0
             )
+    if "duration" in update_data:
+        setattr(obj, "duration", update_data["duration"])
     db.commit()
     db.refresh(obj)
     return obj
@@ -12037,3 +12042,59 @@ def delete_achievement(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
     
     return None
+
+
+@router.get("/counts", status_code=status.HTTP_200_OK)
+def get_school_counts(
+    school_id: Optional[str] = Query(
+        None,
+        description="Required when accessing as admin/superadmin. Ignored for school role.",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+        )
+    ),
+):
+    """
+    Returns aggregate counts for a school:
+    - **total_support**: total Support Plus requests raised by the school.
+    - **total_inquiries**: total Business Inquiries received by the school.
+    - **total_news**: total News submissions linked to the school.
+
+    Access:
+    - **School**: no school_id param needed — uses own school.
+    - **Admin/SuperAdmin**: pass ?school_id= to target any school.
+    """
+    school = _get_school_for_admin_or_school(current_user, db, school_id)
+
+    total_support = (
+        db.query(func.count(SupportPlus.id))
+        .filter(SupportPlus.school_id == school.id)
+        .scalar()
+        or 0
+    )
+
+    # BusinessInquiry uses a ARRAY column school_ids; count rows where this school is included.
+    total_inquiries = (
+        db.query(func.count(BusinessInquiry.id))
+        .filter(BusinessInquiry.school_ids.any(school.id))
+        .scalar()
+        or 0
+    )
+
+    total_news = (
+        db.query(func.count(NewsSubmission.id))
+        .filter(NewsSubmission.school_id == school.id)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "school_id": school.id,
+        "school_name": school.school_name,
+        "total_support": total_support,
+        "total_inquiries": total_inquiries,
+        "total_news": total_news,
+    }

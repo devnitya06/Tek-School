@@ -351,6 +351,12 @@ class School(Base):
     achievements = relationship(
         "Achievement", back_populates="school", cascade="all, delete-orphan"
     )
+    digital_prospectus = relationship(
+        "DigitalProspectus",
+        back_populates="school",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1237,7 +1243,7 @@ class SchoolInfo(Base):
 
 
 class SchoolClassFee(Base):
-    """Per-school class fee: class name, admission fee, course fee, transport fee. Super admin and school can CRUD."""
+    """Per-school class fee: class name, admission fee, course fee, transport fee, hostel fee, duration. Super admin and school can CRUD."""
 
     __tablename__ = "school_class_fees"
 
@@ -1249,6 +1255,8 @@ class SchoolClassFee(Base):
     admission_fee = Column(Float, nullable=True, default=0)
     course_fee = Column(Float, nullable=True, default=0)
     transport_fee = Column(Float, nullable=True, default=0)
+    hostel_fee = Column(Float, nullable=True, default=0)
+    duration = Column(Float, nullable=True)  # in years, min 0.1
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -1437,3 +1445,27 @@ class SchoolHoliday(Base):
     created_at = Column(DateTime, default=func.now())
 
     holiday = relationship("HolidayMaster")
+
+
+class DigitalProspectus(Base):
+    """Digital Prospectus: one PDF per school, uploaded by school/admin."""
+
+    __tablename__ = "digital_prospectus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(
+        String,
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    file_url = Column(String, nullable=False)           # S3 public URL
+    file_name = Column(String(255), nullable=True)      # original filename
+    file_size = Column(Integer, nullable=True)          # size in bytes
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    school = relationship("School", back_populates="digital_prospectus")

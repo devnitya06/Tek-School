@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news, placement
+from app.routes import prospectus as prospectus_routes
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
@@ -32,6 +33,8 @@ from app.db.session import (
     ensure_studentstatus_pending_enum_value,
     ensure_school_facility_enum_columns,
     ensure_excellent_student_schema,
+    ensure_digital_prospectus_schema,
+    ensure_class_fee_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -67,6 +70,7 @@ app.include_router(assignment_routes, tags=["Assignments"])
 app.include_router(tuition_lesson_plan_router)
 app.include_router(tuition_teaching_setup_router)
 app.include_router(tuition_class_session_router)
+app.include_router(prospectus_routes.router)
 
 @app.on_event("startup")
 def on_startup():
@@ -99,6 +103,8 @@ def on_startup():
         ensure_school_followup_columns()
         ensure_school_claim_columns()
         ensure_excellent_student_schema()
+        ensure_digital_prospectus_schema()
+        ensure_class_fee_schema()
         create_tables()
         ensure_assignment_tables()
         ensure_academic_results_tables()

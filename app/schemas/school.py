@@ -916,13 +916,15 @@ class SchoolInfoResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# SchoolClassFee: under school - class name, admission fee, course fee, transport fee
+# SchoolClassFee: under school - class name, admission fee, course fee, transport fee, hostel fee, duration
 class SchoolClassFeeCreate(BaseModel):
     school_id: Optional[str] = None  # Required for super admin; ignored for school
     class_name: str
     admission_fee: Optional[float] = Field(None, ge=0)
     course_fee: Optional[float] = Field(None, ge=0)
     transport_fee: Optional[float] = Field(None, ge=0)
+    hostel_fee: Optional[float] = Field(None, ge=0)
+    duration: Optional[float] = Field(None, ge=0.1, description="Duration in years (min 0.1)")
 
 
 class SchoolClassFeeUpdate(BaseModel):
@@ -930,6 +932,8 @@ class SchoolClassFeeUpdate(BaseModel):
     admission_fee: Optional[float] = Field(None, ge=0)
     course_fee: Optional[float] = Field(None, ge=0)
     transport_fee: Optional[float] = Field(None, ge=0)
+    hostel_fee: Optional[float] = Field(None, ge=0)
+    duration: Optional[float] = Field(None, ge=0.1, description="Duration in years (min 0.1)")
 
 
 class SchoolClassFeeResponse(BaseModel):
@@ -939,6 +943,8 @@ class SchoolClassFeeResponse(BaseModel):
     admission_fee: Optional[float] = None
     course_fee: Optional[float] = None
     transport_fee: Optional[float] = None
+    hostel_fee: Optional[float] = None
+    duration: Optional[float] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
