@@ -76,12 +76,12 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-      - ./logs:/app/logs   # ✅ logs survive container restarts
+      - ./logs:/app/logs # ✅ logs survive container restarts
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"    # each docker log file max 10MB
-        max-file: "5"      # keep last 5 files = 50MB max
+        max-size: "10m" # each docker log file max 10MB
+        max-file: "5" # keep last 5 files = 50MB max
     deploy:
       resources:
         limits:
@@ -100,7 +100,7 @@ services:
       - redis
       - db
     volumes:
-      - ./logs:/app/logs   # ✅ share same logs folder as web
+      - ./logs:/app/logs # ✅ share same logs folder as web
     logging:
       driver: "json-file"
       options:
@@ -140,26 +140,19 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M  # small task queue for 2 daily tasks — 128M is plenty
+          memory: 128M # small task queue for 2 daily tasks — 128M is plenty
 
   db:
     image: postgres:15
     container_name: postgres-db
     restart: always
-    shm_size: 256m  # 25% of shared_buffers=256MB — correct ratio
+    shm_size: 256m # 25% of shared_buffers=256MB — correct ratio
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
       POSTGRES_INITDB_ARGS: >-
-        -c max_connections=50
-        -c shared_buffers=256MB
-        -c effective_cache_size=1536MB
-        -c maintenance_work_mem=64MB
-        -c work_mem=4MB
-        -c wal_buffers=16MB
-        -c checkpoint_completion_target=0.9
-        -c log_min_duration_statement=1000
+        -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -172,7 +165,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G  # 8GB server — 2GB for PostgreSQL leaves 6GB for everything else
+          memory: 512M # 128MB shared_buffers + 20 connections * ~5MB each = ~230MB actual. 512M gives safe headroom.
 
 volumes:
   postgres_data:

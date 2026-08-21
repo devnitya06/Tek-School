@@ -11,11 +11,11 @@ SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=3,               # 3 persistent connections always ready
-    max_overflow=5,            # 5 extra burst connections if needed → 8 total max
-    pool_recycle=3600,         # Recycle connections every 1 hour to avoid stale connections
+    pool_size=2,               # 2 persistent idle connections (1-5 users needs no more)
+    max_overflow=3,            # 3 extra burst connections → 5 total max (well within max_connections=20)
+    pool_recycle=1800,         # Recycle every 30 min (was 1hr — catches stale connections sooner)
     pool_timeout=20,           # Raise error after 20s if no connection available
-    pool_reset_on_return='rollback',  # Reset connections on return
+    pool_reset_on_return='rollback',
     echo=False,
     connect_args={
         "connect_timeout": 10,
