@@ -90,6 +90,21 @@ def timer():
     return time.perf_counter()
 
 
+def _mask_public_email(email: Optional[str]) -> Optional[str]:
+    if not email or "@" not in email:
+        return email
+    local_part, domain = email.split("@", 1)
+    mask_length = max(1, int(len(local_part) * 0.6))
+    return f"{'*' * mask_length}{local_part[mask_length:]}@{domain}"
+
+
+def _mask_public_phone(phone: Optional[str]) -> Optional[str]:
+    if not phone:
+        return phone
+    mask_length = max(1, len(phone) // 2)
+    return f"{'*' * mask_length}{phone[mask_length:]}"
+
+
 def _slugify_batch_name(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
     return slug or "batch"
@@ -277,16 +292,16 @@ def get_school_self(
         "district": school.district,
         "state": school.state,
         "country": school.country,
-        "school_email": school.school_email,
-        "school_phone": school.school_phone,
-        "school_alt_phone": school.school_alt_phone,
+        "school_email": school.school_email if is_authenticated else _mask_public_email(school.school_email),
+        "school_phone": school.school_phone if is_authenticated else _mask_public_phone(school.school_phone),
+        "school_alt_phone": school.school_alt_phone if is_authenticated else _mask_public_phone(school.school_alt_phone),
         "school_website": school.school_website,
         "school_other_email": school.school_other_email,
         "school_location": school.school_location,
         "principal_name": school.principal_name,
         "principal_designation": school.principal_designation,
-        "principal_email": school.principal_email,
-        "principal_phone": school.principal_phone,
+        "principal_email": school.principal_email if is_authenticated else _mask_public_email(school.principal_email),
+        "principal_phone": school.principal_phone if is_authenticated else _mask_public_phone(school.principal_phone),
         "is_active": school.is_active,
         "is_verified": school.is_verified,
         "account_type": account_type_val,
