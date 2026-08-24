@@ -318,6 +318,9 @@ def get_school_self(
         "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
         "teaching_method": school.teaching_method,
         "default_settlement_channel": school.default_settlement_channel,
+        "created_by_admin": school.created_by_admin,
+        "claim_status": getattr(school, "claim_status", "unclaimed"),
+        "claim_completed_at": getattr(school, "claim_completed_at", None),
         # QR tokens are internal — only expose to authenticated users
         "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if is_authenticated else None,
         "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
@@ -333,8 +336,6 @@ def get_school_self(
             "followup_note": school.followup_note,
             "followup_last_sent_at": school.followup_last_sent_at,
             "followup_completed_at": school.followup_completed_at,
-            "claim_status": getattr(school, "claim_status", "unclaimed"),
-            "claim_completed_at": getattr(school, "claim_completed_at", None),
         })
 
     return data
