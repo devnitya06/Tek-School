@@ -894,8 +894,9 @@ async def add_photo_gallery_images(
     if errors and not uploaded_urls:
         raise HTTPException(status_code=400, detail="; ".join(errors))
 
-    existing_gallery = list(school.photo_gallery) if school.photo_gallery else []
-    school.photo_gallery = list(dict.fromkeys(existing_gallery + uploaded_urls))
+    if not group_name:
+        existing_gallery = list(school.photo_gallery) if school.photo_gallery else []
+        school.photo_gallery = list(dict.fromkeys(existing_gallery + uploaded_urls))
 
     if group_name:
         existing_groups = school.photo_gallery_batches or []
@@ -1048,13 +1049,6 @@ async def get_photo_gallery(
     """Get photo gallery images and named gallery groups for the school."""
     school = _get_school_public_or_auth(current_user, db, school_id)
 
-    gallery_list = list(school.photo_gallery) if school.photo_gallery else []
-    total_images = len(gallery_list)
-    total_pages = (total_images + page_size - 1) // page_size if total_images > 0 else 0
-    start_index = (page - 1) * page_size
-    end_index = start_index + page_size
-    paginated_gallery = gallery_list[start_index:end_index]
-
     groups = school.photo_gallery_batches or []
     if not isinstance(groups, list):
         groups = []
@@ -1072,6 +1066,22 @@ async def get_photo_gallery(
                 "photos": list(dict.fromkeys(photos)),
             }
         )
+
+    grouped_photo_urls = {
+        photo_url
+        for group in normalized_groups
+        for photo_url in group["photos"]
+    }
+    gallery_list = [
+        photo_url
+        for photo_url in (list(school.photo_gallery) if school.photo_gallery else [])
+        if photo_url not in grouped_photo_urls
+    ]
+    total_images = len(gallery_list)
+    total_pages = (total_images + page_size - 1) // page_size if total_images > 0 else 0
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    paginated_gallery = gallery_list[start_index:end_index]
 
     return {
         "photo_gallery": paginated_gallery,
