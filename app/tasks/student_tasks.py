@@ -57,6 +57,7 @@ def check_student_renewals(self):
     except Exception as e:
         db.rollback()
         logger.error(f"[check_student_renewals] ❌ CRASH — {type(e).__name__}: {e}", exc_info=True)
+        raise
 
     finally:
         db.close()

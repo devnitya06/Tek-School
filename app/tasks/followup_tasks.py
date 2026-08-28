@@ -15,6 +15,7 @@ CPU optimisations applied:
 
 import time as _time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.orm import joinedload
@@ -30,6 +31,7 @@ FOLLOWUP_DATES = {7, 14, 22, 28}
 # Seconds to sleep between each email send.
 # Spreads bcrypt CPU load over time instead of hitting it in a tight loop.
 _EMAIL_SEND_DELAY = 0.3
+_FOLLOWUP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 @shared_task(
@@ -50,15 +52,16 @@ def send_monthly_followup_emails(self):
       - followup_enabled is True
       - followup_status is 'pending' (not stopped / not completed)
     """
-    today = datetime.now(timezone.utc)
-    if today.day not in FOLLOWUP_DATES:
+    now_utc = datetime.now(timezone.utc)
+    local_today = now_utc.astimezone(_FOLLOWUP_TIMEZONE)
+    if local_today.day not in FOLLOWUP_DATES:
         logger.info(
-            f"[followup_emails] Today is {today.day}th — not a send date. Skipping."
+            f"[followup_emails] Today is {local_today.day}th IST — not a send date. Skipping."
         )
         return
 
     logger.info(
-        f"[followup_emails] Today is {today.day}th — starting monthly followup emails..."
+        f"[followup_emails] Today is {local_today.day}th IST — starting monthly followup emails..."
     )
 
     db = SessionLocal()
@@ -92,8 +95,6 @@ def send_monthly_followup_emails(self):
                 # bcrypt is CPU-heavy (~100 ms each). Only called after all
                 # guards pass, then spread out by _EMAIL_SEND_DELAY below.
                 password = generate_password(prefix=school.school_name)
-                school.user.hashed_password = get_password_hash(password)
-                school.user.is_verified = True
 
                 send_dynamic_email(
                     context_key="credential.html",
@@ -109,7 +110,10 @@ def send_monthly_followup_emails(self):
                     db=db,
                 )
 
-                school.followup_last_sent_at = today
+                with db.begin_nested():
+                    school.user.hashed_password = get_password_hash(password)
+                    school.user.is_verified = True
+                    school.followup_last_sent_at = now_utc
                 sent_count += 1
                 logger.info(
                     f"[followup_emails] ✅ Sent to: {school.school_name} ({school.school_email})"
