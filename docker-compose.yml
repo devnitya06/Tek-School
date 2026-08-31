@@ -165,7 +165,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M # 128MB shared_buffers + 20 connections * ~5MB each = ~230MB actual. 512M gives safe headroom.
+          memory: 1G # Increased to provide more headroom and prevent OOM killer crashes under PostgreSQL load.
 
 volumes:
   postgres_data:
