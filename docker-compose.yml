@@ -109,7 +109,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
 
   celery_beat:
     build: .
@@ -129,7 +129,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   redis:
     image: redis:7
