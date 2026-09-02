@@ -1,8 +1,8 @@
 """
 Monthly auto follow-up task.
 
-Hardcoded send dates: 7, 14, 22, 28 of every month.
-Runs daily at 3:30 AM IST; only fires on those four dates.
+Hardcoded send dates: 1 and 15 of every month.
+Runs daily at 5:00 AM IST; only fires on those two dates.
 
 CPU optimisations applied:
   - autoretry_for removed       — prevents retry storms when email fails
@@ -26,7 +26,7 @@ from app.core.security import get_password_hash
 from app.core.logger import logger
 
 # Fixed monthly send dates
-FOLLOWUP_DATES = {7, 14, 22, 28}
+FOLLOWUP_DATES = {1, 15}
 
 # Seconds to sleep between each email send.
 # Spreads bcrypt CPU load over time instead of hitting it in a tight loop.
@@ -47,7 +47,7 @@ _FOLLOWUP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 )
 def send_monthly_followup_emails(self):
     """
-    Runs on the 7th, 14th, 22nd, and 28th of each month (via crontab in celery_app.py).
+    Runs on the 1st and 15th of each month (via crontab in celery_app.py).
     Sends a follow-up credential email to all schools where:
       - followup_enabled is True
       - followup_status is 'pending' (not stopped / not completed)

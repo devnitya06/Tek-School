@@ -31,15 +31,15 @@ celery_app.conf.task_soft_time_limit = 6900     # 115 min graceful warning
 # ─────────────────────────────────────────────────────────────────────────────
 
 celery_app.conf.beat_schedule = {
-    # 2:00 AM IST — mark expired student subscriptions inactive (bulk UPDATE, cheap)
+    # 1:00 AM IST — mark expired student subscriptions inactive (bulk UPDATE, cheap)
     "check-student-renewal-everyday": {
         "task": "app.tasks.student_tasks.check_student_renewals",
-        "schedule": crontab(hour=2, minute=0),
+        "schedule": crontab(hour=1, minute=0),
     },
-    # 3:30 AM IST — staggered so both tasks never hit the DB simultaneously.
-    # Internally skips non-send dates (7th, 14th, 22nd, 28th only).
+    # 5:00 AM IST — scheduled within the 1 AM to 7 AM maintenance window.
+    # Internally skips non-send dates (1st and 15th only).
     "send-monthly-followup-emails": {
         "task": "app.tasks.followup_tasks.send_monthly_followup_emails",
-        "schedule": crontab(hour=3, minute=30),
+        "schedule": crontab(hour=5, minute=0),
     },
 }

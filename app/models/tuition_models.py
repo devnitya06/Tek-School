@@ -426,6 +426,38 @@ class TuitionLessonTopic(Base):
     )
 
 
+class StudentTopicProgressStatus(str, Enum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class StudentTuitionTopicProgress(Base):
+    __tablename__ = "student_tuition_topic_progress"
+
+    id = Column(String, primary_key=True, default=lambda: generate_short_id("STP"))
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
+    self_signed_student_id = Column(Integer, ForeignKey("self_signed_students.id"), nullable=True)
+    student_type = Column(String(30), nullable=False, default="student")
+    topic_id = Column(String, ForeignKey("tuition_lesson_topics.id"), nullable=False)
+    status = Column(SQLEnum(StudentTopicProgressStatus), nullable=False, default=StudentTopicProgressStatus.NOT_STARTED)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "topic_id", name="uq_student_topic_progress"),
+        UniqueConstraint("self_signed_student_id", "topic_id", name="uq_self_signed_student_topic_progress"),
+        Index("ix_student_topic_progress_student", "student_id"),
+        Index("ix_student_topic_progress_self_signed", "self_signed_student_id"),
+        Index("ix_student_topic_progress_topic", "topic_id"),
+        Index("ix_student_topic_progress_status", "status"),
+    )
+
+    topic = relationship("TuitionLessonTopic")
+
+
 class TuitionTopicFile(Base):
     __tablename__ = "tuition_topic_files"
 

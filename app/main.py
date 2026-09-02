@@ -6,7 +6,9 @@ from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
 from app.routes.tuition.class_sessions import router as tuition_class_session_router
+from app.routes.tuition.student import router as tuition_student_router
 from app.core.config import settings
+from app.utils.cpu_monitor import start_cpu_monitor
 from app.db.session import (
     create_tables,
     add_missing_columns,
@@ -70,6 +72,7 @@ app.include_router(assignment_routes, tags=["Assignments"])
 app.include_router(tuition_lesson_plan_router)
 app.include_router(tuition_teaching_setup_router)
 app.include_router(tuition_class_session_router)
+app.include_router(tuition_student_router)
 app.include_router(prospectus_routes.router)
 
 @app.on_event("startup")
@@ -120,6 +123,8 @@ def on_startup():
             add_missing_columns()
         except Exception as e:
             print(f"Error setting up database schema: {str(e)}")
+
+    start_cpu_monitor(threshold_percent=70.0, interval_seconds=30)
 
 @app.get("/")
 def root():
