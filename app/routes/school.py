@@ -271,6 +271,21 @@ def get_school_self(
     school = _get_school_public_or_auth(current_user, db, school_id)
     is_authenticated = current_user is not None
 
+    rating_stats = (
+        db.query(
+            func.count(SchoolRating.id).label("rating_count"),
+            func.avg(SchoolRating.rating).label("average_rating"),
+        )
+        .filter(SchoolRating.school_id == school.id)
+        .first()
+    )
+    rating_count = int(rating_stats.rating_count or 0) if rating_stats else 0
+    average_rating = (
+        float(rating_stats.average_rating)
+        if rating_stats and rating_stats.average_rating is not None
+        else None
+    )
+
     account_type_val = None
     if school.account_type:
         account_type_val = school.account_type.value if hasattr(school.account_type, "value") else str(school.account_type)
@@ -339,6 +354,8 @@ def get_school_self(
         # QR tokens are internal — only expose to authenticated users
         "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if is_authenticated else None,
         "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
+        "rating_count": rating_count,
+        "average_rating": average_rating,
     }
 
     # Extra fields only available to authenticated users (internal/admin data)

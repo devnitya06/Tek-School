@@ -87,6 +87,30 @@ from app.schemas.admin import HolidayMasterResponse
 router = APIRouter()
 
 
+def normalize_enum_values(enum_cls, values: Optional[List[str]]) -> List[str]:
+    """Normalize incoming enum query values into exact database string values."""
+    if not values:
+        return []
+
+    normalized: List[str] = []
+    for value in values:
+        if value is None:
+            continue
+        cleaned = str(value).strip().lower()
+        if not cleaned:
+            continue
+        try:
+            normalized.append(enum_cls(cleaned).value)
+        except ValueError as exc:
+            valid = ", ".join(member.value for member in enum_cls)
+            raise ValueError(f"Invalid value. Use: {valid}. {exc}") from exc
+    return normalized
+
+
+def normalize_school_board_values(values: Optional[List[str]]) -> List[str]:
+    return normalize_enum_values(SchoolBoard, values)
+
+
 def _ensure_admin_staff_permission(
     current_user: User,
     db: Session,
@@ -949,29 +973,23 @@ def list_all_schools(
         )
     if school_board:
         try:
-            boards = [
-                SchoolBoard(v.strip().lower()) for v in school_board if v and v.strip()
-            ]
-            if boards:
-                query = query.filter(School.school_board.in_(boards))
+            board_values = normalize_school_board_values(school_board)
+            if board_values:
+                query = query.filter(func.lower(cast(School.school_board, String)).in_(board_values))
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid school_board. Use: cbse, icse, stateboard, ib, other. {e}",
+                detail=str(e),
             )
     if school_medium:
         try:
-            mediums = [
-                SchoolMedium(v.strip().lower())
-                for v in school_medium
-                if v and v.strip()
-            ]
-            if mediums:
-                query = query.filter(School.school_medium.in_(mediums))
+            medium_values = normalize_enum_values(SchoolMedium, school_medium)
+            if medium_values:
+                query = query.filter(func.lower(cast(School.school_medium, String)).in_(medium_values))
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid school_medium. Use: english, hindi, bilingual, other. {e}",
+                detail=str(e),
             )
     if due_installment_type:
         conds = [
