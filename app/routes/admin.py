@@ -8,6 +8,7 @@ from fastapi import (
     status,
     Query,
 )
+import json
 from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.utils.s3 import upload_to_s3
@@ -109,6 +110,31 @@ def normalize_enum_values(enum_cls, values: Optional[List[str]]) -> List[str]:
 
 def normalize_school_board_values(values: Optional[List[str]]) -> List[str]:
     return normalize_enum_values(SchoolBoard, values)
+
+
+def normalize_array_query_values(values: Optional[List[str]]) -> List[str]:
+    """Normalize repeated or JSON-array query values into a flat string list."""
+    if not values:
+        return []
+
+    normalized: List[str] = []
+    for value in values:
+        if value is None:
+            continue
+        cleaned = str(value).strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith("["):
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Value must be a valid JSON array") from exc
+            if not isinstance(parsed, list):
+                raise ValueError("Value must be a JSON array")
+            normalized.extend(str(item).strip() for item in parsed if str(item).strip())
+        else:
+            normalized.append(cleaned)
+    return normalized
 
 
 def _ensure_admin_staff_permission(
@@ -852,6 +878,10 @@ def list_all_schools(
     account_type: Optional[str] = Query(
         None, description="Filter by type: 'business' or 'listing'"
     ),
+    school_type: Optional[List[str]] = Query(
+        None,
+        description="Filter by school type (multiple)",
+    ),
     is_business_approved: Optional[bool] = Query(
         None, description="Filter by is_business_approved (true/false)"
     ),
@@ -889,7 +919,7 @@ def list_all_schools(
     ),
     available_classes: Optional[List[str]] = Query(
         None,
-        description="Filter by available_classes (multiple, ARRAY overlap). E.g. ?available_classes=10&available_classes=12",
+        description="Filter by available_classes (JSON array or repeated values, ARRAY overlap). E.g. [\"Nursery\", \"LKG\", \"UKG\", \"1st\"]",
     ),
     is_verified: Optional[bool] = Query(
         None, description="Filter by is_verified (true/false)"
@@ -963,6 +993,18 @@ def list_all_schools(
             raise HTTPException(
                 status_code=400, detail="account_type must be 'business' or 'listing'"
             )
+    if school_type:
+        try:
+            school_type_values = normalize_enum_values(SchoolType, school_type)
+            if school_type_values:
+                query = query.filter(
+                    func.lower(cast(School.school_type, String)).in_(school_type_values)
+                )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            )
     if is_business_approved is not None:
         query = query.filter(School.is_business_approved == is_business_approved)
     if state:
@@ -1026,9 +1068,12 @@ def list_all_schools(
         if values:
             query = query.filter(School.hostel.overlap(cast(values, ARRAY(String))))
     if available_classes:
-        values = [v.strip() for v in available_classes if v and v.strip()]
-        if values:
-            query = query.filter(School.available_classes.overlap(cast(values, ARRAY(String))))
+        try:
+            values = normalize_array_query_values(available_classes)
+            if values:
+                query = query.filter(School.available_classes.overlap(cast(values, ARRAY(String))))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if is_verified is not None:
         query = query.filter(School.is_verified == is_verified)
     if computer_lab:
