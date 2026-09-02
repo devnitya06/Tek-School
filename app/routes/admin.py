@@ -876,8 +876,8 @@ def list_all_schools(
         None,
         description="Filter by teaching_method (multiple, JSON field contains any value)",
     ),
-    transportation_facility: Optional[bool] = Query(
-        None, description="Filter by transportation_facility (true/false)"
+    transportation_facility: Optional[str] = Query(
+        None, description="Filter by transportation_facility. Values: yes, no, not_applicable"
     ),
     institution_categories: Optional[List[str]] = Query(
         None,
@@ -968,9 +968,9 @@ def list_all_schools(
     if state:
         query = query.filter(School.state.ilike(f"%{state}%"))
     if district:
-        query = query.filter(
-            School.district.in_([d.strip() for d in district if d and d.strip()])
-        )
+        district_values = [d.strip().lower() for d in district if d and d.strip()]
+        if district_values:
+            query = query.filter(func.lower(School.district).in_(district_values))
     if school_board:
         try:
             board_values = normalize_school_board_values(school_board)
@@ -1007,8 +1007,16 @@ def list_all_schools(
         ]
         if conds:
             query = query.filter(or_(*conds))
-    if transportation_facility is not None:
-        query = query.filter(School.transportation_facility == transportation_facility)
+    if transportation_facility:
+        try:
+            query = query.filter(
+                School.transportation_facility == YesNoNotApplicableEnum(transportation_facility.strip().lower())
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid transportation_facility value. Use: yes, no, not_applicable",
+            )
     if institution_categories:
         values = [v.strip() for v in institution_categories if v and v.strip()]
         if values:
