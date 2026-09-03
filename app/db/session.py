@@ -1,10 +1,12 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 import time
+
+from app.core.logger import logger
 
 
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
@@ -33,6 +35,26 @@ engine = create_engine(
         "application_name": "tekschool_app"
     }
 )
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _start_query_timer(conn, cursor, statement, parameters, context, executemany):
+    conn.info.setdefault("query_start_time", []).append(time.perf_counter())
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _log_slow_query(conn, cursor, statement, parameters, context, executemany):
+    start_times = conn.info.get("query_start_time")
+    if not start_times:
+        return
+    elapsed_ms = (time.perf_counter() - start_times.pop()) * 1000
+    if elapsed_ms >= settings.SLOW_QUERY_THRESHOLD_MS:
+        normalized_statement = " ".join(statement.split())
+        logger.warning(
+            "[SLOW_QUERY] duration_ms=%.1f statement=%s",
+            elapsed_ms,
+            normalized_statement[:2000],
+        )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

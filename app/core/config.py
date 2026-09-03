@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SKIP_STARTUP_SCHEMA: bool = False
     RUN_SCHEMA_SYNC: bool = False
+    SLOW_QUERY_THRESHOLD_MS: int = 500
     
     #Email
     MAIL_USERNAME: str
