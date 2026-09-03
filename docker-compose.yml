@@ -165,7 +165,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G # Increased to provide more headroom and prevent OOM killer crashes under PostgreSQL load.
+          memory: 2G # Increased to provide more headroom and prevent OOM killer crashes under PostgreSQL load.
 
 volumes:
   postgres_data:
