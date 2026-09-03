@@ -53,7 +53,7 @@ class Teacher(Base):
     is_active_hr_service = Column(Boolean, nullable=True, default=False)
     created_at = Column(DateTime, default=func.now())
     # Foreign keys
-    school_id = Column(String, ForeignKey("schools.id"), nullable=False)
+    school_id = Column(String, ForeignKey("schools.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, default=True)
 

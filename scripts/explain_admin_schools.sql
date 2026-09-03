@@ -12,6 +12,19 @@ FROM schools AS s
 ORDER BY s.created_at DESC, s.id ASC
 LIMIT 20 OFFSET 0;
 
+-- Verify the teacher join key and planner statistics. For a very small
+-- teachers table PostgreSQL may still prefer a sequential scan; that can be
+-- cheaper than an index scan and does not mean the index is unusable.
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'teachers'
+  AND indexname = 'idx_teachers_school_id';
+
+EXPLAIN (ANALYZE, BUFFERS, VERBOSE)
+SELECT t.*
+FROM teachers AS t
+WHERE t.school_id = 'SCH-132945';
+
 -- Count query and a representative filtered list query
 EXPLAIN (ANALYZE, BUFFERS, VERBOSE)
 SELECT count(*)

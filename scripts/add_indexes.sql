@@ -63,6 +63,10 @@ CREATE INDEX IF NOT EXISTS idx_teachers_school_id  ON teachers (school_id);
 CREATE INDEX IF NOT EXISTS idx_teachers_user_id    ON teachers (user_id);
 CREATE INDEX IF NOT EXISTS idx_staff_school_id     ON staff (school_id);
 
+-- Refresh planner statistics after index creation/data changes.
+ANALYZE schools;
+ANALYZE teachers;
+
 -- attendances: reports always filter by school + date
 CREATE INDEX IF NOT EXISTS idx_attendances_school_date ON attendances (school_id, date);
 
