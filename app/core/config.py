@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     
     #Database
     DATABASE_URL: str
+    SKIP_STARTUP_SCHEMA: bool = False
+    RUN_SCHEMA_SYNC: bool = False
     
     #Email
     MAIL_USERNAME: str
