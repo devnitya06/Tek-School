@@ -34,7 +34,8 @@ class Settings(BaseSettings):
 
     #Redis
     REDIS_URL: Optional[str] = None
-
+    celery_broker_url: Optional[str] = None
+    celery_result_backend: Optional[str] = None
     # Frontend / verification links
     FRONTEND_BASE_URL: str = "https://testapi.vidyawings.com"
     PRODUCTION_FRONTEND_HOSTS: list[str] = ["school.beingideal.com"]
