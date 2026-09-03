@@ -62,6 +62,7 @@
 # volumes:
 #   postgres_data:
 
+
 services:
   web:
     build: .
@@ -69,6 +70,8 @@ services:
     restart: always
     ports:
       - "8001:8001"
+    environment:
+      - TZ=Asia/Kolkata
     env_file:
       - .env
     depends_on:
@@ -94,6 +97,8 @@ services:
     container_name: celery-worker
     restart: always
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1
+    environment:
+      - TZ=Asia/Kolkata
     env_file:
       - .env
     depends_on:
@@ -116,6 +121,8 @@ services:
     container_name: celery-beat
     restart: always
     command: celery -A app.core.celery_app beat --loglevel=info
+    environment:
+      - TZ=Asia/Kolkata
     env_file:
       - .env
     depends_on:
@@ -148,17 +155,18 @@ services:
     restart: always
     shm_size: 256m # 25% of shared_buffers=256MB — correct ratio
     environment:
+      TZ: Asia/Kolkata
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
       POSTGRES_INITDB_ARGS: >-
-        -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200
+        -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "postgres", "-d", "tek_school" ]
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "tek_school"]
       interval: 10s
       timeout: 5s
       retries: 5
