@@ -6,6 +6,17 @@
 
 -- schools: most APIs filter/JOIN on these
 CREATE INDEX IF NOT EXISTS idx_schools_user_id          ON schools (user_id);
+-- Stable ordering for /admin/schools/ ORDER BY created_at DESC OFFSET/LIMIT
+CREATE INDEX IF NOT EXISTS idx_schools_pagination       ON schools (created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_schools_district_lower   ON schools (lower(district));
+CREATE INDEX IF NOT EXISTS idx_schools_board_lower      ON schools (lower(school_board::text));
+CREATE INDEX IF NOT EXISTS idx_schools_medium_lower     ON schools (lower(school_medium::text));
+CREATE INDEX IF NOT EXISTS idx_schools_institution_categories_gin
+    ON schools USING GIN (institution_categories);
+CREATE INDEX IF NOT EXISTS idx_schools_hostel_gin
+    ON schools USING GIN (hostel);
+CREATE INDEX IF NOT EXISTS idx_schools_available_classes_gin
+    ON schools USING GIN (available_classes);
 CREATE INDEX IF NOT EXISTS idx_schools_followup_enabled ON schools (followup_enabled) WHERE followup_enabled = TRUE;
 CREATE INDEX IF NOT EXISTS idx_schools_followup_status  ON schools (followup_status);
 CREATE INDEX IF NOT EXISTS idx_schools_claim_status     ON schools (claim_status);

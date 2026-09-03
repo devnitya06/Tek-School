@@ -18,6 +18,12 @@ from app.core.logger import logger
 
 INDEXES_TO_CREATE = [
     {
+        "table": "schools",
+        "index_name": "idx_schools_pagination",
+        "columns": "(created_at DESC, id)",
+        "description": "Stable ORDER BY created_at DESC plus id tie-breaker for admin pagination",
+    },
+    {
         "table": "students",
         "index_name": "idx_students_status_expiry_date_status",
         "columns": "(status_expiry_date, status)",

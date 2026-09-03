@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -7,6 +8,16 @@ import time
 
 
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+
+
+def _async_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql+asyncpg://"):
+        return database_url
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    raise ValueError("AsyncSession requires a PostgreSQL DATABASE_URL")
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
@@ -24,6 +35,8 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+AsyncSessionLocal = None
 
 Base = declarative_base()
 
@@ -931,3 +944,30 @@ def get_db():
                 raise  # non-recovery errors propagate immediately
     # All retries exhausted
     raise last_exc or RuntimeError("PostgreSQL unavailable after retries")
+
+
+async def get_async_db():
+    """Yield one short-lived async session per request."""
+    global AsyncSessionLocal
+    if AsyncSessionLocal is None:
+        async_engine = create_async_engine(
+            _async_database_url(SQLALCHEMY_DATABASE_URL),
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=3,
+            pool_recycle=1800,
+            pool_timeout=20,
+            pool_reset_on_return="rollback",
+            connect_args={
+                "command_timeout": 30,
+                "server_settings": {"application_name": "tekschool_async_app"},
+            },
+        )
+        AsyncSessionLocal = async_sessionmaker(
+            bind=async_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    async with AsyncSessionLocal() as db:
+        yield db

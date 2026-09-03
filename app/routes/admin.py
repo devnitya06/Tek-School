@@ -10,7 +10,8 @@ from fastapi import (
 )
 import json
 from sqlalchemy.orm import Session, joinedload
-from app.db.session import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db, get_async_db
 from app.utils.s3 import upload_to_s3
 from app.models.admin import *
 from app.models.school import (
@@ -53,7 +54,7 @@ from app.utils.permission import (
     normalize_staff_permissions,
 )
 from app.schemas.users import UserRole
-from sqlalchemy import func, cast, String, case, or_, and_
+from sqlalchemy import func, cast, String, case, or_, and_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from collections import defaultdict
 from calendar import monthrange
@@ -865,7 +866,7 @@ def get_admin_platform_summary(
 
 
 @router.get("/schools/")
-def list_all_schools(
+async def list_all_schools(
     pagination: PaginationParams = Depends(),
     school_id: Optional[str] = Query(
         None,
@@ -974,21 +975,21 @@ def list_all_schools(
     to_date: Optional[str] = Query(
         None, description="Filter by created_at to (YYYY-MM-DD)"
     ),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all schools with filters. Public endpoint - no authentication required. Pass school_id to get a specific school."""
-    query = db.query(School)
+    query = select(School)
     filter_id = school_id or id
     if filter_id:
-        query = query.filter(School.id == filter_id)
+        query = query.where(School.id == filter_id)
     if school_name:
-        query = query.filter(School.school_name.ilike(f"%{school_name}%"))
+        query = query.where(School.school_name.ilike(f"%{school_name}%"))
     if account_type:
         at = account_type.lower()
         if at == "business":
-            query = query.filter(School.account_type == SchoolAccountType.BUSINESS)
+            query = query.where(School.account_type == SchoolAccountType.BUSINESS)
         elif at == "listing":
-            query = query.filter(School.account_type == SchoolAccountType.LISTING)
+            query = query.where(School.account_type == SchoolAccountType.LISTING)
         else:
             raise HTTPException(
                 status_code=400, detail="account_type must be 'business' or 'listing'"
@@ -997,7 +998,7 @@ def list_all_schools(
         try:
             school_type_values = normalize_enum_values(SchoolType, school_type)
             if school_type_values:
-                query = query.filter(
+                query = query.where(
                     func.lower(cast(School.school_type, String)).in_(school_type_values)
                 )
         except ValueError as e:
@@ -1006,18 +1007,18 @@ def list_all_schools(
                 detail=str(e),
             )
     if is_business_approved is not None:
-        query = query.filter(School.is_business_approved == is_business_approved)
+        query = query.where(School.is_business_approved == is_business_approved)
     if state:
-        query = query.filter(School.state.ilike(f"%{state}%"))
+        query = query.where(School.state.ilike(f"%{state}%"))
     if district:
         district_values = [d.strip().lower() for d in district if d and d.strip()]
         if district_values:
-            query = query.filter(func.lower(School.district).in_(district_values))
+            query = query.where(func.lower(School.district).in_(district_values))
     if school_board:
         try:
             board_values = normalize_school_board_values(school_board)
             if board_values:
-                query = query.filter(func.lower(cast(School.school_board, String)).in_(board_values))
+                query = query.where(func.lower(cast(School.school_board, String)).in_(board_values))
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -1027,7 +1028,7 @@ def list_all_schools(
         try:
             medium_values = normalize_enum_values(SchoolMedium, school_medium)
             if medium_values:
-                query = query.filter(func.lower(cast(School.school_medium, String)).in_(medium_values))
+                query = query.where(func.lower(cast(School.school_medium, String)).in_(medium_values))
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -1040,7 +1041,7 @@ def list_all_schools(
             if v and v.strip()
         ]
         if conds:
-            query = query.filter(or_(*conds))
+            query = query.where(or_(*conds))
     if teaching_method:
         conds = [
             cast(School.teaching_method, String).ilike(f"%{v.strip()}%")
@@ -1048,10 +1049,10 @@ def list_all_schools(
             if v and v.strip()
         ]
         if conds:
-            query = query.filter(or_(*conds))
+            query = query.where(or_(*conds))
     if transportation_facility:
         try:
-            query = query.filter(
+            query = query.where(
                 School.transportation_facility == YesNoNotApplicableEnum(transportation_facility.strip().lower())
             )
         except ValueError:
@@ -1062,23 +1063,23 @@ def list_all_schools(
     if institution_categories:
         values = [v.strip() for v in institution_categories if v and v.strip()]
         if values:
-            query = query.filter(School.institution_categories.overlap(cast(values, ARRAY(String))))
+            query = query.where(School.institution_categories.overlap(cast(values, ARRAY(String))))
     if hostel:
         values = [v.strip() for v in hostel if v and v.strip()]
         if values:
-            query = query.filter(School.hostel.overlap(cast(values, ARRAY(String))))
+            query = query.where(School.hostel.overlap(cast(values, ARRAY(String))))
     if available_classes:
         try:
             values = normalize_array_query_values(available_classes)
             if values:
-                query = query.filter(School.available_classes.overlap(cast(values, ARRAY(String))))
+                query = query.where(School.available_classes.overlap(cast(values, ARRAY(String))))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     if is_verified is not None:
-        query = query.filter(School.is_verified == is_verified)
+        query = query.where(School.is_verified == is_verified)
     if computer_lab:
         try:
-            query = query.filter(
+            query = query.where(
                 School.computer_lab == FacilityStatusEnum(computer_lab.strip().lower())
             )
         except ValueError:
@@ -1087,14 +1088,14 @@ def list_all_schools(
                 detail="Invalid computer_lab value. Use: yes, no, under_progress",
             )
     if medical_faculties:
-        query = query.filter(School.medical_faculties.ilike(f"%{medical_faculties}%"))
+        query = query.where(School.medical_faculties.ilike(f"%{medical_faculties}%"))
     if job_assurance:
-        query = query.filter(School.job_assurance.ilike(f"%{job_assurance}%"))
+        query = query.where(School.job_assurance.ilike(f"%{job_assurance}%"))
     if admission_process:
-        query = query.filter(School.admission_process.ilike(f"%{admission_process}%"))
+        query = query.where(School.admission_process.ilike(f"%{admission_process}%"))
     if internship:
         try:
-            query = query.filter(
+            query = query.where(
                 School.internship == YesNoNotApplicableEnum(internship.strip().lower())
             )
         except ValueError:
@@ -1103,14 +1104,14 @@ def list_all_schools(
                 detail="Invalid internship value. Use: yes, no, not_applicable",
             )
     if lms_facility is not None:
-        query = query.filter(School.lms_facility == lms_facility)
+        query = query.where(School.lms_facility == lms_facility)
     if alumni_network is not None:
-        query = query.filter(School.alumni_network == alumni_network)
+        query = query.where(School.alumni_network == alumni_network)
     if institution_class:
-        query = query.filter(School.institution_class.ilike(f"%{institution_class}%"))
+        query = query.where(School.institution_class.ilike(f"%{institution_class}%"))
     if library:
         try:
-            query = query.filter(
+            query = query.where(
                 School.library == FacilityStatusEnum(library.strip().lower())
             )
         except ValueError:
@@ -1120,7 +1121,7 @@ def list_all_schools(
             )
     if have_digital_board:
         try:
-            query = query.filter(
+            query = query.where(
                 School.have_digital_board == FacilityStatusEnum(have_digital_board.strip().lower())
             )
         except ValueError:
@@ -1130,7 +1131,7 @@ def list_all_schools(
             )
     if have_cctv_in_campus:
         try:
-            query = query.filter(
+            query = query.where(
                 School.have_cctv_in_campus == CctvFacilityEnum(have_cctv_in_campus.strip().lower())
             )
         except ValueError:
@@ -1139,13 +1140,13 @@ def list_all_schools(
                 detail="Invalid have_cctv_in_campus value. Use: yes, no, only_where_required",
             )
     if have_scholarship_opportunities is not None:
-        query = query.filter(School.have_scholarship_opportunities == have_scholarship_opportunities)
+        query = query.where(School.have_scholarship_opportunities == have_scholarship_opportunities)
     if have_extra_curricular_activities is not None:
-        query = query.filter(School.have_extra_curricular_activities == have_extra_curricular_activities)
+        query = query.where(School.have_extra_curricular_activities == have_extra_curricular_activities)
     if from_date:
         try:
             from_dt = datetime.strptime(from_date, "%Y-%m-%d")
-            query = query.filter(School.created_at >= from_dt)
+            query = query.where(School.created_at >= from_dt)
         except ValueError:
             raise HTTPException(
                 status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD"
@@ -1154,29 +1155,30 @@ def list_all_schools(
         try:
             to_dt = datetime.strptime(to_date, "%Y-%m-%d")
             to_dt = to_dt.replace(hour=23, minute=59, second=59)
-            query = query.filter(School.created_at <= to_dt)
+            query = query.where(School.created_at <= to_dt)
         except ValueError:
             raise HTTPException(
                 status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD"
             )
-    total_count = query.count()
+    total_count = (await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )).scalar_one()
     schools = (
-        query.order_by(School.created_at.desc())
+        (await db.execute(
+            query.order_by(School.created_at.desc(), School.id.asc())
         .offset(pagination.offset())
         .limit(pagination.limit())
-        .all()
+        )).scalars().all()
     )
     school_ids = [s.id for s in schools]
     rating_by_school = {}
     if school_ids:
         rating_stats = (
-            db.query(
+            await db.execute(select(
                 SchoolRating.school_id,
                 func.count(SchoolRating.id).label("rating_count"),
                 func.avg(SchoolRating.rating).label("average_rating"),
-            )
-            .filter(SchoolRating.school_id.in_(school_ids))
-            .group_by(SchoolRating.school_id)
+            ).where(SchoolRating.school_id.in_(school_ids)).group_by(SchoolRating.school_id))
         )
         rating_by_school = {
             row.school_id: {
@@ -1185,7 +1187,7 @@ def list_all_schools(
                 if row.average_rating is not None
                 else None,
             }
-            for row in rating_stats
+            for row in rating_stats.all()
         }
     items = [
         {
