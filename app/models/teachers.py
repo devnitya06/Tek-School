@@ -1,6 +1,6 @@
 from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey, Time, Enum as SQLEnum, UniqueConstraint, Boolean, Float
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import relationship, synonym, foreign, remote
+from sqlalchemy.orm import relationship, synonym, foreign
 from app.db.session import Base
 from enum import Enum
 import uuid
@@ -80,7 +80,6 @@ class Teacher(Base):
         back_populates="teacher",
         cascade="all, delete-orphan",
         primaryjoin="Teacher.user_id == foreign(TeacherRating.teacher_user_id)",
-        remote_side="Teacher.user_id",
     )
     avg_rating = Column(Float, default=0.0)
     rating_count = Column(Integer, default=0)
