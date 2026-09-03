@@ -124,7 +124,8 @@ def on_startup():
         except Exception as e:
             print(f"Error setting up database schema: {str(e)}")
 
-    start_cpu_monitor(threshold_percent=70.0, interval_seconds=30)
+    # ℹ️ CPU monitor: logs only when CPU > 85% (not normal load)
+    start_cpu_monitor(threshold_percent=85.0, interval_seconds=60)
 
 @app.get("/")
 def root():

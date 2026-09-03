@@ -148,7 +148,13 @@ def check_cpu_usage(threshold_percent: float = 70.0) -> Optional[str]:
         return None
 
 
-def start_cpu_monitor(threshold_percent: float = 70.0, interval_seconds: int = 30) -> threading.Thread:
+def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 60) -> threading.Thread:
+    """Start background CPU monitor.
+    
+    Args:
+        threshold_percent: Alert only if CPU exceeds this (default 85% to reduce spam)
+        interval_seconds: Check interval (default 60s to reduce log noise)
+    """
     def _monitor_loop() -> None:
         while True:
             time.sleep(interval_seconds)
