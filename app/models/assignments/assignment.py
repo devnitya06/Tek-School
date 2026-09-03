@@ -243,7 +243,11 @@ class TeacherRating(Base):
     rating = Column(Integer, nullable=False) # 1-5 stars
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    teacher_user = relationship("User", foreign_keys=[teacher_user_id])
+    teacher_user = relationship(
+        "User",
+        foreign_keys=[teacher_user_id],
+        overlaps="ratings",
+    )
     student_user = relationship("User", foreign_keys=[student_user_id])
     teacher = relationship(
         "Teacher",
