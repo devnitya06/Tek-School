@@ -1,5 +1,5 @@
 -- =============================================================================
--- Tek School -- Missing Performance Indexes
+-- Tek School -- Performance Indexes
 -- Safe to run multiple times (IF NOT EXISTS on all statements)
 -- Run: docker exec -i postgres-db psql -U postgres -d tek_school < scripts/add_indexes.sql
 -- =============================================================================
@@ -39,33 +39,18 @@ CREATE INDEX IF NOT EXISTS idx_self_signed_students_expiry
     ON self_signed_students (status_expiry_date, status)
     WHERE status_expiry_date IS NOT NULL;
 
--- excellent_students: new filter fields (ILIKE needs lower() for case-insensitive)
-CREATE INDEX IF NOT EXISTS idx_excellent_students_school_id
-    ON excellent_students (school_id);
-
-CREATE INDEX IF NOT EXISTS idx_excellent_students_student_name
-    ON excellent_students (lower(student_name));
-
-CREATE INDEX IF NOT EXISTS idx_excellent_students_grade
-    ON excellent_students (lower(grade));
-
-CREATE INDEX IF NOT EXISTS idx_excellent_students_class_name
-    ON excellent_students (lower(class_name));
-
-CREATE INDEX IF NOT EXISTS idx_excellent_students_gender
-    ON excellent_students (lower(gender));
-
-CREATE INDEX IF NOT EXISTS idx_excellent_students_batch
-    ON excellent_students (lower(batch_of_student));
+-- excellent_students: filter fields (ILIKE needs lower() for case-insensitive)
+CREATE INDEX IF NOT EXISTS idx_excellent_students_school_id   ON excellent_students (school_id);
+CREATE INDEX IF NOT EXISTS idx_excellent_students_student_name ON excellent_students (lower(student_name));
+CREATE INDEX IF NOT EXISTS idx_excellent_students_grade        ON excellent_students (lower(grade));
+CREATE INDEX IF NOT EXISTS idx_excellent_students_class_name   ON excellent_students (lower(class_name));
+CREATE INDEX IF NOT EXISTS idx_excellent_students_gender       ON excellent_students (lower(gender));
+CREATE INDEX IF NOT EXISTS idx_excellent_students_batch        ON excellent_students (lower(batch_of_student));
 
 -- teachers / staff
 CREATE INDEX IF NOT EXISTS idx_teachers_school_id  ON teachers (school_id);
 CREATE INDEX IF NOT EXISTS idx_teachers_user_id    ON teachers (user_id);
 CREATE INDEX IF NOT EXISTS idx_staff_school_id     ON staff (school_id);
-
--- Refresh planner statistics after index creation/data changes.
-ANALYZE schools;
-ANALYZE teachers;
 
 -- attendances: reports always filter by school + date
 CREATE INDEX IF NOT EXISTS idx_attendances_school_date ON attendances (school_id, date);
@@ -77,5 +62,56 @@ CREATE INDEX IF NOT EXISTS idx_payment_records_school_id   ON payment_records (s
 
 -- news
 CREATE INDEX IF NOT EXISTS idx_news_school_id ON news (school_id);
+
+-- ─── NEW INDEXES ─────────────────────────────────────────────────────────────
+
+-- achievements: school-scoped list queries (school profile page)
+CREATE INDEX IF NOT EXISTS ix_achievements_school_id ON achievements (school_id);
+
+-- school_team_members: school-scoped list queries
+CREATE INDEX IF NOT EXISTS ix_school_team_members_school_id ON school_team_members (school_id);
+
+-- school_ratings: used in /admin/schools/ to batch-fetch ratings per school page
+CREATE INDEX IF NOT EXISTS ix_school_ratings_school_id ON school_ratings (school_id);
+
+-- subjects: school-scoped subject listing
+CREATE INDEX IF NOT EXISTS ix_subjects_school_id ON subjects (school_id);
+
+-- classes: school-scoped class listing (JOIN in student queries)
+CREATE INDEX IF NOT EXISTS ix_classes_school_id ON classes (school_id);
+
+-- sections: used in timetable and attendance queries
+CREATE INDEX IF NOT EXISTS ix_sections_school_id ON sections (school_id);
+
+-- exams: school-scoped exam listing
+CREATE INDEX IF NOT EXISTS ix_exams_school_id ON exams (school_id);
+
+-- transports: school-scoped transport listing
+CREATE INDEX IF NOT EXISTS ix_transports_school_id ON transports (school_id);
+
+-- leave_requests: school-scoped leave management
+CREATE INDEX IF NOT EXISTS ix_leave_requests_school_id ON leave_requests (school_id);
+
+-- workers (staff payroll): school-scoped
+CREATE INDEX IF NOT EXISTS ix_workers_school_id ON workers (school_id);
+
+-- communication_sections: school-scoped
+CREATE INDEX IF NOT EXISTS ix_communication_sections_school_id ON communication_sections (school_id);
+
+-- listed_school_students: school-scoped public listing
+CREATE INDEX IF NOT EXISTS ix_listed_school_students_school_id ON listed_school_students (school_id);
+
+-- ─── ANALYZE (update planner statistics) ─────────────────────────────────────
+ANALYZE schools;
+ANALYZE teachers;
+ANALYZE students;
+ANALYZE achievements;
+ANALYZE school_team_members;
+ANALYZE school_ratings;
+ANALYZE subjects;
+ANALYZE classes;
+ANALYZE sections;
+ANALYZE exams;
+ANALYZE transports;
 
 SELECT 'All indexes created successfully.' AS result;
