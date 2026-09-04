@@ -148,20 +148,76 @@ def check_cpu_usage(threshold_percent: float = 70.0) -> Optional[str]:
         return None
 
 
+def _send_cpu_alert_email(alert_message: str, system_cpu: float, threshold: float) -> None:
+    """Send a CPU alert email to the admin. Silently skips if email sending fails."""
+    try:
+        from app.utils.email_utility import send_raw_email
+        import socket
+        from datetime import datetime
+
+        hostname = socket.gethostname()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        body = f"""
+        <html><body style="font-family: Arial, sans-serif; color: #333;">
+        <div style="background:#fff3cd;border:1px solid #ffc107;padding:20px;border-radius:8px;max-width:600px;">
+            <h2 style="color:#d9534f;">&#9888; High CPU Alert — Tek-School Server</h2>
+            <table style="width:100%;border-collapse:collapse;">
+                <tr><td style="padding:6px 0;"><strong>Server:</strong></td><td>{hostname}</td></tr>
+                <tr><td style="padding:6px 0;"><strong>CPU Usage:</strong></td><td style="color:#d9534f;"><strong>{system_cpu:.1f}%</strong></td></tr>
+                <tr><td style="padding:6px 0;"><strong>Threshold:</strong></td><td>{threshold:.1f}%</td></tr>
+                <tr><td style="padding:6px 0;"><strong>Time:</strong></td><td>{timestamp}</td></tr>
+            </table>
+            <hr style="margin:16px 0;">
+            <p style="font-size:13px;color:#555;">{alert_message}</p>
+            <p style="font-size:12px;color:#999;">This is an automated alert from Tek-School CPU Monitor. You will not receive another email until CPU drops below {threshold:.1f}% and spikes again.</p>
+        </div>
+        </body></html>
+        """
+
+        send_raw_email(
+            recipient_email="garnaik53@gmail.com",
+            subject=f"\U0001f6a8 CPU Alert: {system_cpu:.1f}% on {hostname}",
+            body=body,
+        )
+        logger.info("[CPU_MONITOR] Alert email sent to garnaik53@gmail.com")
+    except Exception:
+        logger.exception("[CPU_MONITOR] Failed to send alert email")
+
+
 def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 60) -> threading.Thread:
     """Start background CPU monitor.
-    
+
+    Checks CPU usage every `interval_seconds` seconds. If usage exceeds
+    `threshold_percent`, logs a warning and sends ONE alert email to
+    garnaik53@gmail.com. The email is not repeated until CPU drops back
+    below the threshold and spikes again.
+
     Args:
         threshold_percent: Alert only if CPU exceeds this (default 85% to reduce spam)
         interval_seconds: Check interval (default 60s to reduce log noise)
     """
     def _monitor_loop() -> None:
+        alert_sent = False  # Track whether an alert email was already sent for this spike
         while True:
             time.sleep(interval_seconds)
             try:
                 alert = check_cpu_usage(threshold_percent)
                 if alert:
                     logger.warning(alert)
+                    if not alert_sent:
+                        # Extract system_cpu from psutil directly for email subject
+                        try:
+                            system_cpu = float(psutil.cpu_percent(interval=1.0)) if psutil else 0.0
+                        except Exception:
+                            system_cpu = 0.0
+                        _send_cpu_alert_email(alert, system_cpu, threshold_percent)
+                        alert_sent = True
+                else:
+                    # CPU is back to normal — reset so next spike sends a fresh alert
+                    if alert_sent:
+                        logger.info("[CPU_MONITOR] CPU back to normal. Alert flag reset.")
+                        alert_sent = False
             except Exception:
                 logger.exception("[CPU_MONITOR] Background monitor loop crashed")
 
