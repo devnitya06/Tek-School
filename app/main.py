@@ -1,5 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+import time as _time
+from sqlalchemy.exc import OperationalError, TimeoutError as SATimeoutError
 from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news, placement
 from app.routes import prospectus as prospectus_routes
 from app.routes.assignments.assignment_routes import router as assignment_routes
@@ -49,6 +54,133 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── CPU Load-Shedding Middleware ─────────────────────────────────────────────
+# When system CPU exceeds 90%, reject new requests immediately with 503.
+# This prevents the server from accepting more work when already overloaded,
+# which would only make recovery slower.
+#
+# CPU is sampled every 5 seconds (cached) so psutil doesn't run on every request.
+
+_CPU_SHED_THRESHOLD = 90.0   # % — start rejecting requests above this
+_CPU_SAMPLE_INTERVAL = 5.0   # seconds between CPU samples
+_cpu_cache: dict = {"value": 0.0, "at": 0.0}  # module-level cache
+
+# Paths that must always work — healthcheck, docs, monitoring
+_ALWAYS_ALLOW = {"/", "/docs", "/redoc", "/openapi.json", "/health"}
+
+
+class CPULoadSheddingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        # Always allow health/docs endpoints through
+        if request.url.path in _ALWAYS_ALLOW:
+            return await call_next(request)
+
+        # Re-sample CPU only if the cache has expired
+        now = _time.monotonic()
+        if now - _cpu_cache["at"] >= _CPU_SAMPLE_INTERVAL:
+            try:
+                import psutil
+                _cpu_cache["value"] = psutil.cpu_percent(interval=None)
+            except Exception:
+                _cpu_cache["value"] = 0.0  # psutil unavailable — don't block
+            _cpu_cache["at"] = now
+
+        if _cpu_cache["value"] >= _CPU_SHED_THRESHOLD:
+            from app.core.logger import logger
+            logger.warning(
+                "[LOAD_SHED] CPU=%.1f%% — rejecting %s %s",
+                _cpu_cache["value"], request.method, request.url.path,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": (
+                        "The server is currently under high load. "
+                        "Please wait a moment and try again."
+                    ),
+                    "retry_after_seconds": 10,
+                },
+                headers={"Retry-After": "10"},
+            )
+
+        return await call_next(request)
+
+
+app.add_middleware(CPULoadSheddingMiddleware)
+
+# ─── Global Exception Handlers (5xx server errors only) ───────────────────────
+# 4xx errors (404, 401, 403, 422, etc.) are left as-is — FastAPI handles them.
+# Only server-side failures are caught here and returned as clean JSON.
+
+
+@app.exception_handler(OperationalError)
+async def db_operational_error_handler(request: Request, exc: OperationalError):
+    """Catch DB connection failures and statement/lock timeouts from Postgres."""
+    from app.core.logger import logger
+    msg = str(exc.orig) if exc.orig else str(exc)
+    # statement_timeout fires with 'canceling statement due to statement timeout'
+    if "statement timeout" in msg.lower():
+        logger.warning("[DB] Statement timeout on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "message": "This request took too long to process. Please try again in a moment.",
+            },
+        )
+    # lock_timeout fires with 'canceling statement due to lock timeout'
+    if "lock timeout" in msg.lower():
+        logger.warning("[DB] Lock timeout on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "message": "The server is temporarily busy. Please try again in a few seconds.",
+            },
+        )
+    # Generic DB connection failure
+    logger.error("[DB] OperationalError on %s %s: %s", request.method, request.url.path, msg)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "success": False,
+            "message": "Database is temporarily unavailable. Please try again shortly.",
+        },
+    )
+
+
+@app.exception_handler(SATimeoutError)
+async def db_timeout_handler(request: Request, exc: SATimeoutError):
+    """SQLAlchemy connection pool timeout — all DB connections were busy."""
+    from app.core.logger import logger
+    logger.error("[DB] Pool timeout on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "success": False,
+            "message": "Server is under high load. Please try again in a moment.",
+        },
+    )
+
+
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catch-all for any error that wasn't handled above — never expose a raw traceback."""
+    from app.core.logger import logger
+    logger.exception(
+        "[UNHANDLED] %s on %s %s", type(exc).__name__, request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "An unexpected error occurred. Our team has been notified. Please try again later.",
+        },
+    )
 
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])

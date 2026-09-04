@@ -101,10 +101,15 @@ CREATE INDEX IF NOT EXISTS ix_communication_sections_school_id ON communication_
 -- listed_school_students: school-scoped public listing
 CREATE INDEX IF NOT EXISTS ix_listed_school_students_school_id ON listed_school_students (school_id);
 
--- ─── ANALYZE (update planner statistics) ─────────────────────────────────────
+-- ─── ANALYZE (update planner statistics for ALL indexed tables) ───────────────
+-- Without ANALYZE, PostgreSQL cannot see new indexes and falls back to seq scans.
+-- Run this block every time you add/drop indexes or import a large data batch.
 ANALYZE schools;
 ANALYZE teachers;
 ANALYZE students;
+ANALYZE self_signed_students;
+ANALYZE staff;
+ANALYZE attendances;
 ANALYZE achievements;
 ANALYZE school_team_members;
 ANALYZE school_ratings;
@@ -113,5 +118,12 @@ ANALYZE classes;
 ANALYZE sections;
 ANALYZE exams;
 ANALYZE transports;
+ANALYZE leave_requests;
+ANALYZE workers;
+ANALYZE communication_sections;
+ANALYZE listed_school_students;
+ANALYZE student_payments;
+ANALYZE payment_records;
+ANALYZE news;
 
-SELECT 'All indexes created successfully.' AS result;
+SELECT 'All indexes created and statistics updated successfully.' AS result;

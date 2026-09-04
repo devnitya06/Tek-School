@@ -25,6 +25,11 @@ from app.utils.email_utility import send_dynamic_email, generate_password
 from app.core.security import get_password_hash
 from app.core.logger import logger
 
+try:
+    import psutil as _psutil
+except Exception:
+    _psutil = None  # CPU throttle disabled if psutil not available
+
 # Fixed monthly send dates
 FOLLOWUP_DATES = {1, 15}
 
@@ -32,6 +37,11 @@ FOLLOWUP_DATES = {1, 15}
 # Spreads bcrypt CPU load over time instead of hitting it in a tight loop.
 _EMAIL_SEND_DELAY = 0.3
 _FOLLOWUP_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+# If CPU is still high after sending an email, pause before the next one.
+# Lets FastAPI requests and Postgres queries breathe during the batch.
+_TASK_CPU_THROTTLE_THRESHOLD = 85.0  # % — pause if CPU exceeds this
+_TASK_CPU_THROTTLE_SLEEP = 10.0      # seconds to wait when CPU is high
 
 
 @shared_task(
@@ -121,6 +131,20 @@ def send_monthly_followup_emails(self):
 
                 # Micro-sleep: spreads bcrypt CPU burst + avoids SMTP rate-limit
                 _time.sleep(_EMAIL_SEND_DELAY)
+
+                # CPU throttle: if system is still overloaded after sending,
+                # pause before the next school so FastAPI/Postgres can breathe.
+                if _psutil is not None:
+                    try:
+                        current_cpu = _psutil.cpu_percent(interval=None)
+                        if current_cpu >= _TASK_CPU_THROTTLE_THRESHOLD:
+                            logger.warning(
+                                "[followup_emails] CPU=%.1f%% — pausing %.0fs to reduce load.",
+                                current_cpu, _TASK_CPU_THROTTLE_SLEEP,
+                            )
+                            _time.sleep(_TASK_CPU_THROTTLE_SLEEP)
+                    except Exception:
+                        pass  # never block the task due to a CPU check failure
 
             except SoftTimeLimitExceeded:
                 # Commit whatever progress we have, then let the signal propagate
