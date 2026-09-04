@@ -103,7 +103,7 @@ def check_cpu_usage(threshold_percent: float = 70.0) -> Optional[str]:
         return None
 
     try:
-        system_cpu = float(psutil.cpu_percent(interval=1.0))
+        system_cpu = float(psutil.cpu_percent(interval=0.2))  # 0.2s sample — less blocking than 1s
         if system_cpu < threshold_percent:
             return None
 
