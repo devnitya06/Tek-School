@@ -62,7 +62,6 @@
 # volumes:
 #   postgres_data:
 
-
 services:
   web:
     build: .
@@ -153,14 +152,13 @@ services:
     image: postgres:15
     container_name: postgres-db
     restart: always
-    shm_size: 256m # 25% of shared_buffers=256MB — correct ratio
+    shm_size: 256m
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
-      POSTGRES_INITDB_ARGS: >-
-        -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0
+    command: postgres -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -173,7 +171,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G # Increased to provide more headroom and prevent OOM killer crashes under PostgreSQL load.
-
+          memory: 2G
 volumes:
   postgres_data:
