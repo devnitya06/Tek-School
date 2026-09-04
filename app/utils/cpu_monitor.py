@@ -185,20 +185,42 @@ def _send_cpu_alert_email(alert_message: str, system_cpu: float, threshold: floa
         logger.exception("[CPU_MONITOR] Failed to send alert email")
 
 
-def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 60) -> threading.Thread:
-    """Start background CPU monitor.
+# ── Module-level guard ────────────────────────────────────────────────────────
+# Uvicorn/Gunicorn can call on_startup() once per worker process.
+# Without this guard every worker spawns its own thread with its own
+# alert_sent = False, so N workers → N simultaneous alert emails per spike.
+_monitor_lock = threading.Lock()
+_monitor_started = False
+
+
+def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 60) -> threading.Thread | None:
+    """Start background CPU monitor (singleton — safe to call multiple times).
 
     Checks CPU usage every `interval_seconds` seconds. If usage exceeds
-    `threshold_percent`, logs a warning and sends ONE alert email to
-    garnaik53@gmail.com. The email is not repeated until CPU drops back
-    below the threshold and spikes again.
+    `threshold_percent`, logs a warning and sends **one** alert email to
+    garnaik53@gmail.com. The email is NOT repeated until CPU drops back
+    below the threshold and spikes again (per-spike, one-shot behaviour).
+
+    Calling this function more than once (e.g. from multiple Uvicorn workers)
+    is safe — only the first call starts a thread; subsequent calls return None.
 
     Args:
-        threshold_percent: Alert only if CPU exceeds this (default 85% to reduce spam)
-        interval_seconds: Check interval (default 60s to reduce log noise)
+        threshold_percent: Alert only if CPU exceeds this (default 85%)
+        interval_seconds:  Check interval in seconds (default 60 s)
     """
+    global _monitor_started
+
+    with _monitor_lock:
+        if _monitor_started:
+            logger.info("[CPU_MONITOR] Monitor already running — skipping duplicate start.")
+            return None
+        _monitor_started = True
+
     def _monitor_loop() -> None:
-        alert_sent = False  # Track whether an alert email was already sent for this spike
+        # alert_sent tracks whether we've already emailed for the CURRENT spike.
+        # It resets to False only after CPU drops back below the threshold,
+        # so each continuous high-CPU session produces exactly ONE email.
+        alert_sent = False
         while True:
             time.sleep(interval_seconds)
             try:
@@ -206,15 +228,19 @@ def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 6
                 if alert:
                     logger.warning(alert)
                     if not alert_sent:
-                        # Extract system_cpu from psutil directly for email subject
+                        # First detection of this spike — send one email, then suppress.
                         try:
                             system_cpu = float(psutil.cpu_percent(interval=1.0)) if psutil else 0.0
                         except Exception:
                             system_cpu = 0.0
                         _send_cpu_alert_email(alert, system_cpu, threshold_percent)
-                        alert_sent = True
+                        alert_sent = True  # ← suppresses all further emails this spike
+                    else:
+                        logger.debug(
+                            "[CPU_MONITOR] CPU still high — alert already sent this spike, skipping email."
+                        )
                 else:
-                    # CPU is back to normal — reset so next spike sends a fresh alert
+                    # CPU back below threshold — arm for the next spike.
                     if alert_sent:
                         logger.info("[CPU_MONITOR] CPU back to normal. Alert flag reset.")
                         alert_sent = False
@@ -224,6 +250,6 @@ def start_cpu_monitor(threshold_percent: float = 85.0, interval_seconds: int = 6
     thread = threading.Thread(target=_monitor_loop, name="cpu-monitor", daemon=True)
     thread.start()
     logger.info(
-        f"[CPU_MONITOR] Started with threshold {threshold_percent}% and interval {interval_seconds}s"
+        f"[CPU_MONITOR] Started — threshold={threshold_percent}%, interval={interval_seconds}s"
     )
     return thread

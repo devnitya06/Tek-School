@@ -87,6 +87,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '1.5'   # ← prevent web from starving postgres/celery during spikes
           memory: 512M
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
