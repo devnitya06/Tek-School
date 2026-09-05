@@ -183,6 +183,8 @@ services:
       -c lock_timeout=8000
       -c autovacuum_naptime=300
       -c autovacuum_vacuum_cost_delay=20
+      -c autovacuum_max_workers=1
+      -c autovacuum_vacuum_cost_limit=100
       -c bgwriter_delay=500
       -c bgwriter_lru_maxpages=10
     volumes:
