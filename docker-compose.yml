@@ -67,6 +67,8 @@ services:
     build: .
     container_name: fastapi-app
     restart: always
+    cpus: 1.5          # ← works with docker-compose v1 (deploy.resources is swarm-only)
+    mem_limit: 512m    # ← top-level equivalent of deploy.resources.limits.memory
     ports:
       - "8001:8001"
     environment:
@@ -87,7 +89,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'   # ← prevent web from starving postgres/celery during spikes
+          cpus: '1.5'   # ← works with docker compose v2 / Swarm
           memory: 512M
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
@@ -96,6 +98,8 @@ services:
     build: .
     container_name: celery-worker
     restart: always
+    cpus: 0.8          # ← works with docker-compose v1
+    mem_limit: 512m
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1
     environment:
       - TZ=Asia/Kolkata
@@ -114,7 +118,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.8'   # ← Celery can't starve FastAPI/Postgres during heavy tasks
+          cpus: '0.8'   # ← works with docker compose v2 / Swarm
           memory: 512M
 
   celery_beat:
