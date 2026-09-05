@@ -60,8 +60,12 @@ CREATE INDEX IF NOT EXISTS idx_student_payments_student_id ON student_payments (
 CREATE INDEX IF NOT EXISTS idx_student_payments_school_id  ON student_payments (school_id);
 CREATE INDEX IF NOT EXISTS idx_payment_records_school_id   ON payment_records (school_id);
 
--- news
-CREATE INDEX IF NOT EXISTS idx_news_school_id ON news (school_id);
+-- news (wrapped: table may not exist yet)
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS idx_news_school_id ON news (school_id);
+EXCEPTION WHEN undefined_table THEN
+    RAISE NOTICE 'Skipping idx_news_school_id — news table does not exist yet.';
+END $$;
 
 -- ─── NEW INDEXES ─────────────────────────────────────────────────────────────
 
@@ -95,11 +99,19 @@ CREATE INDEX IF NOT EXISTS ix_leave_requests_school_id ON leave_requests (school
 -- workers (staff payroll): school-scoped
 CREATE INDEX IF NOT EXISTS ix_workers_school_id ON workers (school_id);
 
--- communication_sections: school-scoped
-CREATE INDEX IF NOT EXISTS ix_communication_sections_school_id ON communication_sections (school_id);
+-- communication_sections: school-scoped (wrapped: may not exist)
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS ix_communication_sections_school_id ON communication_sections (school_id);
+EXCEPTION WHEN undefined_table THEN
+    RAISE NOTICE 'Skipping ix_communication_sections_school_id — table does not exist yet.';
+END $$;
 
--- listed_school_students: school-scoped public listing
-CREATE INDEX IF NOT EXISTS ix_listed_school_students_school_id ON listed_school_students (school_id);
+-- listed_school_students: school-scoped public listing (wrapped: may not exist)
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS ix_listed_school_students_school_id ON listed_school_students (school_id);
+EXCEPTION WHEN undefined_table THEN
+    RAISE NOTICE 'Skipping ix_listed_school_students_school_id — table does not exist yet.';
+END $$;
 
 -- ─── ANALYZE (update planner statistics for ALL indexed tables) ───────────────
 -- Without ANALYZE, PostgreSQL cannot see new indexes and falls back to seq scans.
