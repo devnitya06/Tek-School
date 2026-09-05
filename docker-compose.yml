@@ -187,6 +187,7 @@ services:
       -c autovacuum_vacuum_cost_limit=100
       -c bgwriter_delay=500
       -c bgwriter_lru_maxpages=10
+      -c max_wal_size=256MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
