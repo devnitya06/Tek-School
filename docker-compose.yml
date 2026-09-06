@@ -150,7 +150,7 @@ services:
 
   # ─── PostgreSQL database ──────────────────────────────────────────────────────
   db:
-    image: postgres:15-alpine # alpine = ~100 MB smaller, same PG version
+    image: postgres:15             # do NOT use alpine — existing volume uses Debian UID=999; alpine uses UID=70
     container_name: postgres-db
     restart: always
     # shm_size must be >= shared_buffers. PostgreSQL uses POSIX shared memory
