@@ -67,8 +67,8 @@ services:
     build: .
     container_name: fastapi-app
     restart: always
-    cpus: 1.5 # ← works with docker-compose v1 (deploy.resources is swarm-only)
-    mem_limit: 512m # ← top-level equivalent of deploy.resources.limits.memory
+    cpus: 1.0 # ← works with docker-compose v1 (deploy.resources is swarm-only)
+    mem_limit: 300m # ← top-level equivalent of deploy.resources.limits.memory
     ports:
       - "8001:8001"
     environment:
@@ -89,8 +89,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5' # ← works with docker compose v2 / Swarm
-          memory: 512M
+          cpus: '1.0' # ← works with docker compose v2 / Swarm
+          memory: 300M
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
 
@@ -99,7 +99,7 @@ services:
     container_name: celery-worker
     restart: always
     cpus: 0.8 # ← works with docker-compose v1
-    mem_limit: 512m
+    mem_limit: 256m
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1
     environment:
       - TZ=Asia/Kolkata
@@ -119,12 +119,13 @@ services:
       resources:
         limits:
           cpus: '0.8' # ← works with docker compose v2 / Swarm
-          memory: 512M
+          memory: 256M
 
   celery_beat:
     build: .
     container_name: celery-beat
     restart: always
+    mem_limit: 128m # ← v1 hard cap (deploy.resources is ignored in v1)
     command: celery -A app.core.celery_app beat --loglevel=info
     environment:
       - TZ=Asia/Kolkata
@@ -141,31 +142,33 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 128M
 
   redis:
     image: redis:7
     container_name: redis
     restart: always
+    mem_limit: 64m # ← v1 hard cap
     ports:
       - "6380:6379"
     deploy:
       resources:
         limits:
-          memory: 128M # small task queue for 2 daily tasks — 128M is plenty
+          memory: 64M # small task queue for 2 daily tasks — 64M is plenty
 
   db:
     image: postgres:15
     container_name: postgres-db
     restart: always
-    shm_size: 256m
+    mem_limit: 768m # ← v1 hard cap
+    shm_size: 128m # shared_buffers=96MB fits comfortably
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
     command: >
-      postgres -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=512MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0 -c statement_timeout=30000 -c lock_timeout=8000 -c autovacuum_naptime=300 -c autovacuum_vacuum_cost_delay=20 -c autovacuum_max_workers=1 -c autovacuum_vacuum_cost_limit=100 -c bgwriter_delay=500 -c bgwriter_lru_maxpages=10 -c max_wal_size=256MB
+      postgres -c max_connections=20 -c shared_buffers=96MB -c effective_cache_size=256MB -c maintenance_work_mem=16MB -c work_mem=1MB -c wal_buffers=4MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0 -c statement_timeout=30000 -c lock_timeout=8000 -c autovacuum_naptime=300 -c autovacuum_vacuum_cost_delay=20 -c autovacuum_max_workers=1 -c autovacuum_vacuum_cost_limit=100 -c bgwriter_delay=500 -c bgwriter_lru_maxpages=10 -c max_wal_size=128MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -178,6 +181,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1.5G
+          memory: 768M
 volumes:
   postgres_data:
