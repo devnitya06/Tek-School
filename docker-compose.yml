@@ -45,12 +45,12 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-      - ./logs:/app/logs          # logs survive container restarts
+      - ./logs:/app/logs # logs survive container restarts
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"           # each log file max 10 MB
-        max-file: "5"             # keep last 5 files -> 50 MB max
+        max-size: "10m" # each log file max 10 MB
+        max-file: "5" # keep last 5 files -> 50 MB max
     deploy:
       resources:
         limits:
@@ -72,10 +72,7 @@ services:
     # --max-tasks-per-child=50 -> worker process restarts after 50 tasks,
     # preventing gradual memory accumulation from leaky task code.
     command: >
-      celery -A app.core.celery_app worker
-      --loglevel=info
-      --concurrency=1
-      --max-tasks-per-child=50
+      celery -A app.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
     environment:
       - TZ=Asia/Kolkata
     env_file:
@@ -84,7 +81,7 @@ services:
       - redis
       - db
     volumes:
-      - ./logs:/app/logs          # share same logs folder as web
+      - ./logs:/app/logs # share same logs folder as web
     logging:
       driver: "json-file"
       options:
@@ -128,7 +125,7 @@ services:
 
   # ─── Redis (Celery broker) ────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine             # alpine = ~30 MB smaller image footprint
+    image: redis:7-alpine # alpine = ~30 MB smaller image footprint
     container_name: redis
     restart: always
     ports:
@@ -136,11 +133,7 @@ services:
     # maxmemory-policy allkeys-lru: when Redis hits 48 MB it evicts the least
     # recently used keys instead of crashing with OOM.
     command: >
-      redis-server
-      --maxmemory 48mb
-      --maxmemory-policy allkeys-lru
-      --save ""
-      --appendonly no
+      redis-server --maxmemory 48mb --maxmemory-policy allkeys-lru --save "" --appendonly no
     logging:
       driver: "json-file"
       options:
@@ -157,50 +150,25 @@ services:
 
   # ─── PostgreSQL database ──────────────────────────────────────────────────────
   db:
-    image: postgres:15-alpine         # alpine = ~100 MB smaller, same PG version
+    image: postgres:15-alpine # alpine = ~100 MB smaller, same PG version
     container_name: postgres-db
     restart: always
     # shm_size must be >= shared_buffers. PostgreSQL uses POSIX shared memory
     # for its buffer cache; if /dev/shm is too small PG will crash at startup.
-    shm_size: 128m                    # matches shared_buffers=128MB below
+    shm_size: 128m # matches shared_buffers=128MB below
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
     command: >
-      postgres
-      -c max_connections=20
-      -c shared_buffers=128MB
-      -c effective_cache_size=384MB
-      -c maintenance_work_mem=32MB
-      -c work_mem=2MB
-      -c wal_buffers=4MB
-      -c checkpoint_completion_target=0.9
-      -c log_min_duration_statement=500
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c wal_level=minimal
-      -c max_replication_slots=0
-      -c max_logical_replication_workers=0
-      -c statement_timeout=30000
-      -c lock_timeout=8000
-      -c autovacuum_naptime=300
-      -c autovacuum_vacuum_cost_delay=20
-      -c autovacuum_max_workers=1
-      -c autovacuum_vacuum_cost_limit=100
-      -c bgwriter_delay=500
-      -c bgwriter_lru_maxpages=10
-      -c max_wal_size=128MB
-      -c min_wal_size=16MB
-      -c temp_buffers=4MB
-      -c default_statistics_target=50
+      postgres -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=384MB -c maintenance_work_mem=32MB -c work_mem=2MB -c wal_buffers=8MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0 -c statement_timeout=30000 -c lock_timeout=8000 -c autovacuum_naptime=300 -c autovacuum_vacuum_cost_delay=20 -c autovacuum_max_workers=1 -c autovacuum_vacuum_cost_limit=100 -c bgwriter_delay=500 -c bgwriter_lru_maxpages=10 -c max_wal_size=128MB -c min_wal_size=16MB -c temp_buffers=4MB -c default_statistics_target=50
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "tek_school"]
+      test: [ "CMD", "pg_isready", "-U", "postgres", "-d", "tek_school" ]
       interval: 10s
       timeout: 5s
       retries: 5
