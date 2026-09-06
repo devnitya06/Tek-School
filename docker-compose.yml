@@ -125,6 +125,7 @@ services:
     build: .
     container_name: celery-beat
     restart: always
+    cpus: 0.2 # ← v1 cpu cap
     mem_limit: 128m # ← v1 hard cap (deploy.resources is ignored in v1)
     command: celery -A app.core.celery_app beat --loglevel=info
     environment:
@@ -142,24 +143,28 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '0.2'
           memory: 128M
 
   redis:
     image: redis:7
     container_name: redis
     restart: always
+    cpus: 0.2 # ← v1 cpu cap
     mem_limit: 64m # ← v1 hard cap
     ports:
       - "6380:6379"
     deploy:
       resources:
         limits:
+          cpus: '0.2'
           memory: 64M # small task queue for 2 daily tasks — 64M is plenty
 
   db:
     image: postgres:15
     container_name: postgres-db
     restart: always
+    cpus: 2.0 # ← v1 cpu cap — allows fast recovery but prevents 2000%+ spike
     mem_limit: 1g # ← bumped from 768m; was at 98% idle
     shm_size: 192m # shared_buffers=128MB fits comfortably
     environment:
