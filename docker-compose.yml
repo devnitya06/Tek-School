@@ -155,7 +155,7 @@ services:
     restart: always
     # shm_size must be >= shared_buffers. PostgreSQL uses POSIX shared memory
     # for its buffer cache; if /dev/shm is too small PG will crash at startup.
-    shm_size: 128m # matches shared_buffers=128MB below
+    shm_size: 256m                    # needs room for shared_buffers(128MB) + lock tables + WAL + process arrays (~150MB total)
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
