@@ -1,78 +1,43 @@
-# services:
-#   web:
-#     build: .
-#     container_name: fastapi-app
-#     ports:
-#       - "8001:8001"
-#     env_file:
-#       - .env
-#     depends_on:
-#       db:
-#         condition: service_healthy
-#     volumes:
-#       - .:/app
-#     command: >
-#       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
-#   celery_worker:
-#     build: .
-#     container_name: celery-worker
-#     command: celery -A app.core.celery_app worker --loglevel=info
-#     env_file:
-#       - .env
-#     depends_on:
-#       - redis
-#       - db
-
-#   celery_beat:
-#     build: .
-#     container_name: celery-beat
-#     command: celery -A app.core.celery_app beat --loglevel=info
-#     env_file:
-#       - .env
-#     depends_on:
-#       - redis
-#       - db
-
-#   redis:
-#     image: redis:7
-#     container_name: redis
-#     restart: always
-#     ports:
-#       - "6380:6379"
-
-#   db:
-#     image: postgres:15
-#     container_name: postgres-db
-#     restart: always
-#     environment:
-#       POSTGRES_USER: postgres
-#       POSTGRES_PASSWORD: root
-#       POSTGRES_DB: tek_school
-#       POSTGRES_INITDB_ARGS: "-c max_connections=50 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB"
-#     volumes:
-#       - postgres_data:/var/lib/postgresql/data
-#     ports:
-#       - "5433:5432"
-#     healthcheck:
-#       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "tek_school"]
-#       interval: 10s
-#       timeout: 5s
-#       retries: 5
-
-# volumes:
-#   postgres_data:
+# ═══════════════════════════════════════════════════════════════════════════════
+#  docker-compose.yml  —  Tek-School  (2 GB VPS edition)
+#
+#  Memory budget (hard limits must fit inside ~1.8 GB usable after OS overhead):
+#
+#    Service          Limit    Reserve   Notes
+#    ───────────────  ───────  ────────  ──────────────────────────────────────
+#    postgres (db)    512 MB   256 MB    shared_buffers=128 MB fits inside limit
+#    web (FastAPI)    384 MB   192 MB    single uvicorn process, no --workers
+#    celery_worker    256 MB   128 MB    --concurrency=1 (single process)
+#    celery_beat       96 MB    48 MB    scheduler only, tiny footprint
+#    redis             64 MB    32 MB    maxmemory=48mb set inside Redis
+#    ───────────────  ───────  ────────  ──────────────────────────────────────
+#    TOTAL           1312 MB   656 MB    ~640 MB headroom for OS + page cache
+#
+#  Rules applied:
+#   • Only deploy.resources is used for limits (top-level mem_limit is a
+#     Docker-Compose v1 alias and causes confusing double-enforcement in v2).
+#   • Both `limits` AND `reservations` are set so the Linux kernel knows the
+#     soft floor for each container before it starts OOM-killing.
+#   • postgres shm_size must be >= shared_buffers. PostgreSQL uses POSIX shared
+#     memory for its buffer cache; if /dev/shm is too small PG will crash.
+#   • Postgres wal_level=minimal (was replica) saves ~10-20 MB WAL buffer
+#     overhead and disables replication slots we do not use.
+# ═══════════════════════════════════════════════════════════════════════════════
 
 services:
+
+  # ─── FastAPI web application ─────────────────────────────────────────────────
   web:
     build: .
     container_name: fastapi-app
     restart: always
-    cpus: 1.5          # ← works with docker-compose v1 (deploy.resources is swarm-only)
-    mem_limit: 512m    # ← top-level equivalent of deploy.resources.limits.memory
     ports:
       - "8001:8001"
     environment:
       - TZ=Asia/Kolkata
+      # Single-process uvicorn — do NOT add --workers on a 2 GB VPS.
+      # Each extra worker forks the whole Python heap (~100-200 MB each).
+      - WEB_CONCURRENCY=1
     env_file:
       - .env
     depends_on:
@@ -80,27 +45,37 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-      - ./logs:/app/logs # ✅ logs survive container restarts
+      - ./logs:/app/logs          # logs survive container restarts
     logging:
       driver: "json-file"
       options:
-        max-size: "10m" # each docker log file max 10MB
-        max-file: "5" # keep last 5 files = 50MB max
+        max-size: "10m"           # each log file max 10 MB
+        max-file: "5"             # keep last 5 files -> 50 MB max
     deploy:
       resources:
         limits:
-          cpus: '1.5'   # ← works with docker compose v2 / Swarm
-          memory: 512M
+          cpus: "1.5"
+          memory: 384M
+        reservations:
+          cpus: "0.25"
+          memory: 192M
     command: >
-      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 1"
 
+  # ─── Celery background worker ─────────────────────────────────────────────────
   celery_worker:
     build: .
     container_name: celery-worker
     restart: always
-    cpus: 0.8          # ← works with docker-compose v1
-    mem_limit: 512m
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1
+    # --concurrency=1  -> single worker process (default is CPU count which can
+    # be 2-4 processes on a VPS, each forking the full Python heap).
+    # --max-tasks-per-child=50 -> worker process restarts after 50 tasks,
+    # preventing gradual memory accumulation from leaky task code.
+    command: >
+      celery -A app.core.celery_app worker
+      --loglevel=info
+      --concurrency=1
+      --max-tasks-per-child=50
     environment:
       - TZ=Asia/Kolkata
     env_file:
@@ -109,7 +84,7 @@ services:
       - redis
       - db
     volumes:
-      - ./logs:/app/logs # ✅ share same logs folder as web
+      - ./logs:/app/logs          # share same logs folder as web
     logging:
       driver: "json-file"
       options:
@@ -118,9 +93,13 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.8'   # ← works with docker compose v2 / Swarm
-          memory: 512M
+          cpus: "0.8"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
 
+  # ─── Celery beat scheduler ────────────────────────────────────────────────────
   celery_beat:
     build: .
     container_name: celery-beat
@@ -141,24 +120,49 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          cpus: "0.3"
+          memory: 96M
+        reservations:
+          cpus: "0.05"
+          memory: 48M
 
+  # ─── Redis (Celery broker) ────────────────────────────────────────────────────
   redis:
-    image: redis:7
+    image: redis:7-alpine             # alpine = ~30 MB smaller image footprint
     container_name: redis
     restart: always
     ports:
       - "6380:6379"
+    # maxmemory-policy allkeys-lru: when Redis hits 48 MB it evicts the least
+    # recently used keys instead of crashing with OOM.
+    command: >
+      redis-server
+      --maxmemory 48mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
     deploy:
       resources:
         limits:
-          memory: 128M # small task queue for 2 daily tasks — 128M is plenty
+          cpus: "0.2"
+          memory: 64M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
 
+  # ─── PostgreSQL database ──────────────────────────────────────────────────────
   db:
-    image: postgres:15
+    image: postgres:15-alpine         # alpine = ~100 MB smaller, same PG version
     container_name: postgres-db
     restart: always
-    shm_size: 256m
+    # shm_size must be >= shared_buffers. PostgreSQL uses POSIX shared memory
+    # for its buffer cache; if /dev/shm is too small PG will crash at startup.
+    shm_size: 128m                    # matches shared_buffers=128MB below
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
@@ -168,15 +172,15 @@ services:
       postgres
       -c max_connections=20
       -c shared_buffers=128MB
-      -c effective_cache_size=512MB
+      -c effective_cache_size=384MB
       -c maintenance_work_mem=32MB
       -c work_mem=2MB
-      -c wal_buffers=8MB
+      -c wal_buffers=4MB
       -c checkpoint_completion_target=0.9
       -c log_min_duration_statement=500
       -c random_page_cost=1.1
       -c effective_io_concurrency=200
-      -c wal_level=replica
+      -c wal_level=minimal
       -c max_replication_slots=0
       -c max_logical_replication_workers=0
       -c statement_timeout=30000
@@ -187,7 +191,10 @@ services:
       -c autovacuum_vacuum_cost_limit=100
       -c bgwriter_delay=500
       -c bgwriter_lru_maxpages=10
-      -c max_wal_size=256MB
+      -c max_wal_size=128MB
+      -c min_wal_size=16MB
+      -c temp_buffers=4MB
+      -c default_statistics_target=50
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -200,6 +207,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
 volumes:
   postgres_data:
+
