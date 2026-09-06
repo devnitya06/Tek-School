@@ -160,15 +160,15 @@ services:
     image: postgres:15
     container_name: postgres-db
     restart: always
-    mem_limit: 768m # ← v1 hard cap
-    shm_size: 128m # shared_buffers=96MB fits comfortably
+    mem_limit: 1g # ← bumped from 768m; was at 98% idle
+    shm_size: 192m # shared_buffers=128MB fits comfortably
     environment:
       TZ: Asia/Kolkata
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
       POSTGRES_DB: tek_school
     command: >
-      postgres -c max_connections=20 -c shared_buffers=96MB -c effective_cache_size=256MB -c maintenance_work_mem=16MB -c work_mem=1MB -c wal_buffers=4MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0 -c statement_timeout=30000 -c lock_timeout=8000 -c autovacuum_naptime=300 -c autovacuum_vacuum_cost_delay=20 -c autovacuum_max_workers=1 -c autovacuum_vacuum_cost_limit=100 -c bgwriter_delay=500 -c bgwriter_lru_maxpages=10 -c max_wal_size=128MB
+      postgres -c max_connections=20 -c shared_buffers=128MB -c effective_cache_size=384MB -c maintenance_work_mem=16MB -c work_mem=1MB -c wal_buffers=4MB -c checkpoint_completion_target=0.9 -c log_min_duration_statement=500 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c wal_level=replica -c max_replication_slots=0 -c max_logical_replication_workers=0 -c statement_timeout=30000 -c lock_timeout=8000 -c autovacuum_naptime=300 -c autovacuum_vacuum_cost_delay=20 -c autovacuum_max_workers=1 -c autovacuum_vacuum_cost_limit=100 -c bgwriter_delay=500 -c bgwriter_lru_maxpages=10 -c max_wal_size=128MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -181,6 +181,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1G
 volumes:
   postgres_data:
