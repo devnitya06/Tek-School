@@ -203,7 +203,10 @@ def create_lesson_plan_endpoint(
     db: Session = Depends(get_db),
     current_user: object = Depends(require_roles(UserRole.TEACHER, UserRole.SELF_SIGNED_TEACHER, UserRole.ADMIN, UserRole.SUPERADMIN)),
 ):
-    lesson_plan = create_lesson_plan_service(db, current_user=current_user, payload=payload)
+    try:
+        lesson_plan = create_lesson_plan_service(db, current_user=current_user, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return LessonPlanCreateResponse(message="Lesson plan created successfully.", lesson_plan_id=lesson_plan.id, status=str(lesson_plan.status))
 
 
