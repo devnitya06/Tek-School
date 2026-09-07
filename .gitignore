@@ -33,3 +33,5 @@ celerybeat-schedule.dir
 
 run.bat
 run.sh
+
+start_dev.ps1
