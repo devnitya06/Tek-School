@@ -418,6 +418,7 @@ def list_news_school(
     school_id: Optional[str] = Query(None, description="Required when accessing as admin."),
     status: Optional[str] = Query(None, description="Optional filter by status: pending, approved, rejected"),
     remark_status: Optional[str] = Query(None, description="Filter by remark status: positive, negative, need_inquiry, inactive"),
+    is_seen: Optional[bool] = Query(None, description="Filter by seen status: true = seen, false = unseen"),
     user_type: Optional[str] = Query(None, description="Optional filter by user_type: visitor or school"),
     from_date: Optional[date] = Query(None, description="Filter from this date (inclusive)"),
     to_date: Optional[date] = Query(None, description="Filter up to this date (inclusive)"),
@@ -448,6 +449,9 @@ def list_news_school(
     if remark_status:
         query = query.filter(NewsSubmission.remark_status == remark_status.strip().lower())
 
+    if is_seen is not None:
+        query = query.filter(NewsSubmission.is_seen.is_(is_seen))
+
     if user_type:
         query = query.filter(NewsSubmission.user_type == user_type.strip().lower())
 
@@ -474,6 +478,7 @@ def list_news_school(
         "filters": {
             "status": status,
             "remark_status": remark_status,
+            "is_seen": is_seen,
             "user_type": user_type,
             "from_date": from_date.isoformat() if from_date else None,
             "to_date": to_date.isoformat() if to_date else None,
