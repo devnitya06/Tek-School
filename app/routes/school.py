@@ -10980,7 +10980,7 @@ def list_support_plus(
 
 
 # ---------- Business Inquiry (school sees inquiries where school is in school_ids) ----------
-@router.get("/business-inquiry", response_model=List[BusinessInquiryResponse])
+@router.get("/business-inquiry")
 def list_business_inquiry(
     school_id: Optional[str] = Query(
         None,
@@ -10988,10 +10988,21 @@ def list_business_inquiry(
     ),
     date_from: Optional[datetime] = Query(None, description="Filter from date (ISO)"),
     date_to: Optional[datetime] = Query(None, description="Filter to date (ISO)"),
+    remark_status: Optional[str] = Query(
+        None,
+        description="Filter by remark status: relevant, not_relevant, important, call_to_action",
+    ),
+    is_seen: Optional[bool] = Query(None, description="Filter by seen status: true or false"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """List business inquiries for the school. Public: pass school_id (no auth). Auth: school gets own; admin can pass school_id."""
+    """List business inquiries for the school with pagination and filters.
+
+    Filters: date_from, date_to, remark_status, is_seen.
+    remark_status values: relevant | not_relevant | important | call_to_action
+    """
     school = _get_school_public_or_auth(current_user, db, school_id)
     q = db.query(BusinessInquiry).filter(
         BusinessInquiry.school_ids.contains([school.id])
@@ -11000,30 +11011,53 @@ def list_business_inquiry(
         q = q.filter(BusinessInquiry.created_at >= date_from)
     if date_to is not None:
         q = q.filter(BusinessInquiry.created_at <= date_to)
-    rows = q.order_by(BusinessInquiry.created_at.desc()).all()
-    return [
-        BusinessInquiryResponse(
-            id=r.id,
-            school_ids=r.school_ids,
-            guardian_name=r.guardian_name,
-            phone=r.phone,
-            email=r.email,
-            location=r.location,
-            student_name=r.student_name,
-            standard_in_academic=r.standard_in_academic,
-            inquiry_for_class=r.inquiry_for_class,
-            desire_to_know=r.desire_to_know,
-            prefer_time=r.prefer_time,
-            files=r.files,
-            message=r.message,
-            remark=r.remark,
-            remark_status=r.remark_status,
-            is_seen=r.is_seen,
-            seen_at=r.seen_at,
-            created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    if remark_status is not None:
+        q = q.filter(BusinessInquiry.remark_status == remark_status.strip().lower())
+    if is_seen is not None:
+        q = q.filter(BusinessInquiry.is_seen.is_(is_seen))
+
+    total_count = q.count()
+    total_pages = (total_count + per_page - 1) // per_page if total_count else 0
+    offset = (page - 1) * per_page
+    rows = q.order_by(BusinessInquiry.created_at.desc()).offset(offset).limit(per_page).all()
+
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_previous": page > 1,
+        "filters": {
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "remark_status": remark_status,
+            "is_seen": is_seen,
+        },
+        "items": [
+            BusinessInquiryResponse(
+                id=r.id,
+                school_ids=r.school_ids,
+                guardian_name=r.guardian_name,
+                phone=r.phone,
+                email=r.email,
+                location=r.location,
+                student_name=r.student_name,
+                standard_in_academic=r.standard_in_academic,
+                inquiry_for_class=r.inquiry_for_class,
+                desire_to_know=r.desire_to_know,
+                prefer_time=r.prefer_time,
+                files=r.files,
+                message=r.message,
+                remark=r.remark,
+                remark_status=r.remark_status,
+                is_seen=r.is_seen,
+                seen_at=r.seen_at,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ],
+    }
 
 
 @router.get("/business-inquiry/{inquiry_id}", response_model=BusinessInquiryResponse)
