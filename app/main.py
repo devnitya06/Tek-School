@@ -37,6 +37,8 @@ from app.db.session import (
     ensure_academic_results_tables,
     ensure_progress_report_tables,
     ensure_placement_schema,
+    ensure_news_schema,
+    ensure_business_inquiry_schema,
     ensure_studentstatus_pending_enum_value,
     ensure_school_facility_enum_columns,
     ensure_excellent_student_schema,
@@ -245,6 +247,8 @@ def on_startup():
         ensure_academic_results_tables()
         ensure_progress_report_tables()
         ensure_placement_schema()
+        ensure_news_schema()
+        ensure_business_inquiry_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 

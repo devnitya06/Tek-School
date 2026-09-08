@@ -260,6 +260,59 @@ def ensure_placement_schema():
             )
 
 
+
+def ensure_news_schema():
+    """Ensure news_submissions table has the is_seen and remark_status columns.
+
+    - is_seen: BOOLEAN DEFAULT FALSE NOT NULL — flips to True when a school user
+      first opens the news item detail endpoint.
+    - remark_status: VARCHAR(50) NULL — validated enum stored as a string:
+      'positive', 'negative', 'need_inquiry', or 'inactive'.
+      Inactive items are hidden from public endpoints without being deleted.
+    """
+    inspector = inspect_engine()
+    if not inspector.has_table("news_submissions"):
+        return
+
+    if not column_exists("news_submissions", "is_seen"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE news_submissions "
+                    "ADD COLUMN is_seen BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+
+    if not column_exists("news_submissions", "remark_status"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE news_submissions "
+                    "ADD COLUMN remark_status VARCHAR(50) NULL"
+                )
+            )
+
+
+def ensure_business_inquiry_schema():
+    """Ensure business_inquiry table has the remark_status column.
+
+    remark_status: VARCHAR(50) NULL — stores one of:
+      'relevant', 'not_relevant', 'important', 'call_to_action'.
+    """
+    inspector = inspect_engine()
+    if not inspector.has_table("business_inquiry"):
+        return
+
+    if not column_exists("business_inquiry", "remark_status"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE business_inquiry "
+                    "ADD COLUMN remark_status VARCHAR(50) NULL"
+                )
+            )
+
+
 def ensure_attendance_verified_at_column():
     """Teacher/staff attendance approval timestamp (set when is_verified becomes true)."""
     if column_exists("attendances", "verified_at"):

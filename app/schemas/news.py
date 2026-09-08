@@ -1,7 +1,15 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class NewsRemarkStatus(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEED_INQUIRY = "need_inquiry"
+    INACTIVE = "inactive"
 
 
 class NewsSubmissionCreateRequest(BaseModel):
@@ -33,6 +41,7 @@ class NewsSubmissionUpdateRequest(BaseModel):
 class NewsRemarkRequest(BaseModel):
     status: Optional[str] = None
     remark: Optional[str] = None
+    remark_status: Optional[NewsRemarkStatus] = None
 
 
 class NewsSubmissionResponse(BaseModel):
@@ -48,6 +57,8 @@ class NewsSubmissionResponse(BaseModel):
     location: Optional[str] = None
     status: str
     remark: Optional[str] = None
+    remark_status: Optional[str] = None
+    is_seen: bool = False
     is_verified: bool
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

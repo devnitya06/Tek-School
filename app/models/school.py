@@ -1428,10 +1428,12 @@ class BusinessInquiry(Base):
     prefer_time = Column(String(50), nullable=True)  # Morning/Afternoon/Any
     files = Column(PG_ARRAY(String), nullable=True)  # uploaded file URLs
     message = Column(Text, nullable=True)
-    remark = Column(Text, nullable=True)  # School side remarks/comments
+    remark = Column(Text, nullable=True)  # School side free-text remarks/comments
+    remark_status = Column(String(50), nullable=True)  # relevant | not_relevant | important | call_to_action
     is_seen = Column(Boolean, nullable=False, default=False)  # Viewed status
     seen_at = Column(DateTime(timezone=True), nullable=True)  # When first viewed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 
 class SchoolHoliday(Base):

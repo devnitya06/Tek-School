@@ -127,7 +127,7 @@ def list_partners(
     partners = query.order_by(PlacementPartner.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all()
     items = []
     for partner in partners:
-        count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id, PlacementAchiever.placement_year == partner.placement_year).scalar() or 0
+        count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id).scalar() or 0
         items.append(PlacementPartnerListItem.model_validate(_partner_response(partner, count)))
     return pagination.format_response(items, total)
 
@@ -138,7 +138,7 @@ def get_partner(partner_id: int, school_id: Optional[str] = Query(None), current
     partner = db.query(PlacementPartner).filter(PlacementPartner.id == partner_id, PlacementPartner.school_id == school.id).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Placement partner not found.")
-    count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id, PlacementAchiever.placement_year == partner.placement_year).scalar() or 0
+    count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id).scalar() or 0
     return _partner_response(partner, count)
 
 
@@ -158,7 +158,7 @@ def update_partner(partner_id: int, company_name: Optional[str] = Form(None), we
         partner.company_logo = uploaded
     db.commit()
     db.refresh(partner)
-    count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id, PlacementAchiever.placement_year == partner.placement_year).scalar() or 0
+    count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id).scalar() or 0
     return _partner_response(partner, count)
 
 
@@ -261,6 +261,6 @@ def public_partners(school_id: str, pagination: PaginationParams = Depends(), db
     total = query.count()
     items = []
     for partner in query.order_by(PlacementPartner.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all():
-        count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id, PlacementAchiever.placement_year == partner.placement_year, PlacementAchiever.status == PlacementStatus.ACTIVE.value).scalar() or 0
+        count = db.query(func.count(PlacementAchiever.id)).filter(PlacementAchiever.company_id == partner.id, PlacementAchiever.status == PlacementStatus.ACTIVE.value).scalar() or 0
         items.append(_partner_response(partner, count))
     return pagination.format_response(items, total)

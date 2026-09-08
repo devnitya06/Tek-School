@@ -11017,6 +11017,7 @@ def list_business_inquiry(
             files=r.files,
             message=r.message,
             remark=r.remark,
+            remark_status=r.remark_status,
             is_seen=r.is_seen,
             seen_at=r.seen_at,
             created_at=r.created_at,
@@ -11071,6 +11072,7 @@ def get_business_inquiry_detail(
         files=inquiry.files,
         message=inquiry.message,
         remark=inquiry.remark,
+        remark_status=inquiry.remark_status,
         is_seen=inquiry.is_seen,
         seen_at=inquiry.seen_at,
         created_at=inquiry.created_at,
@@ -11080,7 +11082,7 @@ def get_business_inquiry_detail(
 @router.patch("/business-inquiry/{inquiry_id}/remark")
 async def add_business_inquiry_remark(
     inquiry_id: int,
-    request: Request,
+    payload: BusinessInquiryRemarkRequest,
     school_id: Optional[str] = Query(
         None,
         description="School ID (required for admin)",
@@ -11088,30 +11090,32 @@ async def add_business_inquiry_remark(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """Add or update remark from school side."""
+    """Add or update remark and/or remark_status from school side.
+
+    remark_status values: relevant | not_relevant | important | call_to_action
+    """
     school = _get_school_for_admin_or_school(current_user, db, school_id)
-    
+
     inquiry = db.query(BusinessInquiry).filter(
         BusinessInquiry.id == inquiry_id,
         BusinessInquiry.school_ids.contains([school.id])
     ).first()
-    
+
     if not inquiry:
         raise HTTPException(status_code=404, detail="Business inquiry not found.")
-    
-    try:
-        body = await request.json()
-        remark = body.get("remark", "").strip()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
-    
-    inquiry.remark = remark if remark else None
+
+    if payload.remark is not None:
+        inquiry.remark = payload.remark.strip() if payload.remark.strip() else None
+    if payload.remark_status is not None:
+        inquiry.remark_status = payload.remark_status.value
+
     db.commit()
-    
+
     return {
         "detail": "Remark updated successfully",
         "inquiry_id": inquiry.id,
         "remark": inquiry.remark,
+        "remark_status": inquiry.remark_status,
     }
 
 

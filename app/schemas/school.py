@@ -1123,6 +1123,21 @@ class SupportPlusStatusUpdate(BaseModel):
 
 
 # Business Inquiry: visitor (non-authenticated) submits; school sees own; admin sees all
+
+class BusinessInquiryRemarkStatus(str, Enum):
+    """Status labels a school can apply to a business inquiry."""
+    RELEVANT = "relevant"
+    NOT_RELEVANT = "not_relevant"
+    IMPORTANT = "important"
+    CALL_TO_ACTION = "call_to_action"
+
+
+class BusinessInquiryRemarkRequest(BaseModel):
+    """Payload for PATCH /business-inquiry/{id}/remark."""
+    remark: Optional[str] = None
+    remark_status: Optional[BusinessInquiryRemarkStatus] = None
+
+
 class BusinessInquiryResponse(BaseModel):
     id: int
     school_ids: List[str]
@@ -1138,6 +1153,7 @@ class BusinessInquiryResponse(BaseModel):
     files: Optional[List[str]] = None
     message: Optional[str] = None
     remark: Optional[str] = None
+    remark_status: Optional[str] = None
     is_seen: bool = False
     seen_at: Optional[datetime] = None
     created_at: Optional[datetime] = None

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user_optional
 from app.db.session import get_db
-from app.models.news import NewsStatus, NewsSubmission
+from app.models.news import NewsRemarkStatus, NewsStatus, NewsSubmission
 from app.models.school import School
 from app.models.users import User
 from app.schemas.news import (
@@ -282,6 +282,8 @@ def list_news_public(
     if current_user is None:
         query = query.filter(NewsSubmission.is_verified.is_(True)).filter(
             NewsSubmission.status != NewsStatus.REJECTED.value
+        ).filter(
+            NewsSubmission.remark_status != NewsRemarkStatus.INACTIVE.value
         )
     items = query.order_by(NewsSubmission.created_at.desc()).all()
     return {
@@ -300,6 +302,7 @@ def list_news_public(
                 "location": item.location,
                 "status": item.status,
                 "remark": item.remark,
+                "remark_status": item.remark_status,
                 "is_verified": item.is_verified,
                 "created_at": item.created_at,
                 "updated_at": item.updated_at,
@@ -325,7 +328,11 @@ def get_news_public(
     )
     if not item:
         raise HTTPException(status_code=404, detail="News submission not found.")
-    if current_user is None and (not item.is_verified or item.status == NewsStatus.REJECTED.value):
+    if current_user is None and (
+        not item.is_verified
+        or item.status == NewsStatus.REJECTED.value
+        or item.remark_status == NewsRemarkStatus.INACTIVE.value
+    ):
         raise HTTPException(status_code=404, detail="News submission not found.")
     return {
         "id": item.id,
@@ -340,6 +347,7 @@ def get_news_public(
         "location": item.location,
         "status": item.status,
         "remark": item.remark,
+        "remark_status": item.remark_status,
         "is_verified": item.is_verified,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -479,6 +487,8 @@ def list_news_school(
                 "location": item.location,
                 "status": item.status,
                 "remark": item.remark,
+                "remark_status": item.remark_status,
+                "is_seen": item.is_seen,
                 "is_verified": item.is_verified,
                 "created_at": item.created_at,
                 "updated_at": item.updated_at,
@@ -504,6 +514,14 @@ def get_news_school(
     )
     if not item:
         raise HTTPException(status_code=404, detail="News submission not found.")
+    # Mark as seen on first open by school/admin
+    if not item.is_seen:
+        item.is_seen = True
+        try:
+            db.commit()
+            db.refresh(item)
+        except Exception:
+            db.rollback()  # Non-critical; don't fail the request
     return {
         "id": item.id,
         "school_id": item.school_id,
@@ -517,6 +535,8 @@ def get_news_school(
         "location": item.location,
         "status": item.status,
         "remark": item.remark,
+        "remark_status": item.remark_status,
+        "is_seen": item.is_seen,
         "is_verified": item.is_verified,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -632,6 +652,8 @@ def remark_news_school(
         item.status = payload.status.strip().lower()
     if payload.remark is not None:
         item.remark = payload.remark.strip() if payload.remark else None
+    if payload.remark_status is not None:
+        item.remark_status = payload.remark_status.value
 
     try:
         db.commit()
@@ -645,4 +667,5 @@ def remark_news_school(
         "school_id": item.school_id,
         "status": item.status,
         "remark": item.remark,
+        "remark_status": item.remark_status,
     }

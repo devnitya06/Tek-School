@@ -13,6 +13,13 @@ class NewsStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class NewsRemarkStatus(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEED_INQUIRY = "need_inquiry"
+    INACTIVE = "inactive"
+
+
 class NewsSubmission(Base):
     __tablename__ = "news_submissions"
 
@@ -28,6 +35,8 @@ class NewsSubmission(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), nullable=False, default=NewsStatus.PENDING.value)
     remark = Column(Text, nullable=True)
+    remark_status = Column(String(50), nullable=True)
+    is_seen = Column(Boolean, nullable=False, default=False)
     is_verified = Column(Boolean, nullable=False, default=False)
     otp_code = Column(String(10), nullable=True)
     otp_expires_at = Column(DateTime, nullable=True)
