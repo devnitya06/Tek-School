@@ -1093,14 +1093,14 @@ async def list_all_schools(
         if values:
             query = query.where(
                 School.institution_categories != None,
-                School.institution_categories.overlap(cast(values, ARRAY(String))),
+                cast(School.institution_categories, ARRAY(String)).overlap(cast(values, ARRAY(String))),
             )
     if hostel:
         values = [v.strip() for v in hostel if v and v.strip()]
         if values:
             query = query.where(
                 School.hostel != None,
-                School.hostel.overlap(cast(values, ARRAY(String))),
+                cast(School.hostel, ARRAY(String)).overlap(cast(values, ARRAY(String))),
             )
     if available_classes:
         try:
@@ -1108,7 +1108,7 @@ async def list_all_schools(
             if values:
                 query = query.where(
                     School.available_classes != None,
-                    School.available_classes.overlap(cast(values, ARRAY(String))),
+                    cast(School.available_classes, ARRAY(String)).overlap(cast(values, ARRAY(String))),
                 )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
