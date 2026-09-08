@@ -5,6 +5,7 @@ from fastapi import (
     File,
     UploadFile,
     HTTPException,
+    Request,
     status,
     Query,
 )
@@ -867,6 +868,7 @@ def get_admin_platform_summary(
 
 @router.get("/schools/")
 async def list_all_schools(
+    request: Request,
     pagination: PaginationParams = Depends(),
     school_id: Optional[str] = Query(
         None,
@@ -978,6 +980,32 @@ async def list_all_schools(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all schools with filters. Public endpoint - no authentication required. Pass school_id to get a specific school."""
+
+    # ── Validate query parameter keys — reject unknown/misspelled filters ──
+    VALID_FILTER_KEYS = {
+        "page", "per_page",
+        "school_id", "id", "school_name", "account_type", "school_type",
+        "is_business_approved", "state", "district", "school_board", "school_medium",
+        "due_installment_type", "teaching_method", "transportation_facility",
+        "institution_categories", "hostel", "available_classes", "is_verified",
+        "computer_lab", "medical_faculties", "job_assurance", "admission_process",
+        "internship", "lms_facility", "alumni_network", "institution_class",
+        "library", "have_digital_board", "have_cctv_in_campus",
+        "have_scholarship_opportunities", "have_extra_curricular_activities",
+        "from_date", "to_date",
+    }
+    incoming_keys = set(request.query_params.keys())
+    unknown_keys = incoming_keys - VALID_FILTER_KEYS
+    if unknown_keys:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Invalid filter key(s) provided. Please check your query parameters.",
+                "invalid_keys": sorted(unknown_keys),
+                "valid_filters": sorted(VALID_FILTER_KEYS),
+            },
+        )
+
     query = select(School)
     filter_id = school_id or id
     if filter_id:
@@ -1063,16 +1091,25 @@ async def list_all_schools(
     if institution_categories:
         values = [v.strip() for v in institution_categories if v and v.strip()]
         if values:
-            query = query.where(School.institution_categories.overlap(cast(values, ARRAY(String))))
+            query = query.where(
+                School.institution_categories != None,
+                School.institution_categories.overlap(cast(values, ARRAY(String))),
+            )
     if hostel:
         values = [v.strip() for v in hostel if v and v.strip()]
         if values:
-            query = query.where(School.hostel.overlap(cast(values, ARRAY(String))))
+            query = query.where(
+                School.hostel != None,
+                School.hostel.overlap(cast(values, ARRAY(String))),
+            )
     if available_classes:
         try:
             values = normalize_array_query_values(available_classes)
             if values:
-                query = query.where(School.available_classes.overlap(cast(values, ARRAY(String))))
+                query = query.where(
+                    School.available_classes != None,
+                    School.available_classes.overlap(cast(values, ARRAY(String))),
+                )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     if is_verified is not None:
@@ -1160,35 +1197,80 @@ async def list_all_schools(
             raise HTTPException(
                 status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD"
             )
-    total_count = (await db.execute(
-        select(func.count()).select_from(query.subquery())
-    )).scalar_one()
-    schools = (
-        (await db.execute(
-            query.order_by(School.created_at.desc(), School.id.asc())
-        .offset(pagination.offset())
-        .limit(pagination.limit())
-        )).scalars().all()
-    )
+    if from_date and to_date:
+        try:
+            _fd = datetime.strptime(from_date, "%Y-%m-%d")
+            _td = datetime.strptime(to_date, "%Y-%m-%d")
+            if _fd > _td:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"from_date ({from_date}) cannot be after to_date ({to_date}).",
+                )
+        except ValueError:
+            pass  # already caught above individually
+
+    # ── Execute queries — catch DB-level errors and return clean responses ──
+    from sqlalchemy.exc import SQLAlchemyError, ProgrammingError, OperationalError as SAOperationalError
+    try:
+        total_count = (await db.execute(
+            select(func.count()).select_from(query.subquery())
+        )).scalar_one()
+        schools = (
+            (await db.execute(
+                query.order_by(School.created_at.desc(), School.id.asc())
+                .offset(pagination.offset())
+                .limit(pagination.limit())
+            )).scalars().all()
+        )
+    except ProgrammingError as e:
+        err_msg = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
+        if "column" in err_msg.lower() and "does not exist" in err_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "One or more filter fields are not yet available in the database. "
+                    "Please contact support or try a different filter."
+                ),
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid filter or query: {err_msg}",
+        )
+    except SAOperationalError:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is temporarily unavailable. Please try again shortly.",
+        )
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not apply the given filters. Details: {str(e)}",
+        )
+
     school_ids = [s.id for s in schools]
     rating_by_school = {}
     if school_ids:
-        rating_stats = (
-            await db.execute(select(
-                SchoolRating.school_id,
-                func.count(SchoolRating.id).label("rating_count"),
-                func.avg(SchoolRating.rating).label("average_rating"),
-            ).where(SchoolRating.school_id.in_(school_ids)).group_by(SchoolRating.school_id))
-        )
-        rating_by_school = {
-            row.school_id: {
-                "rating_count": row.rating_count,
-                "average_rating": float(round(row.average_rating, 2))
-                if row.average_rating is not None
-                else None,
+        try:
+            rating_stats = (
+                await db.execute(select(
+                    SchoolRating.school_id,
+                    func.count(SchoolRating.id).label("rating_count"),
+                    func.avg(SchoolRating.rating).label("average_rating"),
+                ).where(SchoolRating.school_id.in_(school_ids)).group_by(SchoolRating.school_id))
+            )
+            rating_by_school = {
+                row.school_id: {
+                    "rating_count": row.rating_count,
+                    "average_rating": float(round(row.average_rating, 2))
+                    if row.average_rating is not None
+                    else None,
+                }
+                for row in rating_stats.all()
             }
-            for row in rating_stats.all()
-        }
+        except SQLAlchemyError:
+            # Rating fetch failure should not break the main response
+            rating_by_school = {}
+
     items = [
         {
             "id": s.id,
@@ -1244,6 +1326,18 @@ async def list_all_schools(
         }
         for s in schools
     ]
+
+    if not items:
+        return {
+            "success": False,
+            "message": "No schools found matching the given filters. Please try different filter values.",
+            "page": pagination.page,
+            "per_page": pagination.per_page,
+            "total_count": 0,
+            "total_pages": 0,
+            "items": [],
+        }
+
     return pagination.format_response(items, total_count)
 
 
