@@ -1138,6 +1138,17 @@ class BusinessInquiryRemarkRequest(BaseModel):
     remark_status: Optional[BusinessInquiryRemarkStatus] = None
 
 
+class BusinessInquiryGender(str, Enum):
+    MALE = "male"
+    FEMALE = "female"
+    OTHER = "other"
+
+
+class BusinessInquiryWhoIsThis(str, Enum):
+    STUDENT = "student"
+    PARENT = "parent"
+
+
 class BusinessInquiryResponse(BaseModel):
     id: int
     school_ids: List[str]
@@ -1146,6 +1157,11 @@ class BusinessInquiryResponse(BaseModel):
     email: str
     location: Optional[str] = None
     student_name: Optional[str] = None
+    gender: str
+    previous_institution: Optional[str] = None
+    relationship_with: Optional[str] = None
+    prefer_days: Optional[str] = None
+    who_is_this: str
     standard_in_academic: Optional[str] = None
     inquiry_for_class: Optional[List[str]] = None
     desire_to_know: Optional[List[str]] = None
@@ -1169,6 +1185,11 @@ class BusinessInquiryCreate(BaseModel):
     email: str
     location: Optional[str] = None
     student_name: Optional[str] = None
+    gender: BusinessInquiryGender
+    previous_institution: Optional[str] = None
+    relationship_with: Optional[str] = None
+    prefer_days: Optional[str] = None
+    who_is_this: BusinessInquiryWhoIsThis
     standard_in_academic: Optional[str] = None
     inquiry_for_class: Optional[List[str]] = None
     desire_to_know: Optional[List[str]] = None

@@ -294,23 +294,26 @@ def ensure_news_schema():
 
 
 def ensure_business_inquiry_schema():
-    """Ensure business_inquiry table has the remark_status column.
-
-    remark_status: VARCHAR(50) NULL — stores one of:
-      'relevant', 'not_relevant', 'important', 'call_to_action'.
-    """
+    """Ensure business_inquiry table includes support fields used by the public inquiry form."""
     inspector = inspect_engine()
     if not inspector.has_table("business_inquiry"):
         return
 
-    if not column_exists("business_inquiry", "remark_status"):
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE business_inquiry "
-                    "ADD COLUMN remark_status VARCHAR(50) NULL"
+    for column_name, column_type in {
+        "gender": "VARCHAR(20)",
+        "previous_institution": "VARCHAR(255)",
+        "relationship_with": "VARCHAR(100)",
+        "prefer_days": "VARCHAR(100)",
+        "who_is_this": "VARCHAR(20)",
+        "remark_status": "VARCHAR(50)",
+    }.items():
+        if not column_exists("business_inquiry", column_name):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE business_inquiry ADD COLUMN \"{column_name}\" {column_type}"
+                    )
                 )
-            )
 
 
 def ensure_attendance_verified_at_column():

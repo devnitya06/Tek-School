@@ -1408,6 +1408,17 @@ class SupportPlus(Base):
     school = relationship("School", back_populates="support_plus")
 
 
+class BusinessInquiryGender(str, Enum):
+    MALE = "male"
+    FEMALE = "female"
+    OTHER = "other"
+
+
+class BusinessInquiryWhoIsThis(str, Enum):
+    STUDENT = "student"
+    PARENT = "parent"
+
+
 class BusinessInquiry(Base):
     """Business inquiry from visitors (non-authenticated). Multiple schools, files, lists."""
 
@@ -1422,6 +1433,11 @@ class BusinessInquiry(Base):
     email = Column(String(255), nullable=False)
     location = Column(String(255), nullable=True)
     student_name = Column(String(255), nullable=True)
+    gender = Column(String(20), nullable=False)
+    previous_institution = Column(String(255), nullable=True)
+    relationship_with = Column(String(100), nullable=True)
+    prefer_days = Column(String(100), nullable=True)  # e.g. Mon-Fri
+    who_is_this = Column(String(20), nullable=False)
     standard_in_academic = Column(String(100), nullable=True)  # e.g. Class 10
     inquiry_for_class = Column(PG_ARRAY(String), nullable=True)  # multiple classes
     desire_to_know = Column(PG_ARRAY(String), nullable=True)  # list of strings

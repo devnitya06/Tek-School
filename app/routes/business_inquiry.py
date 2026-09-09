@@ -29,6 +29,11 @@ async def create_business_inquiry(
     email: str = Form(..., max_length=255),
     location: Optional[str] = Form(None),
     student_name: Optional[str] = Form(None),
+    gender: str = Form(..., description="Gender: male, female, or other"),
+    previous_institution: Optional[str] = Form(None),
+    relationship_with: Optional[str] = Form(None),
+    prefer_days: Optional[str] = Form(None, description="Preferred days, e.g. Mon-Fri"),
+    who_is_this: str = Form(..., description="Who is submitting: student or parent"),
     standard_in_academic: Optional[str] = Form(None),
     inquiry_for_class: Optional[str] = Form(None, description="Comma-separated classes, e.g. Class 1,Class 2"),
     desire_to_know: Optional[str] = Form(None, description="Comma-separated items"),
@@ -52,6 +57,15 @@ async def create_business_inquiry(
             detail=f"Invalid school_id(s): {', '.join(invalid_ids)}. No matching school(s) found.",
         )
 
+    gender_value = gender.strip().lower()
+    who_is_this_value = who_is_this.strip().lower()
+    valid_genders = {"male", "female", "other"}
+    valid_who_is_this = {"student", "parent"}
+    if gender_value not in valid_genders:
+        raise HTTPException(status_code=400, detail="gender must be one of: male, female, other.")
+    if who_is_this_value not in valid_who_is_this:
+        raise HTTPException(status_code=400, detail="who_is_this must be either 'student' or 'parent'.")
+
     inquiry_for_class_list = _parse_list(inquiry_for_class)
     desire_to_know_list = _parse_list(desire_to_know)
 
@@ -72,6 +86,11 @@ async def create_business_inquiry(
         email=email.strip(),
         location=location.strip() if location else None,
         student_name=student_name.strip() if student_name else None,
+        gender=gender_value,
+        previous_institution=previous_institution.strip() if previous_institution else None,
+        relationship_with=relationship_with.strip() if relationship_with else None,
+        prefer_days=prefer_days.strip() if prefer_days else None,
+        who_is_this=who_is_this_value,
         standard_in_academic=standard_in_academic.strip() if standard_in_academic else None,
         inquiry_for_class=inquiry_for_class_list or None,
         desire_to_know=desire_to_know_list or None,
@@ -97,9 +116,15 @@ async def create_business_inquiry(
         email=record.email,
         location=record.location,
         student_name=record.student_name,
+        gender=record.gender,
+        previous_institution=record.previous_institution,
+        relationship_with=record.relationship_with,
+        prefer_days=record.prefer_days,
+        who_is_this=record.who_is_this,
         standard_in_academic=record.standard_in_academic,
         inquiry_for_class=record.inquiry_for_class,
         desire_to_know=record.desire_to_know,
+        prefer_time=record.prefer_time,
         files=record.files,
         message=record.message,
         created_at=record.created_at,
