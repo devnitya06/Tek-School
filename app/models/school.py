@@ -38,6 +38,7 @@ class SchoolMedium(str, Enum):
     HINDI = "hindi"
     BILINGUAL = "bilingual"
     OTHER = "other"
+    STATE_BOARD = "state_board"
 
 
 class SchoolBoard(str, Enum):

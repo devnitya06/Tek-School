@@ -899,7 +899,7 @@ async def list_all_schools(
     ),
     school_medium: Optional[List[str]] = Query(
         None,
-        description="Filter by school medium (multiple). Values: english, hindi, bilingual, other",
+        description="Filter by school medium (multiple). Repeat school_medium for multiple values. Values: english, hindi, bilingual, other, state_board",
     ),
     due_installment_type: Optional[List[str]] = Query(
         None,
@@ -2611,7 +2611,10 @@ def get_teacher_details(
 def get_class_subjects(
     class_name: str | None = None,
     school_board: str | None = None,
-    school_medium: str | None = None,
+    school_medium: Optional[List[SchoolMedium]] = Query(
+        None,
+        description="Filter by school medium (multiple). Repeat school_medium for multiple values.",
+    ),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(UserRole.ADMIN, UserRole.SELF_SIGNED_STUDENT, UserRole.SELF_SIGNED_TEACHER)),
@@ -2646,11 +2649,7 @@ def get_class_subjects(
                 cast(SchoolClassSubject.school_board, String).ilike(f"%{school_board}%")
             )
         if school_medium:
-            query = query.filter(
-                cast(SchoolClassSubject.school_medium, String).ilike(
-                    f"%{school_medium}%"
-                )
-            )
+            query = query.filter(SchoolClassSubject.school_medium.in_(school_medium))
 
         # 🔢 Count before pagination
         total_count = query.count()
@@ -2801,7 +2800,10 @@ def update_class_subject(
 @router.get("/classes/")
 def get_all_classes(
     school_board: Optional[SchoolBoard] = None,
-    school_medium: Optional[SchoolMedium] = None,
+    school_medium: Optional[List[SchoolMedium]] = Query(
+        None,
+        description="Filter by school medium (multiple). Repeat school_medium for multiple values.",
+    ),
     pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user=Depends(
@@ -2828,7 +2830,7 @@ def get_all_classes(
             query = query.filter(SchoolClassSubject.school_board == school_board)
 
         if school_medium:
-            query = query.filter(SchoolClassSubject.school_medium == school_medium)
+            query = query.filter(SchoolClassSubject.school_medium.in_(school_medium))
 
         total_count = query.count()
 
