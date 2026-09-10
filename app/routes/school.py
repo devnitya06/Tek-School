@@ -295,7 +295,11 @@ def get_school_self(
         "user_id": school.user_id,
         "school_name": school.school_name,
         "school_type": (school.school_type.value if school.school_type else None),
-        "school_medium": (school.school_medium.value if school.school_medium else None),
+        "school_medium": (
+            [medium.value for medium in school.school_medium]
+            if school.school_medium
+            else []
+        ),
         "school_board": (school.school_board.value if school.school_board else None),
         "school_logo": school.profile_pic_url,
         "school_banner": school.banner_pic_url,
@@ -658,7 +662,9 @@ async def update_school_profile(
             "school_name": school.school_name,
             "school_type": (school.school_type.value if school.school_type else None),
             "school_medium": (
-                school.school_medium.value if school.school_medium else None
+                [medium.value for medium in school.school_medium]
+                if school.school_medium
+                else []
             ),
             "school_board": (
                 school.school_board.value if school.school_board else None
@@ -1143,7 +1149,11 @@ async def get_school_profile(
         "user_id": school.user_id,
         "school_name": school.school_name,
         "school_type": (school.school_type.value if school.school_type else None),
-        "school_medium": (school.school_medium.value if school.school_medium else None),
+        "school_medium": (
+            [medium.value for medium in school.school_medium]
+            if school.school_medium
+            else []
+        ),
         "school_board": (school.school_board.value if school.school_board else None),
         "school_logo": school.profile_pic_url,
         "school_banner": school.banner_pic_url,

@@ -1056,7 +1056,7 @@ async def list_all_schools(
         try:
             medium_values = normalize_enum_values(SchoolMedium, school_medium)
             if medium_values:
-                query = query.where(func.lower(cast(School.school_medium, String)).in_(medium_values))
+                query = query.where(School.school_medium.overlap(medium_values))
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -1279,9 +1279,11 @@ async def list_all_schools(
             "school_type": s.school_type.value
             if hasattr(s.school_type, "value")
             else (s.school_type if s.school_type else None),
-            "school_medium": s.school_medium.value
-            if hasattr(s.school_medium, "value")
-            else (s.school_medium if s.school_medium else None),
+            "school_medium": (
+                [medium.value for medium in s.school_medium]
+                if s.school_medium
+                else []
+            ),
             "school_board": s.school_board.value
             if hasattr(s.school_board, "value")
             else (s.school_board if s.school_board else None),

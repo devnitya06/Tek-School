@@ -178,6 +178,25 @@ class SchoolAccountTypeDecorator(TypeDecorator):
         return value
 
 
+class SchoolMediumArrayType(TypeDecorator):
+    """Store school mediums as VARCHAR[] while exposing enum values in Python."""
+
+    impl = PG_ARRAY(String)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return [SchoolMedium(item).value if not isinstance(item, SchoolMedium) else item.value for item in values]
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return [SchoolMedium(item) for item in values]
+
+
 class School(Base):
     __tablename__ = "schools"
 
@@ -186,7 +205,7 @@ class School(Base):
     # School Information
     school_name = Column(String, nullable=False)
     school_type = Column(SchoolAccountTypeDecorator(SchoolType, length=50), nullable=True)
-    school_medium = Column(SchoolAccountTypeDecorator(SchoolMedium, length=50), nullable=True)
+    school_medium = Column(SchoolMediumArrayType(), nullable=True)
     school_board = Column(SchoolAccountTypeDecorator(SchoolBoard, length=50), nullable=True)
     establishment_year = Column(Integer, nullable=True)
     establishment_month = Column(Integer, nullable=True)

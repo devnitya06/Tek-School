@@ -11,7 +11,7 @@ class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
     school_type: str
-    school_medium: SchoolMedium
+    school_medium: List[SchoolMedium]
     school_board: str
     establishment_year: int
     establishment_month: Optional[int] = None
@@ -62,7 +62,7 @@ class SchoolProfileOut(SchoolProfileBase):
     id: str
     user_id: int
     school_type: Optional[str] = None
-    school_medium: Optional[str] = None
+    school_medium: Optional[List[SchoolMedium]] = None
     school_board: Optional[str] = None
     institution_categories: Optional[List[str]] = None
     hostel: Optional[List[str]] = None
@@ -150,7 +150,7 @@ class SchoolSelfResponse(BaseModel):
 class SchoolProfileUpdate(BaseModel):
     school_name: Optional[str] = None
     school_type: Optional[str] = None
-    school_medium: Optional[SchoolMedium] = None
+    school_medium: Optional[List[SchoolMedium]] = None
     school_board: Optional[str] = None
     establishment_year: Optional[int] = None
     establishment_month: Optional[int] = None
