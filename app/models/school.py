@@ -184,17 +184,29 @@ class SchoolMediumArrayType(TypeDecorator):
     impl = PG_ARRAY(String)
     cache_ok = True
 
+    @staticmethod
+    def _values(value):
+        if isinstance(value, str):
+            if value.startswith("{") and value.endswith("}"):
+                return [item for item in value[1:-1].split(",") if item]
+            return [value]
+        return value if isinstance(value, (list, tuple)) else [value]
+
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        values = value if isinstance(value, (list, tuple)) else [value]
-        return [SchoolMedium(item).value if not isinstance(item, SchoolMedium) else item.value for item in values]
+        return [
+            item.value if isinstance(item, SchoolMedium) else SchoolMedium(str(item).strip().lower()).value
+            for item in self._values(value)
+        ]
 
     def process_result_value(self, value, dialect):
         if value is None:
             return None
-        values = value if isinstance(value, (list, tuple)) else [value]
-        return [SchoolMedium(item) for item in values]
+        return [
+            item if isinstance(item, SchoolMedium) else SchoolMedium(str(item).strip().lower())
+            for item in self._values(value)
+        ]
 
 
 class School(Base):
