@@ -66,6 +66,7 @@ class SelfSignedTeacherProfileResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     role: Optional[str] = None
+    board: List[str] = Field(default_factory=list)
 
     model_config = {
         "from_attributes": True

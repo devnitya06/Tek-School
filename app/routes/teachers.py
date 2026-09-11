@@ -586,6 +586,11 @@ def get_teacher_profile(
         "id": teacher.id,
         "school_id": teacher.school_id,
         "school_name": teacher.school.school_name if teacher.school else None,
+        "board": (
+            teacher.school.school_board.value
+            if teacher.school and hasattr(teacher.school.school_board, "value")
+            else (teacher.school.school_board if teacher.school else None)
+        ),
         "user_id": teacher.user_id,
         "profile_image": teacher.profile_image,
         "first_name": teacher.first_name,

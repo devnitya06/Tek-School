@@ -93,6 +93,14 @@ def get_self_signed_teacher_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Teacher profile not found")
 
+    configured_boards = sorted(
+        {
+            configuration.board_id
+            for configuration in profile.teaching_configurations
+            if configuration.is_active and configuration.board_id
+        }
+    )
+
     # Merge profile with role from User model
     profile_data = {
         "id": profile.id,
@@ -124,6 +132,7 @@ def get_self_signed_teacher_profile(
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
         "role": current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+        "board": configured_boards,
     }
     return profile_data
 
