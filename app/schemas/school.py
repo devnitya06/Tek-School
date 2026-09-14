@@ -1157,11 +1157,11 @@ class BusinessInquiryResponse(BaseModel):
     email: str
     location: Optional[str] = None
     student_name: Optional[str] = None
-    gender: str
+    gender: Optional[str] = None
     previous_institution: Optional[str] = None
     relationship_with: Optional[str] = None
     prefer_days: Optional[str] = None
-    who_is_this: str
+    who_is_this: Optional[str] = None
     standard_in_academic: Optional[str] = None
     inquiry_for_class: Optional[List[str]] = None
     desire_to_know: Optional[List[str]] = None
