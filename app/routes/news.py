@@ -4,6 +4,7 @@ from typing import List, Optional
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, BackgroundTasks
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user_optional
@@ -283,7 +284,10 @@ def list_news_public(
         query = query.filter(NewsSubmission.is_verified.is_(True)).filter(
             NewsSubmission.status != NewsStatus.REJECTED.value
         ).filter(
-            NewsSubmission.remark_status != NewsRemarkStatus.INACTIVE.value
+            or_(
+                NewsSubmission.remark_status.is_(None),
+                NewsSubmission.remark_status != NewsRemarkStatus.INACTIVE.value,
+            )
         )
     items = query.order_by(NewsSubmission.created_at.desc()).all()
     return {
