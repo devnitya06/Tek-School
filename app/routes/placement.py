@@ -114,7 +114,7 @@ def create_partner(
 def list_partners(
     pagination: PaginationParams = Depends(), company_name: Optional[str] = Query(None),
     placement_year: Optional[int] = Query(None), school_id: Optional[str] = Query(None),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     school = _school_for_user(db, current_user, school_id)
@@ -133,7 +133,7 @@ def list_partners(
 
 
 @router.get("/partners/{partner_id}", response_model=PlacementPartnerResponse)
-def get_partner(partner_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def get_partner(partner_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     partner = db.query(PlacementPartner).filter(PlacementPartner.id == partner_id, PlacementPartner.school_id == school.id).first()
     if not partner:
@@ -143,7 +143,7 @@ def get_partner(partner_id: int, school_id: Optional[str] = Query(None), current
 
 
 @router.patch("/partners/{partner_id}", response_model=PlacementPartnerResponse)
-def update_partner(partner_id: int, company_name: Optional[str] = Form(None), website: Optional[str] = Form(None), placement_year: Optional[int] = Form(None), campus_month: CampusMonth = Form(None), about_company: Optional[str] = Form(None), hiring_criteria: Optional[str] = Form(None), what_they_give: Optional[str] = Form(None), status_value: Optional[PlacementStatus] = Form(None), company_logo: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def update_partner(partner_id: int, company_name: Optional[str] = Form(None), website: Optional[str] = Form(None), placement_year: Optional[int] = Form(None), campus_month: CampusMonth = Form(None), about_company: Optional[str] = Form(None), hiring_criteria: Optional[str] = Form(None), what_they_give: Optional[str] = Form(None), status_value: Optional[PlacementStatus] = Form(None), company_logo: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     partner = db.query(PlacementPartner).filter(PlacementPartner.id == partner_id, PlacementPartner.school_id == school.id).first()
     if not partner:
@@ -163,7 +163,7 @@ def update_partner(partner_id: int, company_name: Optional[str] = Form(None), we
 
 
 @router.delete("/partners/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_partner(partner_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def delete_partner(partner_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     partner = db.query(PlacementPartner).filter(PlacementPartner.id == partner_id, PlacementPartner.school_id == school.id).first()
     if not partner:
