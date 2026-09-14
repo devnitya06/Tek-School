@@ -181,7 +181,7 @@ def _create_achiever(*, company_id: int, school: School, db: Session) -> Placeme
 
 @router.post("/achievers", response_model=PlacementAchieverResponse, status_code=status.HTTP_201_CREATED)
 def create_achiever(
-    student_name: str = Form(...), gender: str = Form(...), class_name: str = Form(...), company_id: int = Form(...), company_name: str = Form(...), designation: str = Form(...), salary_package_lpa: str = Form(...), placement_year: int = Form(...), section_roll_no: Optional[str] = Form(None), about_student: Optional[str] = Form(None), status_value: PlacementStatus = Form(PlacementStatus.ACTIVE), student_logo: Optional[UploadFile] = File(None), file: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+    student_name: str = Form(...), gender: str = Form(...), class_name: str = Form(...), company_id: int = Form(...), company_name: str = Form(...), designation: str = Form(...), salary_package_lpa: str = Form(...), placement_year: int = Form(...), section_roll_no: Optional[str] = Form(None), about_student: Optional[str] = Form(None), status_value: PlacementStatus = Form(PlacementStatus.ACTIVE), student_logo: Optional[UploadFile] = File(None), file: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     partner = _create_achiever(company_id=company_id, school=school, db=db)
     if company_name.strip().casefold() != partner.company_name.strip().casefold():
@@ -198,7 +198,7 @@ def _achiever_query(db: Session, school: School):
 
 
 @router.get("/achievers", response_model=dict)
-def list_achievers(pagination: PaginationParams = Depends(), student_name: Optional[str] = Query(None), class_name: Optional[str] = Query(None), company_name: Optional[str] = Query(None), placement_year: Optional[int] = Query(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def list_achievers(pagination: PaginationParams = Depends(), student_name: Optional[str] = Query(None), class_name: Optional[str] = Query(None), company_name: Optional[str] = Query(None), placement_year: Optional[int] = Query(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     query = _achiever_query(db, school)
     if student_name: query = query.filter(PlacementAchiever.student_name.ilike(f"%{student_name}%"))
@@ -211,7 +211,7 @@ def list_achievers(pagination: PaginationParams = Depends(), student_name: Optio
 
 
 @router.get("/achievers/{achiever_id}", response_model=PlacementAchieverResponse)
-def get_achiever(achiever_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def get_achiever(achiever_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     item = _achiever_query(db, school).filter(PlacementAchiever.id == achiever_id).first()
     if not item: raise HTTPException(status_code=404, detail="Placement achiever not found.")
@@ -219,7 +219,7 @@ def get_achiever(achiever_id: int, school_id: Optional[str] = Query(None), curre
 
 
 @router.patch("/achievers/{achiever_id}", response_model=PlacementAchieverResponse)
-def update_achiever(achiever_id: int, student_name: Optional[str] = Form(None), gender: Optional[str] = Form(None), class_name: Optional[str] = Form(None), company_id: Optional[int] = Form(None), designation: Optional[str] = Form(None), salary_package_lpa: Optional[str] = Form(None), placement_year: Optional[int] = Form(None), section_roll_no: Optional[str] = Form(None), about_student: Optional[str] = Form(None), status_value: Optional[PlacementStatus] = Form(None), student_logo: Optional[UploadFile] = File(None), file: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def update_achiever(achiever_id: int, student_name: Optional[str] = Form(None), gender: Optional[str] = Form(None), class_name: Optional[str] = Form(None), company_id: Optional[int] = Form(None), designation: Optional[str] = Form(None), salary_package_lpa: Optional[str] = Form(None), placement_year: Optional[int] = Form(None), section_roll_no: Optional[str] = Form(None), about_student: Optional[str] = Form(None), status_value: Optional[PlacementStatus] = Form(None), student_logo: Optional[UploadFile] = File(None), file: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     item = _achiever_query(db, school).filter(PlacementAchiever.id == achiever_id).first()
     if not item: raise HTTPException(status_code=404, detail="Placement achiever not found.")
@@ -237,7 +237,7 @@ def update_achiever(achiever_id: int, student_name: Optional[str] = Form(None), 
 
 
 @router.delete("/achievers/{achiever_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_achiever(achiever_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
+def delete_achiever(achiever_id: int, school_id: Optional[str] = Query(None), current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)), db: Session = Depends(get_db)):
     school = _school_for_user(db, current_user, school_id)
     item = _achiever_query(db, school).filter(PlacementAchiever.id == achiever_id).first()
     if not item: raise HTTPException(status_code=404, detail="Placement achiever not found.")
