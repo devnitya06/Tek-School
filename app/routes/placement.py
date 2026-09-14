@@ -18,7 +18,7 @@ from app.schemas.placement import (
 )
 from app.schemas.users import UserRole
 from app.services.pagination import PaginationParams
-from app.utils.permission import require_roles
+from app.utils.permission import require_roles, require_roles_allow_listing_school
 from app.utils.s3 import upload_multipart_file_to_s3
 
 router = APIRouter(prefix="/placement")
@@ -96,7 +96,7 @@ def create_partner(
     hiring_criteria: Optional[str] = Form(None), what_they_give: Optional[str] = Form(None),
     status_value: PlacementStatus = Form(PlacementStatus.ACTIVE),
     company_logo: Optional[UploadFile] = File(None), school_id: Optional[str] = Query(None),
-    current_user: User = Depends(require_roles(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: Session = Depends(get_db),
 ):
     school = _school_for_user(db, current_user, school_id)
