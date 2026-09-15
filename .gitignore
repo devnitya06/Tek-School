@@ -12,8 +12,6 @@ note.txt
 env/
 venv/
 
-# Alembic
-alembic.ini
 
 # Logs
 *.log
