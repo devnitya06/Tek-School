@@ -913,6 +913,50 @@ def ensure_school_facility_enum_columns():
         print(f"[startup] ensure_school_facility_enum_columns failed (non-fatal): {exc}")
 
 
+def ensure_school_medium_array_column():
+    """Ensure schools.school_medium matches the School model's VARCHAR[] type."""
+    try:
+        with engine.begin() as conn:
+            column_type = conn.execute(
+                text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name = 'schools' AND column_name = 'school_medium'"
+                )
+            ).scalar()
+
+            if not column_type or column_type.lower() == "array":
+                return
+
+            if column_type.lower() not in {
+                "character varying",
+                "varchar",
+                "text",
+                "user-defined",
+            }:
+                print(
+                    "[startup] ensure_school_medium_array_column: "
+                    f"unexpected type '{column_type}' - skipping."
+                )
+                return
+
+            conn.execute(
+                text(
+                    "ALTER TABLE schools "
+                    "ALTER COLUMN school_medium TYPE VARCHAR(50)[] "
+                    "USING CASE "
+                    "WHEN school_medium IS NULL OR trim(school_medium::text) = '' "
+                    "THEN NULL "
+                    "ELSE ARRAY[school_medium::text]::VARCHAR(50)[] END"
+                )
+            )
+            print(
+                "[startup] ensure_school_medium_array_column: "
+                "converted school_medium to VARCHAR[]."
+            )
+    except Exception as exc:
+        print(f"[startup] ensure_school_medium_array_column failed: {exc}")
+
+
 
 def ensure_excellent_student_schema():
     """

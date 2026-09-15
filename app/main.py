@@ -41,6 +41,7 @@ from app.db.session import (
     ensure_business_inquiry_schema,
     ensure_studentstatus_pending_enum_value,
     ensure_school_facility_enum_columns,
+    ensure_school_medium_array_column,
     ensure_excellent_student_schema,
     ensure_digital_prospectus_schema,
     ensure_class_fee_schema,
@@ -219,6 +220,7 @@ def on_startup():
     # Prevents runtime failures when code is updated before a manual migration.
     try:
         ensure_school_facility_enum_columns()
+        ensure_school_medium_array_column()
         ensure_studentstatus_pending_enum_value()
         # Ensure assignmentstatus enum labels include required values used by the code
         from app.db.session import ensure_assignmentstatus_enum_values

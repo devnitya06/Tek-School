@@ -26,7 +26,7 @@ def main():
         if column_type == "ARRAY":
             print("school_medium is already VARCHAR[].")
             return
-        if column_type not in ("character varying", "text"):
+        if column_type not in ("character varying", "text", "USER-DEFINED"):
             raise RuntimeError(
                 f"Unexpected school_medium type: {column_type!r}; migration stopped."
             )
@@ -35,8 +35,8 @@ def main():
             ALTER TABLE schools
             ALTER COLUMN school_medium TYPE VARCHAR(50)[]
             USING CASE
-                WHEN school_medium IS NULL OR trim(school_medium) = '' THEN NULL
-                ELSE ARRAY[school_medium]
+                WHEN school_medium IS NULL OR trim(school_medium::text) = '' THEN NULL
+                ELSE ARRAY[school_medium::text]::VARCHAR(50)[]
             END
         """))
         print("Converted school_medium to VARCHAR[] and preserved existing values.")
