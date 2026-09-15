@@ -294,24 +294,59 @@ def ensure_news_schema():
 
 
 def ensure_business_inquiry_schema():
-    """Ensure business_inquiry table includes support fields used by the public inquiry form."""
+    """Ensure business_inquiry matches the columns used by the public inquiry form."""
     inspector = inspect_engine()
     if not inspector.has_table("business_inquiry"):
         return
 
-    for column_name, column_type in {
+    columns = {
+        "school_ids": "VARCHAR[]",
+        "guardian_name": "VARCHAR(255)",
+        "phone": "VARCHAR(20)",
+        "email": "VARCHAR(255)",
+        "location": "VARCHAR(255)",
+        "student_name": "VARCHAR(255)",
         "gender": "VARCHAR(20)",
         "previous_institution": "VARCHAR(255)",
         "relationship_with": "VARCHAR(100)",
         "prefer_days": "VARCHAR(100)",
         "who_is_this": "VARCHAR(20)",
+        "standard_in_academic": "VARCHAR(100)",
+        "inquiry_for_class": "VARCHAR[]",
+        "desire_to_know": "VARCHAR[]",
+        "prefer_time": "VARCHAR(50)",
+        "files": "VARCHAR[]",
+        "message": "TEXT",
+        "remark": "TEXT",
         "remark_status": "VARCHAR(50)",
-    }.items():
+        "is_seen": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "seen_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    for column_name, column_type in columns.items():
         if not column_exists("business_inquiry", column_name):
             with engine.begin() as conn:
                 conn.execute(
                     text(
                         f"ALTER TABLE business_inquiry ADD COLUMN \"{column_name}\" {column_type}"
+                    )
+                )
+
+    # Older deployments stored these list fields as a single VARCHAR value.
+    for column_name in ("school_ids", "inquiry_for_class", "desire_to_know", "files"):
+        column_type = inspect_engine().get_columns("business_inquiry")
+        current_type = next(
+            (column["type"].__class__.__name__.lower() for column in column_type
+             if column["name"] == column_name),
+            "",
+        )
+        if "array" not in current_type:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        f'ALTER TABLE business_inquiry ALTER COLUMN "{column_name}" '
+                        "TYPE VARCHAR[] USING CASE "
+                        f'WHEN "{column_name}" IS NULL OR trim("{column_name}"::text) = \'\' '
+                        "THEN NULL ELSE ARRAY[\"{column_name}\"::text]::VARCHAR[] END"
                     )
                 )
 

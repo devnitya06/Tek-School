@@ -89,7 +89,7 @@ class AdminSchoolCreateRequest(BaseModel):
     name: str
     email: EmailStr
     phone: str
-    location: str
+    location: Optional[str] = None
     website: Optional[str] = None
     auto_followup: Optional[bool] = False
     followup_note: Optional[str] = None

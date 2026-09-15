@@ -10,6 +10,7 @@ from app.schemas.school import BusinessInquiryResponse
 from app.utils.s3 import upload_to_s3
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from app.core.logger import logger
 
 router = APIRouter()
 
@@ -106,6 +107,7 @@ async def create_business_inquiry(
         db.refresh(record)
     except SQLAlchemyError as e:
         db.rollback()
+        logger.exception("Failed to save business inquiry", exc_info=e)
         raise HTTPException(status_code=500, detail="Database error while saving inquiry.")
 
     return BusinessInquiryResponse(
