@@ -957,6 +957,38 @@ def ensure_school_medium_array_column():
         print(f"[startup] ensure_school_medium_array_column failed: {exc}")
 
 
+def ensure_school_scalar_enum_columns():
+    """Ensure string-backed school enum columns are not native PostgreSQL enums."""
+    columns = ("school_type", "school_board")
+    try:
+        with engine.begin() as conn:
+            for column in columns:
+                column_type = conn.execute(
+                    text(
+                        "SELECT data_type FROM information_schema.columns "
+                        "WHERE table_name = 'schools' AND column_name = :column"
+                    ),
+                    {"column": column},
+                ).scalar()
+
+                if not column_type or column_type.lower() != "user-defined":
+                    continue
+
+                conn.execute(
+                    text(
+                        f'ALTER TABLE schools ALTER COLUMN "{column}" '
+                        "TYPE VARCHAR(50) USING "
+                        f'"{column}"::text'
+                    )
+                )
+                print(
+                    "[startup] ensure_school_scalar_enum_columns: "
+                    f"converted {column} to VARCHAR."
+                )
+    except Exception as exc:
+        print(f"[startup] ensure_school_scalar_enum_columns failed: {exc}")
+
+
 
 def ensure_excellent_student_schema():
     """
