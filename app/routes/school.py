@@ -274,17 +274,43 @@ def get_school_self(
     rating_stats = (
         db.query(
             func.count(SchoolRating.id).label("rating_count"),
-            func.avg(SchoolRating.rating).label("average_rating"),
+            func.round(func.avg(SchoolRating.rating), 2).label("average_rating"),
+            func.round(func.avg(SchoolRating.infrastructure), 2).label("infrastructure"),
+            func.round(func.avg(SchoolRating.value_for_fee), 2).label("value_for_fee"),
+            func.round(func.avg(SchoolRating.teaching_quality), 2).label("teaching_quality"),
+            func.round(func.avg(SchoolRating.academic_results), 2).label("academic_results"),
+            func.round(func.avg(SchoolRating.placement_support), 2).label("placement_support"),
+            func.round(func.avg(SchoolRating.industrial_training), 2).label("industrial_training"),
+            func.round(func.avg(SchoolRating.extracurricular), 2).label("extracurricular"),
+            func.round(func.avg(SchoolRating.student_alumni), 2).label("student_alumni"),
+            func.round(func.avg(SchoolRating.hostel_and_foods), 2).label("hostel_and_foods"),
+            func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
+            func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
+            func.round(func.avg(SchoolRating.management), 2).label("management"),
         )
         .filter(SchoolRating.school_id == school.id)
         .first()
     )
+
+    def _f(val):
+        return float(val) if val is not None else None
+
     rating_count = int(rating_stats.rating_count or 0) if rating_stats else 0
-    average_rating = (
-        float(rating_stats.average_rating)
-        if rating_stats and rating_stats.average_rating is not None
-        else None
-    )
+    average_rating = _f(rating_stats.average_rating) if rating_stats else None
+    category_averages = {
+        "infrastructure":        _f(rating_stats.infrastructure)        if rating_stats else None,
+        "value_for_fee":         _f(rating_stats.value_for_fee)         if rating_stats else None,
+        "teaching_quality":      _f(rating_stats.teaching_quality)      if rating_stats else None,
+        "academic_results":      _f(rating_stats.academic_results)      if rating_stats else None,
+        "placement_support":     _f(rating_stats.placement_support)     if rating_stats else None,
+        "industrial_training":   _f(rating_stats.industrial_training)   if rating_stats else None,
+        "extracurricular":       _f(rating_stats.extracurricular)       if rating_stats else None,
+        "student_alumni":        _f(rating_stats.student_alumni)        if rating_stats else None,
+        "hostel_and_foods":      _f(rating_stats.hostel_and_foods)      if rating_stats else None,
+        "transportation":        _f(rating_stats.transportation)        if rating_stats else None,
+        "safety_and_discipline": _f(rating_stats.safety_and_discipline) if rating_stats else None,
+        "management":            _f(rating_stats.management)            if rating_stats else None,
+    }
 
     account_type_val = None
     if school.account_type:
@@ -360,6 +386,7 @@ def get_school_self(
         "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
         "rating_count": rating_count,
         "average_rating": average_rating,
+        "category_averages": category_averages,
     }
 
     # Extra fields only available to authenticated users (internal/admin data)
@@ -1133,17 +1160,43 @@ async def get_school_profile(
     rating_stats = (
         db.query(
             func.count(SchoolRating.id).label("rating_count"),
-            func.avg(SchoolRating.rating).label("average_rating"),
+            func.round(func.avg(SchoolRating.rating), 2).label("average_rating"),
+            func.round(func.avg(SchoolRating.infrastructure), 2).label("infrastructure"),
+            func.round(func.avg(SchoolRating.value_for_fee), 2).label("value_for_fee"),
+            func.round(func.avg(SchoolRating.teaching_quality), 2).label("teaching_quality"),
+            func.round(func.avg(SchoolRating.academic_results), 2).label("academic_results"),
+            func.round(func.avg(SchoolRating.placement_support), 2).label("placement_support"),
+            func.round(func.avg(SchoolRating.industrial_training), 2).label("industrial_training"),
+            func.round(func.avg(SchoolRating.extracurricular), 2).label("extracurricular"),
+            func.round(func.avg(SchoolRating.student_alumni), 2).label("student_alumni"),
+            func.round(func.avg(SchoolRating.hostel_and_foods), 2).label("hostel_and_foods"),
+            func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
+            func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
+            func.round(func.avg(SchoolRating.management), 2).label("management"),
         )
         .filter(SchoolRating.school_id == school.id)
         .first()
     )
+
+    def _f2(val):
+        return float(val) if val is not None else None
+
     rating_count = int(rating_stats.rating_count or 0)
-    average_rating = (
-        float(rating_stats.average_rating)
-        if rating_stats and rating_stats.average_rating is not None
-        else None
-    )
+    average_rating = _f2(rating_stats.average_rating) if rating_stats else None
+    category_averages = {
+        "infrastructure":        _f2(rating_stats.infrastructure)        if rating_stats else None,
+        "value_for_fee":         _f2(rating_stats.value_for_fee)         if rating_stats else None,
+        "teaching_quality":      _f2(rating_stats.teaching_quality)      if rating_stats else None,
+        "academic_results":      _f2(rating_stats.academic_results)      if rating_stats else None,
+        "placement_support":     _f2(rating_stats.placement_support)     if rating_stats else None,
+        "industrial_training":   _f2(rating_stats.industrial_training)   if rating_stats else None,
+        "extracurricular":       _f2(rating_stats.extracurricular)       if rating_stats else None,
+        "student_alumni":        _f2(rating_stats.student_alumni)        if rating_stats else None,
+        "hostel_and_foods":      _f2(rating_stats.hostel_and_foods)      if rating_stats else None,
+        "transportation":        _f2(rating_stats.transportation)        if rating_stats else None,
+        "safety_and_discipline": _f2(rating_stats.safety_and_discipline) if rating_stats else None,
+        "management":            _f2(rating_stats.management)            if rating_stats else None,
+    }
     return {
         "id": school.id,
         "user_id": school.user_id,
@@ -1204,11 +1257,11 @@ async def get_school_profile(
         "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
         "teaching_method": school.teaching_method,
         "default_settlement_channel": school.default_settlement_channel,
-        # QR attendance tokens are internal secrets — only expose to authenticated users
         "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if current_user is not None else None,
         "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if current_user is not None else None,
         "rating_count": rating_count,
         "average_rating": average_rating,
+        "category_averages": category_averages,
     }
 
 

@@ -1386,6 +1386,19 @@ def create_school_rating(
         email_id=email_normalized,
         feedback=data.feedback,
         rating=data.rating,
+        # Category scores
+        infrastructure=data.infrastructure,
+        value_for_fee=data.value_for_fee,
+        teaching_quality=data.teaching_quality,
+        academic_results=data.academic_results,
+        placement_support=data.placement_support,
+        industrial_training=data.industrial_training,
+        extracurricular=data.extracurricular,
+        student_alumni=data.student_alumni,
+        hostel_and_foods=data.hostel_and_foods,
+        transportation=data.transportation,
+        safety_and_discipline=data.safety_and_discipline,
+        management=data.management,
     )
     db.add(rating)
     try:
@@ -1423,6 +1436,47 @@ def list_school_ratings(
         )
     query = db.query(SchoolRating).filter(SchoolRating.school_id == school_id)
     total_count = query.count()
+
+    # Aggregate: overall + per-category averages (NULLs excluded by SQL AVG automatically)
+    stats = db.query(
+        func.count(SchoolRating.id).label("rating_count"),
+        func.round(func.avg(SchoolRating.rating), 2).label("average_rating"),
+        func.round(func.avg(SchoolRating.infrastructure), 2).label("infrastructure"),
+        func.round(func.avg(SchoolRating.value_for_fee), 2).label("value_for_fee"),
+        func.round(func.avg(SchoolRating.teaching_quality), 2).label("teaching_quality"),
+        func.round(func.avg(SchoolRating.academic_results), 2).label("academic_results"),
+        func.round(func.avg(SchoolRating.placement_support), 2).label("placement_support"),
+        func.round(func.avg(SchoolRating.industrial_training), 2).label("industrial_training"),
+        func.round(func.avg(SchoolRating.extracurricular), 2).label("extracurricular"),
+        func.round(func.avg(SchoolRating.student_alumni), 2).label("student_alumni"),
+        func.round(func.avg(SchoolRating.hostel_and_foods), 2).label("hostel_and_foods"),
+        func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
+        func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
+        func.round(func.avg(SchoolRating.management), 2).label("management"),
+    ).filter(SchoolRating.school_id == school_id).first()
+
+    def _f(val):
+        return float(val) if val is not None else None
+
+    summary = {
+        "rating_count": int(stats.rating_count or 0),
+        "average_rating": _f(stats.average_rating),
+        "category_averages": {
+            "infrastructure":        _f(stats.infrastructure),
+            "value_for_fee":         _f(stats.value_for_fee),
+            "teaching_quality":      _f(stats.teaching_quality),
+            "academic_results":      _f(stats.academic_results),
+            "placement_support":     _f(stats.placement_support),
+            "industrial_training":   _f(stats.industrial_training),
+            "extracurricular":       _f(stats.extracurricular),
+            "student_alumni":        _f(stats.student_alumni),
+            "hostel_and_foods":      _f(stats.hostel_and_foods),
+            "transportation":        _f(stats.transportation),
+            "safety_and_discipline": _f(stats.safety_and_discipline),
+            "management":            _f(stats.management),
+        },
+    }
+
     ratings = (
         query.order_by(SchoolRating.created_at.desc())
         .offset(pagination.offset())
@@ -1440,10 +1494,24 @@ def list_school_ratings(
             "feedback": r.feedback,
             "rating": r.rating,
             "created_at": r.created_at.isoformat() if r.created_at else None,
+            "infrastructure":        r.infrastructure,
+            "value_for_fee":         r.value_for_fee,
+            "teaching_quality":      r.teaching_quality,
+            "academic_results":      r.academic_results,
+            "placement_support":     r.placement_support,
+            "industrial_training":   r.industrial_training,
+            "extracurricular":       r.extracurricular,
+            "student_alumni":        r.student_alumni,
+            "hostel_and_foods":      r.hostel_and_foods,
+            "transportation":        r.transportation,
+            "safety_and_discipline": r.safety_and_discipline,
+            "management":            r.management,
         }
         for r in ratings
     ]
-    return pagination.format_response(items, total_count)
+    response = pagination.format_response(items, total_count)
+    response["summary"] = summary
+    return response
 
 
 @router.delete(

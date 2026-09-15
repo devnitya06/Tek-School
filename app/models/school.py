@@ -1,6 +1,7 @@
 from sqlalchemy import (
     Column,
     Integer,
+    SmallInteger,
     String,
     ForeignKey,
     Table,
@@ -1404,6 +1405,20 @@ class SchoolRating(Base):
     feedback = Column(Text, nullable=True)
     rating = Column(Integer, nullable=False)  # 1 to 5
     created_at = Column(DateTime, server_default=func.now())
+
+    # Category scores — only 0 or 100 allowed, null = not rated by this reviewer
+    infrastructure        = Column(SmallInteger, nullable=True)
+    value_for_fee         = Column(SmallInteger, nullable=True)
+    teaching_quality      = Column(SmallInteger, nullable=True)
+    academic_results      = Column(SmallInteger, nullable=True)
+    placement_support     = Column(SmallInteger, nullable=True)
+    industrial_training   = Column(SmallInteger, nullable=True)
+    extracurricular       = Column(SmallInteger, nullable=True)
+    student_alumni        = Column(SmallInteger, nullable=True)
+    hostel_and_foods      = Column(SmallInteger, nullable=True)
+    transportation        = Column(SmallInteger, nullable=True)
+    safety_and_discipline = Column(SmallInteger, nullable=True)
+    management            = Column(SmallInteger, nullable=True)
 
     school = relationship("School", back_populates="school_ratings")
 

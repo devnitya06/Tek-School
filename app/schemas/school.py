@@ -1068,6 +1068,9 @@ class BackupUserResponse(BaseModel):
     updated_by: str | None
 
 
+# CategoryScore: only 0 (poor) or 100 (excellent) or null (not rated)
+CategoryScore = Optional[Literal[0, 100]]
+
 # SchoolRating: any user can submit rating/feedback for a listed school
 class SchoolRatingCreate(BaseModel):
     school_id: str
@@ -1079,6 +1082,19 @@ class SchoolRatingCreate(BaseModel):
     email_id: EmailStr
     feedback: Optional[str] = None
     rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5 stars")
+    # Optional category scores — only 0 or 100 accepted, null = not rated
+    infrastructure:        CategoryScore = Field(None, description="0 or 100 only")
+    value_for_fee:         CategoryScore = Field(None, description="0 or 100 only")
+    teaching_quality:      CategoryScore = Field(None, description="0 or 100 only")
+    academic_results:      CategoryScore = Field(None, description="0 or 100 only")
+    placement_support:     CategoryScore = Field(None, description="0 or 100 only")
+    industrial_training:   CategoryScore = Field(None, description="0 or 100 only")
+    extracurricular:       CategoryScore = Field(None, description="0 or 100 only")
+    student_alumni:        CategoryScore = Field(None, description="0 or 100 only")
+    hostel_and_foods:      CategoryScore = Field(None, description="0 or 100 only")
+    transportation:        CategoryScore = Field(None, description="0 or 100 only")
+    safety_and_discipline: CategoryScore = Field(None, description="0 or 100 only")
+    management:            CategoryScore = Field(None, description="0 or 100 only")
 
 
 class SchoolRatingResponse(BaseModel):
@@ -1091,6 +1107,19 @@ class SchoolRatingResponse(BaseModel):
     feedback: Optional[str] = None
     rating: int
     created_at: Optional[datetime] = None
+    # Category scores in response
+    infrastructure:        Optional[int] = None
+    value_for_fee:         Optional[int] = None
+    teaching_quality:      Optional[int] = None
+    academic_results:      Optional[int] = None
+    placement_support:     Optional[int] = None
+    industrial_training:   Optional[int] = None
+    extracurricular:       Optional[int] = None
+    student_alumni:        Optional[int] = None
+    hostel_and_foods:      Optional[int] = None
+    transportation:        Optional[int] = None
+    safety_and_discipline: Optional[int] = None
+    management:            Optional[int] = None
 
     model_config = {"from_attributes": True}
 
