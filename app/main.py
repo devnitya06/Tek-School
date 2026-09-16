@@ -27,6 +27,7 @@ from app.db.session import (
     ensure_school_settlement_schema,
     ensure_school_followup_columns,
     ensure_school_claim_columns,
+    ensure_school_rating_category_columns,
     ensure_self_signed_student_teacher_id_column,
     ensure_self_signed_teacher_teaching_configuration_table,
     ensure_self_signed_student_additional_columns,
@@ -243,6 +244,7 @@ def on_startup():
         ensure_tuition_class_session_schema()
         ensure_school_followup_columns()
         ensure_school_claim_columns()
+        ensure_school_rating_category_columns()
         ensure_excellent_student_schema()
         ensure_digital_prospectus_schema()
         ensure_class_fee_schema()

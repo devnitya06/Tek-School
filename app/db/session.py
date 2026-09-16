@@ -599,6 +599,29 @@ def ensure_school_claim_columns():
             conn.execute(text(f'ALTER TABLE schools ADD COLUMN IF NOT EXISTS "{col_name}" {ddl}'))
 
 
+def ensure_school_rating_category_columns():
+    """Ensure the 12 category score columns added in migration fa70edb0e479 exist on school_ratings."""
+    category_columns = [
+        ("infrastructure",        "SMALLINT NULL"),
+        ("value_for_fee",         "SMALLINT NULL"),
+        ("teaching_quality",      "SMALLINT NULL"),
+        ("academic_results",      "SMALLINT NULL"),
+        ("placement_support",     "SMALLINT NULL"),
+        ("industrial_training",   "SMALLINT NULL"),
+        ("extracurricular",       "SMALLINT NULL"),
+        ("student_alumni",        "SMALLINT NULL"),
+        ("hostel_and_foods",      "SMALLINT NULL"),
+        ("transportation",        "SMALLINT NULL"),
+        ("safety_and_discipline", "SMALLINT NULL"),
+        ("management",            "SMALLINT NULL"),
+    ]
+    with engine.begin() as conn:
+        for col_name, ddl in category_columns:
+            if column_exists("school_ratings", col_name):
+                continue
+            conn.execute(text(f'ALTER TABLE school_ratings ADD COLUMN IF NOT EXISTS "{col_name}" {ddl}'))
+
+
 def ensure_self_signed_student_teacher_id_column():
     """Ensure the nullable foreign key column exists for self-signed student teacher links."""
     if column_exists("self_signed_students", "self_signed_teacher_id"):
