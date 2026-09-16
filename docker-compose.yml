@@ -92,7 +92,7 @@ services:
           cpus: '1.0' # ← works with docker compose v2 / Swarm
           memory: 300M
     command: >
-      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8001"
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001"
 
   celery_worker:
     build: .
