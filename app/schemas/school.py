@@ -925,6 +925,7 @@ class SchoolClassFeeCreate(BaseModel):
     transport_fee: Optional[float] = Field(None, ge=0)
     hostel_fee: Optional[float] = Field(None, ge=0)
     duration: Optional[float] = Field(None, ge=0.1, description="Duration in years (min 0.1)")
+    seat_no: Optional[int] = Field(None, ge=0, description="Number of available seats")
 
 
 class SchoolClassFeeUpdate(BaseModel):
@@ -934,6 +935,7 @@ class SchoolClassFeeUpdate(BaseModel):
     transport_fee: Optional[float] = Field(None, ge=0)
     hostel_fee: Optional[float] = Field(None, ge=0)
     duration: Optional[float] = Field(None, ge=0.1, description="Duration in years (min 0.1)")
+    seat_no: Optional[int] = Field(None, ge=0, description="Number of available seats")
 
 
 class SchoolClassFeeResponse(BaseModel):
@@ -945,6 +947,7 @@ class SchoolClassFeeResponse(BaseModel):
     transport_fee: Optional[float] = None
     hostel_fee: Optional[float] = None
     duration: Optional[float] = None
+    seat_no: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -9503,6 +9503,7 @@ def create_school_class_fee(
         transport_fee=data.transport_fee if data.transport_fee is not None else 0,
         hostel_fee=data.hostel_fee if data.hostel_fee is not None else 0,
         duration=data.duration,
+        seat_no=data.seat_no,
     )
     db.add(obj)
     db.commit()
@@ -9642,6 +9643,8 @@ def update_school_class_fee(
             )
     if "duration" in update_data:
         setattr(obj, "duration", update_data["duration"])
+    if "seat_no" in update_data:
+        setattr(obj, "seat_no", update_data["seat_no"])
     db.commit()
     db.refresh(obj)
     return obj
