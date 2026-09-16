@@ -1126,6 +1126,12 @@ def ensure_class_fee_schema():
                 "ADD COLUMN IF NOT EXISTS duration FLOAT NULL"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE school_class_fees "
+                "ADD COLUMN IF NOT EXISTS seat_no INTEGER NULL"
+            )
+        )
 
 
 # Dependency to get DB session

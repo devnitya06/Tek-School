@@ -1290,6 +1290,7 @@ class SchoolClassFee(Base):
     transport_fee = Column(Float, nullable=True, default=0)
     hostel_fee = Column(Float, nullable=True, default=0)
     duration = Column(Float, nullable=True)  # in years, min 0.1
+    seat_no = Column(Integer, nullable=True)  # number of available seats
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
