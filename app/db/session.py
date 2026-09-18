@@ -118,6 +118,13 @@ from app.models.academic_results import *
 from app.models.tuition import *
 from app.models.news import *
 from app.models.placement import *
+from app.demo.models import (
+    DemoConfiguration,
+    DemoRequest,
+    DemoRequestImage,
+    DemoOtp,
+    DemoAccessAttempt,
+)
 
 def create_tables():
     """Create all tables that don't exist yet"""

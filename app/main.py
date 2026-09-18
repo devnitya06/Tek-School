@@ -12,6 +12,10 @@ from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
 from app.routes.tuition.class_sessions import router as tuition_class_session_router
 from app.routes.tuition.student import router as tuition_student_router
+from app.demo.routes_public import router as demo_public_router
+from app.demo.routes_admin_config import router as demo_admin_config_router
+from app.demo.routes_admin_requests import router as demo_admin_requests_router
+from app.demo.exceptions import DemoAPIException, demo_api_exception_handler
 from app.core.config import settings
 from app.utils.cpu_monitor import start_cpu_monitor
 from app.db.session import (
@@ -120,6 +124,12 @@ app.add_middleware(CPULoadSheddingMiddleware)
 # Only server-side failures are caught here and returned as clean JSON.
 
 
+# ─── Demo Management System Exception Handler ────────────────────────────────
+# Handles all expected business/validation errors with stable error codes.
+# Registered BEFORE the generic unhandled_exception_handler so it takes priority.
+app.add_exception_handler(DemoAPIException, demo_api_exception_handler)
+
+
 @app.exception_handler(OperationalError)
 async def db_operational_error_handler(request: Request, exc: OperationalError):
     """Catch DB connection failures and statement/lock timeouts from Postgres."""
@@ -211,6 +221,9 @@ app.include_router(tuition_teaching_setup_router)
 app.include_router(tuition_class_session_router)
 app.include_router(tuition_student_router)
 app.include_router(prospectus_routes.router)
+app.include_router(demo_public_router)
+app.include_router(demo_admin_config_router)
+app.include_router(demo_admin_requests_router)
 
 @app.on_event("startup")
 def on_startup():
