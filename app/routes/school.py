@@ -10588,11 +10588,12 @@ async def select_faqs(
     faq_data: dict,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    school_id: Optional[str] = Query(None, description="Required for admin/superadmin. School ID in format SCH-XXXXXX"),
 ):
     """
     School selects FAQs to display on their page.
     Requires school, admin, or superadmin authentication.
-    Superadmin and admin must pass school_id in faq_data.
+    Superadmin and admin must pass school_id as a query parameter (e.g. ?school_id=SCH-298380).
     """
     if current_user.role not in [UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
@@ -10604,12 +10605,11 @@ async def select_faqs(
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
     else:
-        # SUPERADMIN / ADMIN: school_id required in request
-        school_id = faq_data.get("school_id")
+        # SUPERADMIN / ADMIN: school_id required as query param
         if not school_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="school_id is required when selecting FAQs as superadmin or admin",
+                detail="school_id query parameter is required when selecting FAQs as superadmin or admin (e.g. ?school_id=SCH-298380)",
             )
         school = db.query(School).filter(School.id == school_id).first()
     if not school:
