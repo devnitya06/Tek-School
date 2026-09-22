@@ -10591,25 +10591,25 @@ async def select_faqs(
 ):
     """
     School selects FAQs to display on their page.
-    Requires school or superadmin authentication.
-    Superadmin must pass school_id in faq_data.
+    Requires school, admin, or superadmin authentication.
+    Superadmin and admin must pass school_id in faq_data.
     """
-    if current_user.role not in [UserRole.SCHOOL, UserRole.SUPERADMIN]:
+    if current_user.role not in [UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school and superadmin users can select FAQs",
+            detail="Only school, admin, and superadmin users can select FAQs",
         )
 
     # Get school
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
     else:
-        # SUPERADMIN: school_id required in request
+        # SUPERADMIN / ADMIN: school_id required in request
         school_id = faq_data.get("school_id")
         if not school_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="school_id is required when selecting FAQs as superadmin",
+                detail="school_id is required when selecting FAQs as superadmin or admin",
             )
         school = db.query(School).filter(School.id == school_id).first()
     if not school:
