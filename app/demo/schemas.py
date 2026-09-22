@@ -1,7 +1,7 @@
 """
 Demo Management System — Pydantic Schemas
 """
-from datetime import date, time, datetime
+from datetime import date, time, datetime, timedelta
 from typing import List, Optional, Any
 from pydantic import BaseModel, EmailStr, Field, field_validator, AnyHttpUrl
 import re
@@ -131,6 +131,17 @@ class DemoRequestCreate(BaseModel):
     demo_date: date
     start_time: str = Field(..., description="HH:MM format, e.g. '14:00'")
 
+    @field_validator("demo_date")
+    @classmethod
+    def validate_demo_date(cls, v):
+        today = date.today()
+        max_date = today + timedelta(days=30)
+        if v < today:
+            raise ValueError("Demo date cannot be in the past. Please select today or a future date.")
+        if v > max_date:
+            raise ValueError("Demo date cannot be more than 30 days in the future.")
+        return v
+
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v):
@@ -242,6 +253,17 @@ class DemoRescheduleRequest(BaseModel):
     demo_date: date
     config_id: int
     start_time: str = Field(..., description="HH:MM format")
+
+    @field_validator("demo_date")
+    @classmethod
+    def validate_demo_date(cls, v):
+        today = date.today()
+        max_date = today + timedelta(days=30)
+        if v < today:
+            raise ValueError("Demo date cannot be in the past. Please select today or a future date.")
+        if v > max_date:
+            raise ValueError("Demo date cannot be more than 30 days in the future.")
+        return v
 
     @field_validator("start_time")
     @classmethod
