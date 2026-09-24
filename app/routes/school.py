@@ -287,6 +287,19 @@ def get_school_self(
             func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
             func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
             func.round(func.avg(SchoolRating.management), 2).label("management"),
+            # Per-category counts: COUNT(col) ignores NULLs, so only counts reviewers who rated that category
+            func.count(SchoolRating.infrastructure).label("cnt_infrastructure"),
+            func.count(SchoolRating.value_for_fee).label("cnt_value_for_fee"),
+            func.count(SchoolRating.teaching_quality).label("cnt_teaching_quality"),
+            func.count(SchoolRating.academic_results).label("cnt_academic_results"),
+            func.count(SchoolRating.placement_support).label("cnt_placement_support"),
+            func.count(SchoolRating.industrial_training).label("cnt_industrial_training"),
+            func.count(SchoolRating.extracurricular).label("cnt_extracurricular"),
+            func.count(SchoolRating.student_alumni).label("cnt_student_alumni"),
+            func.count(SchoolRating.hostel_and_foods).label("cnt_hostel_and_foods"),
+            func.count(SchoolRating.transportation).label("cnt_transportation"),
+            func.count(SchoolRating.safety_and_discipline).label("cnt_safety_and_discipline"),
+            func.count(SchoolRating.management).label("cnt_management"),
         )
         .filter(SchoolRating.school_id == school.id)
         .first()
@@ -310,6 +323,20 @@ def get_school_self(
         "transportation":        _f(rating_stats.transportation)        if rating_stats else None,
         "safety_and_discipline": _f(rating_stats.safety_and_discipline) if rating_stats else None,
         "management":            _f(rating_stats.management)            if rating_stats else None,
+    }
+    category_rating_counts = {
+        "infrastructure":        int(rating_stats.cnt_infrastructure)        if rating_stats else 0,
+        "value_for_fee":         int(rating_stats.cnt_value_for_fee)         if rating_stats else 0,
+        "teaching_quality":      int(rating_stats.cnt_teaching_quality)      if rating_stats else 0,
+        "academic_results":      int(rating_stats.cnt_academic_results)      if rating_stats else 0,
+        "placement_support":     int(rating_stats.cnt_placement_support)     if rating_stats else 0,
+        "industrial_training":   int(rating_stats.cnt_industrial_training)   if rating_stats else 0,
+        "extracurricular":       int(rating_stats.cnt_extracurricular)       if rating_stats else 0,
+        "student_alumni":        int(rating_stats.cnt_student_alumni)        if rating_stats else 0,
+        "hostel_and_foods":      int(rating_stats.cnt_hostel_and_foods)      if rating_stats else 0,
+        "transportation":        int(rating_stats.cnt_transportation)        if rating_stats else 0,
+        "safety_and_discipline": int(rating_stats.cnt_safety_and_discipline) if rating_stats else 0,
+        "management":            int(rating_stats.cnt_management)            if rating_stats else 0,
     }
 
     account_type_val = None
@@ -387,6 +414,7 @@ def get_school_self(
         "rating_count": rating_count,
         "average_rating": average_rating,
         "category_averages": category_averages,
+        "category_rating_counts": category_rating_counts,
     }
 
     # Extra fields only available to authenticated users (internal/admin data)
@@ -1173,6 +1201,19 @@ async def get_school_profile(
             func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
             func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
             func.round(func.avg(SchoolRating.management), 2).label("management"),
+            # Per-category counts: COUNT(col) ignores NULLs, so only counts reviewers who rated that category
+            func.count(SchoolRating.infrastructure).label("cnt_infrastructure"),
+            func.count(SchoolRating.value_for_fee).label("cnt_value_for_fee"),
+            func.count(SchoolRating.teaching_quality).label("cnt_teaching_quality"),
+            func.count(SchoolRating.academic_results).label("cnt_academic_results"),
+            func.count(SchoolRating.placement_support).label("cnt_placement_support"),
+            func.count(SchoolRating.industrial_training).label("cnt_industrial_training"),
+            func.count(SchoolRating.extracurricular).label("cnt_extracurricular"),
+            func.count(SchoolRating.student_alumni).label("cnt_student_alumni"),
+            func.count(SchoolRating.hostel_and_foods).label("cnt_hostel_and_foods"),
+            func.count(SchoolRating.transportation).label("cnt_transportation"),
+            func.count(SchoolRating.safety_and_discipline).label("cnt_safety_and_discipline"),
+            func.count(SchoolRating.management).label("cnt_management"),
         )
         .filter(SchoolRating.school_id == school.id)
         .first()
@@ -1196,6 +1237,20 @@ async def get_school_profile(
         "transportation":        _f2(rating_stats.transportation)        if rating_stats else None,
         "safety_and_discipline": _f2(rating_stats.safety_and_discipline) if rating_stats else None,
         "management":            _f2(rating_stats.management)            if rating_stats else None,
+    }
+    category_rating_counts = {
+        "infrastructure":        int(rating_stats.cnt_infrastructure)        if rating_stats else 0,
+        "value_for_fee":         int(rating_stats.cnt_value_for_fee)         if rating_stats else 0,
+        "teaching_quality":      int(rating_stats.cnt_teaching_quality)      if rating_stats else 0,
+        "academic_results":      int(rating_stats.cnt_academic_results)      if rating_stats else 0,
+        "placement_support":     int(rating_stats.cnt_placement_support)     if rating_stats else 0,
+        "industrial_training":   int(rating_stats.cnt_industrial_training)   if rating_stats else 0,
+        "extracurricular":       int(rating_stats.cnt_extracurricular)       if rating_stats else 0,
+        "student_alumni":        int(rating_stats.cnt_student_alumni)        if rating_stats else 0,
+        "hostel_and_foods":      int(rating_stats.cnt_hostel_and_foods)      if rating_stats else 0,
+        "transportation":        int(rating_stats.cnt_transportation)        if rating_stats else 0,
+        "safety_and_discipline": int(rating_stats.cnt_safety_and_discipline) if rating_stats else 0,
+        "management":            int(rating_stats.cnt_management)            if rating_stats else 0,
     }
     return {
         "id": school.id,
@@ -1262,6 +1317,7 @@ async def get_school_profile(
         "rating_count": rating_count,
         "average_rating": average_rating,
         "category_averages": category_averages,
+        "category_rating_counts": category_rating_counts,
     }
 
 

@@ -20,6 +20,7 @@ from typing import List, Optional, Tuple
 import pytz
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from app.core.logger import logger
 from app.demo.exceptions import DemoAPIException, DemoErrorCode
@@ -351,6 +352,7 @@ class DemoOtpService:
             phone=request_data.phone,
             institution_address=request_data.institution_address,
             area_of_interest=request_data.area_of_interest,
+            preferred_language=request_data.preferred_language.value if request_data.preferred_language else None,
             config_id=config.id,
             demo_date=request_data.demo_date,
             start_time=slot_start,

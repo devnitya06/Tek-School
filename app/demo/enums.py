@@ -23,6 +23,12 @@ class DemoUserCategory(str, Enum):
     OTHER = "OTHER"
 
 
+class DemoPreferredLanguage(str, Enum):
+    HINDI = "HINDI"
+    ENGLISH = "ENGLISH"
+    STATE_LANGUAGE = "STATE_LANGUAGE"
+
+
 class DemoStatus(str, Enum):
     PENDING = "PENDING"
     RESCHEDULED = "RESCHEDULED"

@@ -67,6 +67,8 @@ class DemoRequest(Base):
     institution_address = Column(Text, nullable=True)
     # Stored as JSON array of strings
     area_of_interest = Column(JSON, nullable=True)
+    # Preferred language for the demo presentation
+    preferred_language = Column(String(20), nullable=True)
 
     # Slot fields — derived from configuration at booking/reschedule time
     config_id = Column(

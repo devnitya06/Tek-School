@@ -6,7 +6,7 @@ from typing import List, Optional, Any
 from pydantic import BaseModel, EmailStr, Field, field_validator, AnyHttpUrl
 import re
 
-from app.demo.enums import DemoDay, DemoUserCategory, DemoStatus
+from app.demo.enums import DemoDay, DemoUserCategory, DemoStatus, DemoPreferredLanguage
 
 
 # ─── Configuration Schemas ────────────────────────────────────────────────────
@@ -127,6 +127,9 @@ class DemoRequestCreate(BaseModel):
     phone: str = Field(..., min_length=10, max_length=20)
     institution_address: Optional[str] = Field(None, max_length=1000)
     area_of_interest: Optional[List[str]] = None
+    preferred_language: Optional[DemoPreferredLanguage] = Field(
+        None, description="Preferred language: HINDI, ENGLISH, or STATE_LANGUAGE"
+    )
     config_id: int
     demo_date: date
     start_time: str = Field(..., description="HH:MM format, e.g. '14:00'")
@@ -172,6 +175,7 @@ class DemoRequestPublicResponse(BaseModel):
     phone: str
     institution_address: Optional[str]
     area_of_interest: Optional[List[str]]
+    preferred_language: Optional[str]
     config_id: int
     demo_date: date
     start_time: str
@@ -222,6 +226,7 @@ class DemoRequestListItem(BaseModel):
     phone: str
     user_category: str
     institution_name: str
+    preferred_language: Optional[str]
     demo_date: date
     start_time: str
     end_time: str
