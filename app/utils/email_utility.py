@@ -2,6 +2,7 @@ import random
 import secrets
 import string
 import smtplib
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
@@ -29,6 +30,38 @@ def generate_password(prefix: str = None) -> str:
 def generate_otp(length: int = 6) -> str:
     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
 
+
+def generate_calendar_invite_ics(
+    summary: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    description: str,
+    location: str,
+    uid: str,
+) -> str:
+    """Build an iCalendar payload that can be saved as a calendar invite."""
+    def format_ical(value: datetime) -> str:
+        return value.strftime("%Y%m%dT%H%M%S")
+
+    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    ics = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//BeingIdeal//Demo Booking//EN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{dtstamp}",
+        f"DTSTART:{format_ical(start_dt)}",
+        f"DTEND:{format_ical(end_dt)}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{description}",
+        f"LOCATION:{location}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(ics) + "\r\n"
+
+
 def send_raw_email(
     recipient_email: str,
     subject: str,
@@ -55,20 +88,29 @@ def send_raw_email(
 def send_dynamic_email(
     context_key: str,
     subject: str,
-    recipient_email: str,         
-    context_data: dict,           
-    db: Session,                  
+    recipient_email: str,
+    context_data: dict,
+    db: Session,
+    attachments: list[tuple[str, str]] | None = None,
 ):
     try:
         # Load HTML template from file
         template = templates_env.get_template(context_key)
         body_html = template.render(**context_data)
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
         msg["To"] = recipient_email
 
         msg.attach(MIMEText(body_html, "html"))
+
+        if attachments:
+            for filename, content in attachments:
+                calendar_part = MIMEText(content, _subtype="calendar", _charset="utf-8")
+                calendar_part["Content-Type"] = "text/calendar; charset=UTF-8; method=REQUEST"
+                calendar_part["Content-Transfer-Encoding"] = "7bit"
+                calendar_part.add_header("Content-Disposition", "attachment", filename=filename)
+                msg.attach(calendar_part)
 
         with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT) as server:
             server.starttls()

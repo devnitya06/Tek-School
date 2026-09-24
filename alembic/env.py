@@ -27,6 +27,13 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
+# Load .env so DATABASE_URL and other settings are available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(project_root / ".env")
+except ImportError:
+    pass  # dotenv not installed; rely on environment variables being set
+
 # Import Base from the correct location
 from app.db.session import Base  # Base is defined in session.py
 
@@ -43,6 +50,7 @@ import app.models.teachers
 import app.models.tuition_models
 import app.models.user_session
 import app.models.users
+import app.demo.models  # Demo Management System tables
 
 target_metadata = Base.metadata
 
