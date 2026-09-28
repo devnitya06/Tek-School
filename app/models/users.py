@@ -1,4 +1,4 @@
-from sqlalchemy import Column,Boolean,Integer, String, Enum,DateTime,ForeignKey,UniqueConstraint,Index, TypeDecorator
+from sqlalchemy import Column,Boolean,Integer, String, Enum,DateTime,ForeignKey,UniqueConstraint,Index, TypeDecorator, Text
 from app.db.session import Base
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship,validates
@@ -61,6 +61,12 @@ class User(Base):
     created_at = Column(DateTime, default=func.now())
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
+
+    # Soft-delete fields
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(Integer, nullable=True)  # user_id of who performed deletion
+    deletion_reason = Column(String, nullable=True)
 
     
     
@@ -142,7 +148,30 @@ class Otp(Base):
     is_verified=Column(Boolean,default=False)
     
     user = relationship("User", back_populates="otps")
-    
+
+
+class AccountDeletionOtp(Base):
+    """Dedicated OTP table for account self-deletion.
+
+    Separate from the main Otp table to avoid mixing purposes.
+    Stores a bcrypt-hashed OTP, tracks attempts, and supports
+    rate-limiting via created_at (resend cooldown).
+    """
+    __tablename__ = "account_deletion_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    otp_hash = Column(String, nullable=False)        # bcrypt hash of the OTP
+    expires_at = Column(DateTime, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=5, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    verified_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class Template(Base):
     __tablename__ = "templates"
     id = Column(Integer, primary_key=True, index=True)

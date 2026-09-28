@@ -152,6 +152,10 @@ def _get_school_public_or_auth(
         school = db.query(School).filter(School.id == school_id).first()
         if not school:
             raise HTTPException(status_code=404, detail="School not found.")
+        # Exclude soft-deleted school accounts from public access
+        owner = db.query(User).filter(User.id == school.user_id).first()
+        if owner and owner.is_deleted:
+            raise HTTPException(status_code=404, detail="School not found.")
         return school
     return _get_school_for_admin_or_school(current_user, db, school_id)
 
@@ -507,6 +511,7 @@ def get_similar_schools(
             School.is_verified,
             score_expr,
         )
+        .join(User, User.id == School.user_id, isouter=True)
         .filter(
             School.id != target.id,
             School.is_active.is_(True),
@@ -516,6 +521,7 @@ def get_similar_schools(
             School.institution_class != "",
             School.school_board == target_board,
             School.institution_class == target.institution_class,
+            or_(User.is_deleted.is_(False), User.id.is_(None)),
         )
         .order_by(score_expr.desc(), School.school_name.asc())
         .limit(limit)  # ✅ Limit in SQL, not Python — never loads unbounded result sets
@@ -11124,24 +11130,110 @@ def list_business_inquiry(
 
     Filters: date_from, date_to, remark_status, is_seen.
     remark_status values: relevant | not_relevant | important | call_to_action
+    Each item includes view_price (applicable price if unseen, historical price if seen).
     """
-    school = _get_school_public_or_auth(current_user, db, school_id)
-    q = db.query(BusinessInquiry).filter(
-        BusinessInquiry.school_ids.contains([school.id])
+    from app.models.billing import BusinessInquirySchool as BIS, DigitalProfilePriceConfig
+    from app.services.billing import (
+        get_price_config_for_school,
+        get_school_viewer_count,
+        calculate_applicable_price,
     )
+    from decimal import Decimal
+
+    school = _get_school_public_or_auth(current_user, db, school_id)
+
+    # Join with BIS to get per-school billing state
+    q = (
+        db.query(BusinessInquiry, BIS)
+        .outerjoin(
+            BIS,
+            and_(
+                BIS.business_inquiry_id == BusinessInquiry.id,
+                BIS.school_id == school.id,
+            ),
+        )
+        .filter(BusinessInquiry.school_ids.contains([school.id]))
+    )
+
     if date_from is not None:
         q = q.filter(BusinessInquiry.created_at >= date_from)
     if date_to is not None:
         q = q.filter(BusinessInquiry.created_at <= date_to)
-    if remark_status is not None:
-        q = q.filter(BusinessInquiry.remark_status == remark_status.strip().lower())
+
+    # Filter by per-school is_seen (from BIS), fallback to global column for backward compat
     if is_seen is not None:
-        q = q.filter(BusinessInquiry.is_seen.is_(is_seen))
+        q = q.filter(
+            or_(
+                and_(BIS.id != None, BIS.is_seen.is_(is_seen)),  # noqa: E711
+                and_(BIS.id == None, BusinessInquiry.is_seen.is_(is_seen)),  # noqa: E711
+            )
+        )
+    if remark_status is not None:
+        q = q.filter(
+            or_(
+                BIS.remark_status == remark_status.strip().lower(),
+                and_(BIS.id == None, BusinessInquiry.remark_status == remark_status.strip().lower()),  # noqa: E711
+            )
+        )
 
     total_count = q.count()
     total_pages = (total_count + per_page - 1) // per_page if total_count else 0
     offset = (page - 1) * per_page
     rows = q.order_by(BusinessInquiry.created_at.desc()).offset(offset).limit(per_page).all()
+
+    # Pre-calculate applicable price for unseen inquiries
+    config = get_price_config_for_school(school, db)
+    seen_count = get_school_viewer_count(school.id, db)
+
+    items = []
+    pending_count = 0  # track unseen items in this list to estimate viewer numbers
+    for r, bis in rows:
+        school_is_seen = bis.is_seen if bis else r.is_seen
+        school_seen_at = bis.seen_at if bis else r.seen_at
+        school_viewer_number = bis.viewer_number if bis else None
+        school_amount_deducted = Decimal(str(bis.amount_deducted)) if bis else Decimal("0.00")
+        school_remark = bis.remark if bis else r.remark
+        school_remark_status = bis.remark_status if bis else r.remark_status
+
+        if school_is_seen and bis:
+            view_price = Decimal(str(bis.price_per_view)) if bis.price_per_view is not None else Decimal("0.00")
+        else:
+            # Estimate price for this unseen item
+            next_vn = seen_count + 1 + pending_count
+            view_price = calculate_applicable_price(next_vn, config) if config else Decimal("0.00")
+            pending_count += 1
+
+        item = BusinessInquiryResponse(
+            id=r.id,
+            school_ids=r.school_ids,
+            guardian_name=r.guardian_name,
+            phone=r.phone,
+            email=r.email,
+            location=r.location,
+            student_name=r.student_name,
+            gender=r.gender,
+            previous_institution=r.previous_institution,
+            relationship_with=r.relationship_with,
+            prefer_days=r.prefer_days,
+            who_is_this=r.who_is_this,
+            standard_in_academic=r.standard_in_academic,
+            inquiry_for_class=r.inquiry_for_class,
+            desire_to_know=r.desire_to_know,
+            prefer_time=r.prefer_time,
+            files=r.files,
+            message=r.message,
+            remark=school_remark,
+            remark_status=school_remark_status,
+            is_seen=school_is_seen,
+            seen_at=school_seen_at,
+            created_at=r.created_at,
+        )
+        items.append({
+            **item.model_dump(),
+            "viewer_number": school_viewer_number,
+            "view_price": float(view_price),
+            "amount_deducted": float(school_amount_deducted),
+        })
 
     return {
         "page": page,
@@ -11156,34 +11248,79 @@ def list_business_inquiry(
             "remark_status": remark_status,
             "is_seen": is_seen,
         },
-        "items": [
-            BusinessInquiryResponse(
-                id=r.id,
-                school_ids=r.school_ids,
-                guardian_name=r.guardian_name,
-                phone=r.phone,
-                email=r.email,
-                location=r.location,
-                student_name=r.student_name,
-                gender=r.gender,
-                previous_institution=r.previous_institution,
-                relationship_with=r.relationship_with,
-                prefer_days=r.prefer_days,
-                who_is_this=r.who_is_this,
-                standard_in_academic=r.standard_in_academic,
-                inquiry_for_class=r.inquiry_for_class,
-                desire_to_know=r.desire_to_know,
-                prefer_time=r.prefer_time,
-                files=r.files,
-                message=r.message,
-                remark=r.remark,
-                remark_status=r.remark_status,
-                is_seen=r.is_seen,
-                seen_at=r.seen_at,
-                created_at=r.created_at,
-            )
-            for r in rows
-        ],
+        "items": items,
+    }
+
+
+@router.get("/business-inquiry/{inquiry_id}/view-price")
+def get_business_inquiry_view_price(
+    inquiry_id: int = Path(..., description="Business inquiry ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get applicable view price for a business inquiry (school-specific).
+    Does NOT deduct money. Roles: SCHOOL.
+    """
+    from app.models.billing import BusinessInquirySchool as BIS, SchoolWallet
+    from app.services.billing import (
+        get_price_config_for_school,
+        get_school_viewer_count,
+        calculate_applicable_price,
+        get_or_create_wallet,
+    )
+    from decimal import Decimal
+
+    if current_user.role not in (UserRole.SCHOOL, "school"):
+        raise HTTPException(status_code=403, detail="Only school users can access this endpoint.")
+
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    # Validate school has access
+    inquiry = db.query(BusinessInquiry).filter(
+        BusinessInquiry.id == inquiry_id,
+        BusinessInquiry.school_ids.contains([school.id]),
+    ).first()
+    if not inquiry:
+        raise HTTPException(status_code=404, detail="Business inquiry not found.")
+
+    # Check junction row
+    bis = db.query(BIS).filter(
+        BIS.business_inquiry_id == inquiry_id,
+        BIS.school_id == school.id,
+    ).first()
+
+    wallet = db.query(SchoolWallet).filter(SchoolWallet.school_id == school.id).first()
+    wallet_balance = Decimal(str(wallet.balance)) if wallet else Decimal("0.00")
+
+    if bis and bis.is_seen:
+        # Already seen — return historical price
+        applicable_price = Decimal(str(bis.price_per_view)) if bis.price_per_view is not None else Decimal("0.00")
+        return {
+            "inquiry_id": inquiry_id,
+            "is_seen": True,
+            "viewer_number": bis.viewer_number,
+            "applicable_price": float(applicable_price),
+            "wallet_balance": float(wallet_balance),
+            "can_view": True,
+        }
+
+    # Unseen — calculate what it will cost
+    seen_count = get_school_viewer_count(school.id, db)
+    next_viewer_number = seen_count + 1
+    config = get_price_config_for_school(school, db)
+    applicable_price = calculate_applicable_price(next_viewer_number, config) if config else Decimal("0.00")
+    can_view = wallet_balance >= applicable_price
+
+    return {
+        "inquiry_id": inquiry_id,
+        "is_seen": False,
+        "viewer_number": next_viewer_number,
+        "applicable_price": float(applicable_price),
+        "wallet_balance": float(wallet_balance),
+        "can_view": can_view,
     }
 
 
@@ -11198,51 +11335,98 @@ def get_business_inquiry_detail(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
-    Get business inquiry details. Auto-marks as seen on first view.
-    Public: pass school_id (no auth). Auth: school gets own; admin can pass school_id.
+    Get business inquiry details.
+    On first view by an authenticated SCHOOL: deducts wallet atomically and marks seen.
+    Subsequent views: returns cached data without additional charge.
+    Public (unauthenticated) or admin: no billing, just returns data.
     """
+    from app.models.billing import BusinessInquirySchool as BIS
+    from app.services.billing import view_business_inquiry
+
     school = _get_school_public_or_auth(current_user, db, school_id)
-    
-    inquiry = db.query(BusinessInquiry).filter(
-        BusinessInquiry.id == inquiry_id,
-        BusinessInquiry.school_ids.contains([school.id])
-    ).first()
-    
-    if not inquiry:
-        raise HTTPException(status_code=404, detail="Business inquiry not found.")
-    
-    # Auto-mark as seen on first view
-    if not inquiry.is_seen:
-        from datetime import timezone as _tz
-        inquiry.is_seen = True
-        inquiry.seen_at = datetime.now(_tz.utc)
-        db.commit()
-    
-    return BusinessInquiryResponse(
-        id=inquiry.id,
-        school_ids=inquiry.school_ids,
-        guardian_name=inquiry.guardian_name,
-        phone=inquiry.phone,
-        email=inquiry.email,
-        location=inquiry.location,
-        student_name=inquiry.student_name,
-        gender=inquiry.gender,
-        previous_institution=inquiry.previous_institution,
-        relationship_with=inquiry.relationship_with,
-        prefer_days=inquiry.prefer_days,
-        who_is_this=inquiry.who_is_this,
-        standard_in_academic=inquiry.standard_in_academic,
-        inquiry_for_class=inquiry.inquiry_for_class,
-        desire_to_know=inquiry.desire_to_know,
-        prefer_time=inquiry.prefer_time,
-        files=inquiry.files,
-        message=inquiry.message,
-        remark=inquiry.remark,
-        remark_status=inquiry.remark_status,
-        is_seen=inquiry.is_seen,
-        seen_at=inquiry.seen_at,
-        created_at=inquiry.created_at,
+
+    # For authenticated SCHOOL role: apply billing
+    is_authenticated_school = (
+        current_user is not None
+        and current_user.role in (UserRole.SCHOOL, "school")
     )
+
+    if is_authenticated_school:
+        # Atomic billing flow — raises 402 if insufficient balance
+        inquiry, bis = view_business_inquiry(
+            inquiry_id=inquiry_id,
+            school_id=school.id,
+            school=school,
+            db=db,
+        )
+        db.commit()
+
+        return BusinessInquiryResponse(
+            id=inquiry.id,
+            school_ids=inquiry.school_ids,
+            guardian_name=inquiry.guardian_name,
+            phone=inquiry.phone,
+            email=inquiry.email,
+            location=inquiry.location,
+            student_name=inquiry.student_name,
+            gender=inquiry.gender,
+            previous_institution=inquiry.previous_institution,
+            relationship_with=inquiry.relationship_with,
+            prefer_days=inquiry.prefer_days,
+            who_is_this=inquiry.who_is_this,
+            standard_in_academic=inquiry.standard_in_academic,
+            inquiry_for_class=inquiry.inquiry_for_class,
+            desire_to_know=inquiry.desire_to_know,
+            prefer_time=inquiry.prefer_time,
+            files=inquiry.files,
+            message=inquiry.message,
+            remark=bis.remark,
+            remark_status=bis.remark_status,
+            is_seen=bis.is_seen,
+            seen_at=bis.seen_at,
+            created_at=inquiry.created_at,
+        )
+    else:
+        # Admin or public: no billing, just fetch
+        inquiry = db.query(BusinessInquiry).filter(
+            BusinessInquiry.id == inquiry_id,
+            BusinessInquiry.school_ids.contains([school.id]),
+        ).first()
+        if not inquiry:
+            raise HTTPException(status_code=404, detail="Business inquiry not found.")
+
+        # For backward compat: mark global is_seen if admin/public accesses
+        if not inquiry.is_seen:
+            from datetime import timezone as _tz
+            inquiry.is_seen = True
+            inquiry.seen_at = datetime.now(_tz.utc)
+            db.commit()
+
+        return BusinessInquiryResponse(
+            id=inquiry.id,
+            school_ids=inquiry.school_ids,
+            guardian_name=inquiry.guardian_name,
+            phone=inquiry.phone,
+            email=inquiry.email,
+            location=inquiry.location,
+            student_name=inquiry.student_name,
+            gender=inquiry.gender,
+            previous_institution=inquiry.previous_institution,
+            relationship_with=inquiry.relationship_with,
+            prefer_days=inquiry.prefer_days,
+            who_is_this=inquiry.who_is_this,
+            standard_in_academic=inquiry.standard_in_academic,
+            inquiry_for_class=inquiry.inquiry_for_class,
+            desire_to_know=inquiry.desire_to_know,
+            prefer_time=inquiry.prefer_time,
+            files=inquiry.files,
+            message=inquiry.message,
+            remark=inquiry.remark,
+            remark_status=inquiry.remark_status,
+            is_seen=inquiry.is_seen,
+            seen_at=inquiry.seen_at,
+            created_at=inquiry.created_at,
+        )
 
 
 @router.patch("/business-inquiry/{inquiry_id}/remark")
@@ -11256,10 +11440,13 @@ async def add_business_inquiry_remark(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """Add or update remark and/or remark_status from school side.
+    """Add or update remark and/or remark_status (per-school via junction table).
 
     remark_status values: relevant | not_relevant | important | call_to_action
+    Remark is stored per-school in the business_inquiry_school junction row.
     """
+    from app.models.billing import BusinessInquirySchool as BIS
+
     school = _get_school_for_admin_or_school(current_user, db, school_id)
 
     inquiry = db.query(BusinessInquiry).filter(
@@ -11270,6 +11457,28 @@ async def add_business_inquiry_remark(
     if not inquiry:
         raise HTTPException(status_code=404, detail="Business inquiry not found.")
 
+    # Get or create per-school junction row for remark storage
+    bis = db.query(BIS).filter(
+        BIS.business_inquiry_id == inquiry_id,
+        BIS.school_id == school.id,
+    ).first()
+
+    if not bis:
+        bis = BIS(
+            business_inquiry_id=inquiry_id,
+            school_id=school.id,
+            is_seen=False,
+            amount_deducted=0,
+        )
+        db.add(bis)
+        db.flush()
+
+    if payload.remark is not None:
+        bis.remark = payload.remark.strip() if payload.remark.strip() else None
+    if payload.remark_status is not None:
+        bis.remark_status = payload.remark_status.value
+
+    # Also update global fields for backward compatibility
     if payload.remark is not None:
         inquiry.remark = payload.remark.strip() if payload.remark.strip() else None
     if payload.remark_status is not None:
@@ -11280,8 +11489,8 @@ async def add_business_inquiry_remark(
     return {
         "detail": "Remark updated successfully",
         "inquiry_id": inquiry.id,
-        "remark": inquiry.remark,
-        "remark_status": inquiry.remark_status,
+        "remark": bis.remark,
+        "remark_status": bis.remark_status,
     }
 
 

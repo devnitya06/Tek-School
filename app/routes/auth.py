@@ -46,6 +46,13 @@ async def login(
             detail="Incorrect email or password"
         )
     
+    # Check if account has been soft-deleted
+    if user.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This account has been deleted and cannot be accessed."
+        )
+    
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     
@@ -170,6 +177,13 @@ async def refresh_token(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found or inactive"
+            )
+        
+        # Check if account has been soft-deleted
+        if user.is_deleted:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This account has been deleted and cannot be accessed."
             )
         
         # Generate new tokens
