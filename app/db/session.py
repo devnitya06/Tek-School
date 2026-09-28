@@ -125,10 +125,43 @@ from app.demo.models import (
     DemoOtp,
     DemoAccessAttempt,
 )
+from app.models.billing import (
+    DigitalProfilePriceConfig,
+    WalletRechargeConfig,
+    WalletRechargeBonus,
+    SchoolWallet,
+    WalletTransaction,
+    BusinessInquirySchool,
+)
 
 def create_tables():
     """Create all tables that don't exist yet"""
     Base.metadata.create_all(bind=engine)
+
+
+def ensure_soft_delete_schema():
+    """Ensure users table has soft-delete columns and account_deletion_otps table exists.
+
+    Follows the existing ensure_* pattern: safe to call on every startup,
+    idempotent, does not modify existing data.
+    """
+    # ── Add soft-delete columns to users if missing ──
+    _soft_delete_cols = [
+        ("is_deleted", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("deleted_at", "TIMESTAMP NULL"),
+        ("deleted_by", "INTEGER NULL"),
+        ("deletion_reason", "VARCHAR NULL"),
+    ]
+    for col_name, col_ddl in _soft_delete_cols:
+        if not column_exists("users", col_name):
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE users ADD COLUMN "{col_name}" {col_ddl}'))
+
+    # ── Create account_deletion_otps table if missing ──
+    inspector = inspect_engine()
+    if not inspector.has_table("account_deletion_otps"):
+        from app.models.users import AccountDeletionOtp
+        AccountDeletionOtp.__table__.create(bind=engine, checkfirst=True)
 
 def column_exists(table_name, column_name):
     """Check if a column exists in a table"""
@@ -1196,3 +1229,17 @@ async def get_async_db():
         )
     async with AsyncSessionLocal() as db:
         yield db
+
+
+def ensure_billing_schema():
+    """
+    Ensure billing/wallet tables exist.
+    Called at startup so that existing deployments without the Alembic migration
+    still work correctly (CREATE TABLE IF NOT EXISTS is safe).
+    """
+    DigitalProfilePriceConfig.__table__.create(bind=engine, checkfirst=True)
+    WalletRechargeConfig.__table__.create(bind=engine, checkfirst=True)
+    WalletRechargeBonus.__table__.create(bind=engine, checkfirst=True)
+    SchoolWallet.__table__.create(bind=engine, checkfirst=True)
+    WalletTransaction.__table__.create(bind=engine, checkfirst=True)
+    BusinessInquirySchool.__table__.create(bind=engine, checkfirst=True)

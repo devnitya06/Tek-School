@@ -110,6 +110,16 @@ async def create_business_inquiry(
         logger.exception("Failed to save business inquiry", exc_info=e)
         raise HTTPException(status_code=500, detail="Database error while saving inquiry.")
 
+    # Seed per-school junction rows for billing tracking
+    try:
+        from app.models.billing import BusinessInquirySchool
+        from app.services.billing import seed_inquiry_school_rows
+        seed_inquiry_school_rows(record.id, ids, db)
+        db.commit()
+    except Exception as e:
+        # Non-critical: billing rows failed to seed — do not fail the inquiry creation
+        logger.warning("Failed to seed business_inquiry_school rows: %s", e)
+
     return BusinessInquiryResponse(
         id=record.id,
         school_ids=record.school_ids,

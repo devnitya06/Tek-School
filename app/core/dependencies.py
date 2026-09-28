@@ -37,6 +37,8 @@ def get_current_user_optional(
     if not user_id:
         return None
     user = db.query(User).filter(User.id == user_id).first()
+    if user and user.is_deleted:
+        return None  # Treat deleted accounts as unauthenticated for optional routes
     return user
 
 
@@ -72,6 +74,13 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
+        )
+    
+    # Reject soft-deleted accounts — access tokens may still be valid after deletion
+    if user.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This account has been deleted and cannot be accessed.",
         )
     
     return user  # Now returns User model instance

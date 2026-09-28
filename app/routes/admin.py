@@ -27,7 +27,7 @@ from app.models.school import (
     SupportPlusStatus,
     BusinessInquiry,
 )
-from app.models.users import User
+from app.models.users import User, Token
 from app.models.teachers import Teacher, TeacherClassSectionSubject, SelfSignedTeacher, VerificationStatus, ProfileStatus
 from app.models.students import Student, StudentStatus, SelfSignedStudent
 from app.models.staff import Staff, staff_permissions, StaffPermissionType
@@ -1006,7 +1006,9 @@ async def list_all_schools(
             },
         )
 
-    query = select(School)
+    query = select(School).join(User, User.id == School.user_id, isouter=True).where(
+        or_(User.is_deleted.is_(False), User.id.is_(None))
+    )
     filter_id = school_id or id
     if filter_id:
         query = query.where(School.id == filter_id)
@@ -5401,3 +5403,194 @@ def get_student_payment_details(
         "total_payments": len(response),
         "payments": response,
     }
+
+
+# ─── Soft-Delete User (Admin / Superadmin) ────────────────────────────────────
+
+from pydantic import BaseModel as _PydanticBase
+from typing import Optional as _Opt
+
+
+class AdminDeleteUserRequest(_PydanticBase):
+    reason: _Opt[str] = "Administrative account deletion"
+
+
+@router.delete(
+    "/users/{user_id}",
+    summary="Soft-delete a user account (Admin / Superadmin)",
+    description=(
+        "Soft-deletes any user account. "
+        "ADMIN and SUPERADMIN cannot delete their own account via this endpoint. "
+        "ADMIN cannot delete another ADMIN or SUPERADMIN account. "
+        "Only SUPERADMIN can delete ADMIN accounts. "
+        "The user row is preserved for historical integrity; is_deleted is set to TRUE."
+    ),
+    tags=["Admin"],
+)
+def admin_delete_user(
+    user_id: int,
+    body: AdminDeleteUserRequest = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    from datetime import datetime, timezone
+
+    reason = (body.reason if body and body.reason else "Administrative account deletion").strip()
+
+    # ── Guard: admin/superadmin cannot delete themselves
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot delete your own admin account.",
+        )
+
+    # ── Load target user
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    # ── Already deleted
+    if target.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account is already deleted.",
+        )
+
+    # ── Role hierarchy protection
+    target_role = _normalize_role_admin(target.role)
+    actor_role = _normalize_role_admin(current_user.role)
+
+    # ADMIN cannot delete another ADMIN or SUPERADMIN
+    if actor_role == UserRole.ADMIN and target_role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin cannot delete another admin or superadmin account.",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        # Soft-delete the user
+        target.is_deleted = True
+        target.deleted_at = now
+        target.deleted_by = current_user.id
+        target.deletion_reason = reason
+        target.is_active = False
+
+        # Invalidate all refresh tokens for the target
+        db.query(Token).filter(Token.user_id == target.id).delete(synchronize_session=False)
+
+        # Deactivate session
+        from app.models.user_session import UserSession
+        sess = db.query(UserSession).filter(UserSession.user_id == target.id).first()
+        if sess:
+            sess.is_active = False
+            sess.last_active_at = now
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete user. Please try again.",
+        )
+
+    return {
+        "message": f"User {target.id} ({target.email}) has been soft-deleted successfully.",
+        "account_deleted": True,
+        "deleted_by": current_user.id,
+        "deleted_at": now.isoformat(),
+        "reason": reason,
+    }
+
+
+def _normalize_role_admin(role_value):
+    """Helper to normalize role in admin.py context."""
+    if isinstance(role_value, UserRole):
+        return role_value
+    if isinstance(role_value, str):
+        try:
+            return UserRole(role_value)
+        except ValueError:
+            return None
+    return None
+
+
+@router.get(
+    "/users",
+    summary="List all users (Admin / Superadmin)",
+    description=(
+        "List users with optional status filter. "
+        "status=active (default) → non-deleted users. "
+        "status=deleted → soft-deleted users only. "
+        "status=all → all users regardless of deletion state."
+    ),
+    tags=["Admin"],
+)
+def admin_list_users(
+    status_filter: _Opt[str] = Query(
+        "active",
+        alias="status",
+        description="Filter by account status: 'active' (default), 'deleted', or 'all'",
+    ),
+    role: _Opt[str] = Query(None, description="Filter by role (e.g. school, teacher, student)"),
+    email: _Opt[str] = Query(None, description="Filter by email (partial match)"),
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    query = db.query(User)
+
+    # Status filter
+    sf = (status_filter or "active").lower()
+    if sf == "active":
+        query = query.filter(User.is_deleted.is_(False))
+    elif sf == "deleted":
+        query = query.filter(User.is_deleted.is_(True))
+    elif sf == "all":
+        pass  # no filter
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid status value. Use: active, deleted, or all",
+        )
+
+    # Role filter
+    if role:
+        try:
+            role_enum = UserRole(role.strip().lower())
+            query = query.filter(User.role == role_enum.value)
+        except ValueError:
+            valid = ", ".join([r.value for r in UserRole])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role '{role}'. Valid values: {valid}",
+            )
+
+    # Email filter
+    if email:
+        query = query.filter(User.email.ilike(f"%{email}%"))
+
+    total_count = query.count()
+    users = query.order_by(User.created_at.desc()).offset(pagination.offset()).limit(pagination.limit()).all()
+
+    items = [
+        {
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "phone": u.phone,
+            "role": u.role.value if hasattr(u.role, "value") else u.role,
+            "is_active": u.is_active,
+            "is_deleted": u.is_deleted,
+            "deleted_at": u.deleted_at,
+            "deleted_by": u.deleted_by,
+            "deletion_reason": u.deletion_reason,
+            "created_at": u.created_at,
+            "verification_status": u.verification_status,
+        }
+        for u in users
+    ]
+
+    return pagination.format_response(items, total_count)
+

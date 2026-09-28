@@ -6,7 +6,10 @@ from starlette.responses import Response
 import time as _time
 from sqlalchemy.exc import OperationalError, TimeoutError as SATimeoutError
 from app.routes import users, auth, school, teachers, students, admin, selfsignedstudents, selfsignedteachers, staff, workers, exams, business_inquiry, progress_reports, academic_results, admin_sessions, news, placement
+from app.routes import account_delete as account_delete_routes
 from app.routes import prospectus as prospectus_routes
+from app.routes import digital_profile as digital_profile_routes
+from app.routes import wallet as wallet_routes
 from app.routes.assignments.assignment_routes import router as assignment_routes
 from app.routes.tuition.lesson_plans import router as tuition_lesson_plan_router
 from app.routes.tuition.teaching_setup import router as tuition_teaching_setup_router
@@ -51,6 +54,8 @@ from app.db.session import (
     ensure_excellent_student_schema,
     ensure_digital_prospectus_schema,
     ensure_class_fee_schema,
+    ensure_billing_schema,
+    ensure_soft_delete_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -221,9 +226,12 @@ app.include_router(tuition_teaching_setup_router)
 app.include_router(tuition_class_session_router)
 app.include_router(tuition_student_router)
 app.include_router(prospectus_routes.router)
+app.include_router(digital_profile_routes.router, prefix="/digital-profile", tags=["Digital Profile Pricing"])
+app.include_router(wallet_routes.router, prefix="/wallet", tags=["Wallet"])
 app.include_router(demo_public_router)
 app.include_router(demo_admin_config_router)
 app.include_router(demo_admin_requests_router)
+app.include_router(account_delete_routes.router)
 
 @app.on_event("startup")
 def on_startup():
@@ -268,6 +276,8 @@ def on_startup():
         ensure_placement_schema()
         ensure_news_schema()
         ensure_business_inquiry_schema()
+        ensure_billing_schema()
+        ensure_soft_delete_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 
