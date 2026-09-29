@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator
+from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Literal
 from datetime import time
 from datetime import date, datetime
@@ -1165,9 +1165,56 @@ class BusinessInquiryRemarkStatus(str, Enum):
 
 
 class BusinessInquiryRemarkRequest(BaseModel):
-    """Payload for PATCH /business-inquiry/{id}/remark."""
+    """Payload for PATCH /business-inquiry/{id}/remark.
+
+    Supports three independent operations in one request:
+      • remark / remark_status update (existing behaviour — unchanged)
+      • employee assignment  — send assigned_to_name (non-null) to assign/update
+      • assignment clearing  — send assigned_to_name: null to clear all assignment fields
+
+    Clearing rule: if assigned_to_name is *explicitly* sent as null, all assignment
+    fields (including assigned_at) are set to NULL.  Server decides assigned_at.
+    """
     remark: Optional[str] = None
     remark_status: Optional[BusinessInquiryRemarkStatus] = None
+
+    # Assignment fields — all Optional; use model_fields_set to distinguish
+    # "not sent" (no-op) from "explicitly null" (clear) in the route handler.
+    assigned_to_name: Optional[str] = None
+    assigned_to_designation: Optional[str] = None
+    assigned_to_phone: Optional[str] = None
+    assigned_to_email: Optional[EmailStr] = None
+
+    @model_validator(mode="after")
+    def _validate_assignment(self) -> "BusinessInquiryRemarkRequest":
+        """Validate assignment fields when any are explicitly provided."""
+        other_assignment = {"assigned_to_designation", "assigned_to_phone", "assigned_to_email"}
+        other_sent = other_assignment & self.model_fields_set
+
+        name_sent = "assigned_to_name" in self.model_fields_set
+
+        # If other assignment fields are sent without a name → error
+        if other_sent and not name_sent:
+            raise ValueError(
+                "assigned_to_name is required when providing any assignment field."
+            )
+
+        # If name is being set (non-null), validate its content
+        if name_sent and self.assigned_to_name is not None:
+            name = self.assigned_to_name.strip()
+            if not name:
+                raise ValueError("assigned_to_name must not be empty or whitespace-only.")
+            if len(name) > 255:
+                raise ValueError("assigned_to_name must be at most 255 characters.")
+            self.assigned_to_name = name
+
+        # Validate optional field lengths
+        if self.assigned_to_designation is not None and len(self.assigned_to_designation) > 100:
+            raise ValueError("assigned_to_designation must be at most 100 characters.")
+        if self.assigned_to_phone is not None and len(self.assigned_to_phone) > 20:
+            raise ValueError("assigned_to_phone must be at most 20 characters.")
+
+        return self
 
 
 class BusinessInquiryGender(str, Enum):
@@ -1204,6 +1251,12 @@ class BusinessInquiryResponse(BaseModel):
     remark_status: Optional[str] = None
     is_seen: bool = False
     seen_at: Optional[datetime] = None
+    # Per-school employee assignment (null when no assignment exists)
+    assigned_to_name: Optional[str] = None
+    assigned_to_designation: Optional[str] = None
+    assigned_to_phone: Optional[str] = None
+    assigned_to_email: Optional[str] = None
+    assigned_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

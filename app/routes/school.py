@@ -11233,6 +11233,11 @@ def list_business_inquiry(
             "viewer_number": school_viewer_number,
             "view_price": float(view_price),
             "amount_deducted": float(school_amount_deducted),
+            "assigned_to_name": bis.assigned_to_name if bis else None,
+            "assigned_to_designation": bis.assigned_to_designation if bis else None,
+            "assigned_to_phone": bis.assigned_to_phone if bis else None,
+            "assigned_to_email": bis.assigned_to_email if bis else None,
+            "assigned_at": bis.assigned_at.isoformat() if (bis and bis.assigned_at) else None,
         })
 
     return {
@@ -11384,6 +11389,11 @@ def get_business_inquiry_detail(
             remark_status=bis.remark_status,
             is_seen=bis.is_seen,
             seen_at=bis.seen_at,
+            assigned_to_name=bis.assigned_to_name,
+            assigned_to_designation=bis.assigned_to_designation,
+            assigned_to_phone=bis.assigned_to_phone,
+            assigned_to_email=bis.assigned_to_email,
+            assigned_at=bis.assigned_at,
             created_at=inquiry.created_at,
         )
     else:
@@ -11401,6 +11411,12 @@ def get_business_inquiry_detail(
             inquiry.is_seen = True
             inquiry.seen_at = datetime.now(_tz.utc)
             db.commit()
+
+        # Resolve BIS row for this school to include assignment data in admin/public response
+        bis_for_admin = db.query(BIS).filter(
+            BIS.business_inquiry_id == inquiry_id,
+            BIS.school_id == school.id,
+        ).first()
 
         return BusinessInquiryResponse(
             id=inquiry.id,
@@ -11421,10 +11437,15 @@ def get_business_inquiry_detail(
             prefer_time=inquiry.prefer_time,
             files=inquiry.files,
             message=inquiry.message,
-            remark=inquiry.remark,
-            remark_status=inquiry.remark_status,
-            is_seen=inquiry.is_seen,
-            seen_at=inquiry.seen_at,
+            remark=bis_for_admin.remark if bis_for_admin else inquiry.remark,
+            remark_status=bis_for_admin.remark_status if bis_for_admin else inquiry.remark_status,
+            is_seen=bis_for_admin.is_seen if bis_for_admin else inquiry.is_seen,
+            seen_at=bis_for_admin.seen_at if bis_for_admin else inquiry.seen_at,
+            assigned_to_name=bis_for_admin.assigned_to_name if bis_for_admin else None,
+            assigned_to_designation=bis_for_admin.assigned_to_designation if bis_for_admin else None,
+            assigned_to_phone=bis_for_admin.assigned_to_phone if bis_for_admin else None,
+            assigned_to_email=bis_for_admin.assigned_to_email if bis_for_admin else None,
+            assigned_at=bis_for_admin.assigned_at if bis_for_admin else None,
             created_at=inquiry.created_at,
         )
 
@@ -11440,12 +11461,21 @@ async def add_business_inquiry_remark(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)),
 ):
-    """Add or update remark and/or remark_status (per-school via junction table).
+    """Add or update remark, remark_status, and/or employee assignment (per-school).
 
     remark_status values: relevant | not_relevant | important | call_to_action
-    Remark is stored per-school in the business_inquiry_school junction row.
+
+    Assignment behaviour:
+      - Send assigned_to_name (non-null) to assign/update an employee.
+        assigned_to_designation, assigned_to_phone, assigned_to_email are optional.
+        assigned_at is set automatically by the server.
+      - Send assigned_to_name: null to clear all assignment fields.
+      - Omit all assignment fields to leave assignment unchanged.
+
+    Billing (is_seen, seen_at, viewer count, wallet) is never affected by this endpoint.
     """
     from app.models.billing import BusinessInquirySchool as BIS
+    from datetime import timezone as _tz
 
     school = _get_school_for_admin_or_school(current_user, db, school_id)
 
@@ -11457,7 +11487,7 @@ async def add_business_inquiry_remark(
     if not inquiry:
         raise HTTPException(status_code=404, detail="Business inquiry not found.")
 
-    # Get or create per-school junction row for remark storage
+    # Get or create per-school junction row
     bis = db.query(BIS).filter(
         BIS.business_inquiry_id == inquiry_id,
         BIS.school_id == school.id,
@@ -11473,16 +11503,45 @@ async def add_business_inquiry_remark(
         db.add(bis)
         db.flush()
 
+    # ── Remark / remark_status (existing behaviour, unchanged) ────────────────
     if payload.remark is not None:
         bis.remark = payload.remark.strip() if payload.remark.strip() else None
     if payload.remark_status is not None:
         bis.remark_status = payload.remark_status.value
 
-    # Also update global fields for backward compatibility
+    # Also mirror to global row for backward compatibility
     if payload.remark is not None:
         inquiry.remark = payload.remark.strip() if payload.remark.strip() else None
     if payload.remark_status is not None:
         inquiry.remark_status = payload.remark_status.value
+
+    # ── Employee assignment ───────────────────────────────────────────────────
+    # Use model_fields_set to distinguish "not sent" (no-op) from "sent as null" (clear).
+    if "assigned_to_name" in payload.model_fields_set:
+        if payload.assigned_to_name is None:
+            # Explicit null → clear all assignment fields
+            bis.assigned_to_name = None
+            bis.assigned_to_designation = None
+            bis.assigned_to_phone = None
+            bis.assigned_to_email = None
+            bis.assigned_at = None
+        else:
+            # Non-null → assign / update employee
+            bis.assigned_to_name = payload.assigned_to_name  # already stripped by validator
+            bis.assigned_to_designation = (
+                payload.assigned_to_designation.strip()
+                if payload.assigned_to_designation else None
+            )
+            bis.assigned_to_phone = (
+                payload.assigned_to_phone.strip()
+                if payload.assigned_to_phone else None
+            )
+            bis.assigned_to_email = (
+                str(payload.assigned_to_email)
+                if payload.assigned_to_email else None
+            )
+            bis.assigned_at = datetime.now(_tz.utc)
+    # If assigned_to_name not in model_fields_set → no change to assignment
 
     db.commit()
 
@@ -11491,6 +11550,11 @@ async def add_business_inquiry_remark(
         "inquiry_id": inquiry.id,
         "remark": bis.remark,
         "remark_status": bis.remark_status,
+        "assigned_to_name": bis.assigned_to_name,
+        "assigned_to_designation": bis.assigned_to_designation,
+        "assigned_to_phone": bis.assigned_to_phone,
+        "assigned_to_email": bis.assigned_to_email,
+        "assigned_at": bis.assigned_at.isoformat() if bis.assigned_at else None,
     }
 
 

@@ -312,6 +312,13 @@ class BusinessInquirySchool(Base):
     remark = Column(Text, nullable=True)
     remark_status = Column(String(50), nullable=True)  # relevant|not_relevant|important|call_to_action
 
+    # Per-school employee assignment — written via PATCH /business-inquiry/{id}/remark
+    assigned_to_name = Column(String(255), nullable=True)
+    assigned_to_designation = Column(String(100), nullable=True)
+    assigned_to_phone = Column(String(20), nullable=True)
+    assigned_to_email = Column(String(255), nullable=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=True)  # server-set; never accepted from client
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

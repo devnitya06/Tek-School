@@ -1242,4 +1242,25 @@ def ensure_billing_schema():
     WalletRechargeBonus.__table__.create(bind=engine, checkfirst=True)
     SchoolWallet.__table__.create(bind=engine, checkfirst=True)
     WalletTransaction.__table__.create(bind=engine, checkfirst=True)
-    BusinessInquirySchool.__table__.create(bind=engine, checkfirst=True)
+    BusinessInquirySchool.__table__.create(bind=engine, checkfirst=True)
+
+    # Idempotently add assignment columns introduced in migration c1d2e3f4a5b6.
+    # ALTER TABLE … ADD COLUMN IF NOT EXISTS is safe to run multiple times.
+    _add_assignment_columns_if_missing()
+
+
+def _add_assignment_columns_if_missing():
+    """Add assignment columns to business_inquiry_school if they don't exist yet."""
+    stmts = [
+        "ALTER TABLE business_inquiry_school ADD COLUMN IF NOT EXISTS assigned_to_name VARCHAR(255);",
+        "ALTER TABLE business_inquiry_school ADD COLUMN IF NOT EXISTS assigned_to_designation VARCHAR(100);",
+        "ALTER TABLE business_inquiry_school ADD COLUMN IF NOT EXISTS assigned_to_phone VARCHAR(20);",
+        "ALTER TABLE business_inquiry_school ADD COLUMN IF NOT EXISTS assigned_to_email VARCHAR(255);",
+        "ALTER TABLE business_inquiry_school ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP WITH TIME ZONE;",
+    ]
+    with engine.begin() as conn:
+        for stmt in stmts:
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                pass  # column already exists or table missing — handled elsewhere
