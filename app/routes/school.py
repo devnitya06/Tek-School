@@ -609,7 +609,23 @@ async def update_school_profile(
             school.country = data.country
 
         if data.school_email is not None:
-            school.school_email = data.school_email
+            new_email = data.school_email.strip().lower()
+            # Check if another User already owns this email (unique constraint on User.email)
+            existing_user_with_email = (
+                db.query(User)
+                .filter(User.email == new_email, User.id != school.user_id)
+                .first()
+            )
+            if existing_user_with_email:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This email is already in use by another account.",
+                )
+            school.school_email = new_email
+            # Sync login email so forgot-password / login keep working with the new address
+            school_owner = db.query(User).filter(User.id == school.user_id).first()
+            if school_owner:
+                school_owner.email = new_email
         if data.school_phone is not None:
             school.school_phone = data.school_phone
         if data.school_alt_phone is not None:
