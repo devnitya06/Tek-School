@@ -50,7 +50,8 @@ from app.utils.permission import (
     require_roles_allow_listing_school,
     verify_school_business_access,
 )
-from app.utils.email_utility import generate_password, send_dynamic_email
+from app.utils.email_utility import generate_password, send_dynamic_email, generate_otp
+from app.models.users import SchoolProfileUpdateOtp
 from app.core.security import get_password_hash
 from typing import List, Optional, Literal
 from app.utils.s3 import upload_to_s3
@@ -113,8 +114,8 @@ def _slugify_batch_name(value: str) -> str:
 def _get_school_for_admin_or_school(
     current_user: User, db: Session, school_id: Optional[str] = None
 ) -> School:
-    """Get school: SCHOOL role from user profile, ADMIN role from school_id param (required)."""
-    if current_user.role == UserRole.ADMIN:
+    """Get school: SCHOOL role from user profile, ADMIN/SUPERADMIN role from school_id param (required)."""
+    if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if not school_id:
             raise HTTPException(
                 status_code=400, detail="school_id is required when accessing as admin."
@@ -568,7 +569,7 @@ async def update_school_profile(
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN)
+        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)
     ),
 ):
     school = _get_school_for_admin_or_school(current_user, db, school_id)
@@ -580,147 +581,225 @@ async def update_school_profile(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
 
-    # Handle JSON body data - update only if data is provided
-    if data is not None:
-        if data.school_name is not None:
-            school.school_name = data.school_name
-        if data.school_type is not None:
-            school.school_type = data.school_type
-        if data.school_medium is not None:
-            school.school_medium = data.school_medium
-        if data.school_board is not None:
-            school.school_board = data.school_board
-        if data.establishment_year is not None:
-            school.establishment_year = data.establishment_year
-        if data.establishment_month is not None:
-            school.establishment_month = data.establishment_month
-        if data.register_no is not None:
-            school.register_no = data.register_no
-
-        if data.pin_code is not None:
-            school.pin_code = data.pin_code
-        if data.block_division is not None:
-            school.block_division = data.block_division
-        if data.district is not None:
-            school.district = data.district
-        if data.state is not None:
-            school.state = data.state
-        if data.country is not None:
-            school.country = data.country
-
+    # ── SCHOOL ROLE: OTP gate ──────────────────────────────────────────────────
+    # Changes are NOT applied immediately. An OTP is generated and emailed.
+    # If school_email is changing → OTP goes to the NEW email.
+    # Otherwise → OTP goes to the current email.
+    # Call POST /school/verify-profile-update with the OTP to apply changes.
+    #
+    # ADMIN / SUPERADMIN bypass this and changes are applied directly below.
+    if current_user.role == UserRole.SCHOOL:
+        # Validate new email uniqueness before storing (fast-fail)
         if data.school_email is not None:
-            new_email = data.school_email.strip().lower()
-            # Check if another User already owns this email (unique constraint on User.email)
-            existing_user_with_email = (
-                db.query(User)
-                .filter(User.email == new_email, User.id != school.user_id)
-                .first()
-            )
-            if existing_user_with_email:
-                raise HTTPException(
-                    status_code=400,
-                    detail="This email is already in use by another account.",
+            new_email_check = data.school_email.strip().lower()
+            if new_email_check != (school.school_email or "").strip().lower():
+                clash = (
+                    db.query(User)
+                    .filter(User.email == new_email_check, User.id != school.user_id)
+                    .first()
                 )
-            school.school_email = new_email
-            # Sync login email so forgot-password / login keep working with the new address
-            school_owner = db.query(User).filter(User.id == school.user_id).first()
-            if school_owner:
-                school_owner.email = new_email
-        if data.school_phone is not None:
-            school.school_phone = data.school_phone
-        if data.school_alt_phone is not None:
-            school.school_alt_phone = data.school_alt_phone
-        if data.school_website is not None:
-            school.school_website = data.school_website
-
-        if data.principal_name is not None:
-            school.principal_name = data.principal_name
-        if data.principal_designation is not None:
-            school.principal_designation = data.principal_designation
-        if data.principal_email is not None:
-            school.principal_email = data.principal_email
-        if data.principal_phone is not None:
-            school.principal_phone = data.principal_phone
-
-        if data.school_other_email is not None:
-            school.school_other_email = data.school_other_email
-        if data.school_location is not None:
-            school.school_location = data.school_location
-        if data.institution_categories is not None:
-            school.institution_categories = data.institution_categories
-        if data.hostel is not None:
-            school.hostel = data.hostel
-        if data.computer_lab is not None:
-            school.computer_lab = data.computer_lab
-        if data.medical_faculties is not None:
-            school.medical_faculties = data.medical_faculties
-        if data.job_assurance is not None:
-            school.job_assurance = data.job_assurance
-        if data.admission_process is not None:
-            school.admission_process = data.admission_process
-        if data.internship is not None:
-            school.internship = data.internship
-        if data.lms_facility is not None:
-            school.lms_facility = data.lms_facility
-        if data.alumni_network is not None:
-            school.alumni_network = data.alumni_network
-        if data.institution_class is not None:
-            school.institution_class = data.institution_class
-        if data.library is not None:
-            school.library = data.library
-        if data.available_classes is not None:
-            school.available_classes = data.available_classes
-        if data.have_digital_board is not None:
-            school.have_digital_board = data.have_digital_board
-        if data.have_cctv_in_campus is not None:
-            school.have_cctv_in_campus = data.have_cctv_in_campus
-        if data.have_scholarship_opportunities is not None:
-            school.have_scholarship_opportunities = data.have_scholarship_opportunities
-        if data.have_extra_curricular_activities is not None:
-            school.have_extra_curricular_activities = data.have_extra_curricular_activities
-        if data.total_teachers is not None:
-            school.total_teachers = data.total_teachers
-        if data.total_students is not None:
-            school.total_students = data.total_students
-        if data.class_from is not None:
-            school.class_from = data.class_from
-        if data.class_to is not None:
-            school.class_to = data.class_to
-        if data.due_installment_type is not None:
-            school.due_installment_type = data.due_installment_type
-        if data.transportation_facility is not None:
-            school.transportation_facility = data.transportation_facility
-        if data.playground_facility is not None:
-            school.playground_facility = data.playground_facility
-        if data.teaching_method is not None:
-            school.teaching_method = data.teaching_method
-        if data.catalogue is not None:
-            school.catalogue = data.catalogue
-        if data.photo_gallery is not None:
-            school.photo_gallery = data.photo_gallery
-        if data.school_logo is not None:
-            if data.school_logo.startswith("data:") or len(data.school_logo) > 500:
-                try:
-                    file_ext = "png"
-                    if "image/png" in (data.school_logo or ""):
-                        file_ext = "png"
-                    elif "image/jpeg" in (data.school_logo or "") or "image/jpg" in (
-                        data.school_logo or ""
-                    ):
-                        file_ext = "jpg"
-                    elif "image/webp" in (data.school_logo or ""):
-                        file_ext = "webp"
-                    school.profile_pic_url = upload_base64_to_s3(
-                        data.school_logo,
-                        f"schools/{school.id}/logo",
-                        ext=file_ext,
-                    )
-                except Exception as e:
+                if clash:
                     raise HTTPException(
-                        status_code=400, detail=f"School logo upload failed: {str(e)}"
+                        status_code=400,
+                        detail="This email is already registered to another account.",
                     )
-            else:
-                school.profile_pic_url = data.school_logo
+
+        # Determine which email to send the OTP to
+        if data.school_email is not None:
+            otp_target_email = data.school_email.strip().lower()  # send to NEW email
+        else:
+            otp_target_email = school.school_email or (
+                db.query(User).filter(User.id == school.user_id).first().email
+            )
+
+        # Invalidate previous pending OTPs for this user
+        db.query(SchoolProfileUpdateOtp).filter(
+            SchoolProfileUpdateOtp.user_id == school.user_id,
+            SchoolProfileUpdateOtp.is_verified.is_(False),
+        ).delete(synchronize_session=False)
+
+        # Serialize and store pending payload
+        import json as _json
+        pending_json = _json.dumps(body)
+
+        otp_code = generate_otp()
+        otp_entry = SchoolProfileUpdateOtp(
+            user_id=school.user_id,
+            otp=otp_code,
+            pending_data=pending_json,
+            otp_sent_to=otp_target_email,
+        )
+        db.add(otp_entry)
+
+        try:
+            db.commit()
+        except SQLAlchemyError as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+
+        # Send OTP email
+        try:
+            send_dynamic_email(
+                context_key="otp_verify.html",
+                subject="Confirm Your Profile Update – OTP Code",
+                recipient_email=otp_target_email,
+                context_data={
+                    "email": otp_target_email,
+                    "OTP": otp_code,
+                    "current_year": datetime.now().year,
+                },
+                db=db,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"OTP saved but email could not be sent: {str(e)}",
+            )
+
+        return {
+            "detail": "OTP sent. Please verify to apply your profile changes.",
+            "otp_sent_to": _mask_public_email(otp_target_email),
+            "note": "Call POST /school/verify-profile-update with the OTP to confirm.",
+        }
+
+    # ── ADMIN / SUPERADMIN: apply changes directly ─────────────────────────────
+    if data.school_name is not None:
+        school.school_name = data.school_name
+    if data.school_type is not None:
+        school.school_type = data.school_type
+    if data.school_medium is not None:
+        school.school_medium = data.school_medium
+    if data.school_board is not None:
+        school.school_board = data.school_board
+    if data.establishment_year is not None:
+        school.establishment_year = data.establishment_year
+    if data.establishment_month is not None:
+        school.establishment_month = data.establishment_month
+    if data.register_no is not None:
+        school.register_no = data.register_no
+
+    if data.pin_code is not None:
+        school.pin_code = data.pin_code
+    if data.block_division is not None:
+        school.block_division = data.block_division
+    if data.district is not None:
+        school.district = data.district
+    if data.state is not None:
+        school.state = data.state
+    if data.country is not None:
+        school.country = data.country
+
+    if data.school_email is not None:
+        new_email = data.school_email.strip().lower()
+        existing_user_with_email = (
+            db.query(User)
+            .filter(User.email == new_email, User.id != school.user_id)
+            .first()
+        )
+        if existing_user_with_email:
+            raise HTTPException(
+                status_code=400,
+                detail="This email is already in use by another account.",
+            )
+        school.school_email = new_email
+        school_owner = db.query(User).filter(User.id == school.user_id).first()
+        if school_owner:
+            school_owner.email = new_email
+    if data.school_phone is not None:
+        school.school_phone = data.school_phone
+    if data.school_alt_phone is not None:
+        school.school_alt_phone = data.school_alt_phone
+    if data.school_website is not None:
+        school.school_website = data.school_website
+
+    if data.principal_name is not None:
+        school.principal_name = data.principal_name
+    if data.principal_designation is not None:
+        school.principal_designation = data.principal_designation
+    if data.principal_email is not None:
+        school.principal_email = data.principal_email
+    if data.principal_phone is not None:
+        school.principal_phone = data.principal_phone
+
+    if data.school_other_email is not None:
+        school.school_other_email = data.school_other_email
+    if data.school_location is not None:
+        school.school_location = data.school_location
+    if data.institution_categories is not None:
+        school.institution_categories = data.institution_categories
+    if data.hostel is not None:
+        school.hostel = data.hostel
+    if data.computer_lab is not None:
+        school.computer_lab = data.computer_lab
+    if data.medical_faculties is not None:
+        school.medical_faculties = data.medical_faculties
+    if data.job_assurance is not None:
+        school.job_assurance = data.job_assurance
+    if data.admission_process is not None:
+        school.admission_process = data.admission_process
+    if data.internship is not None:
+        school.internship = data.internship
+    if data.lms_facility is not None:
+        school.lms_facility = data.lms_facility
+    if data.alumni_network is not None:
+        school.alumni_network = data.alumni_network
+    if data.institution_class is not None:
+        school.institution_class = data.institution_class
+    if data.library is not None:
+        school.library = data.library
+    if data.available_classes is not None:
+        school.available_classes = data.available_classes
+    if data.have_digital_board is not None:
+        school.have_digital_board = data.have_digital_board
+    if data.have_cctv_in_campus is not None:
+        school.have_cctv_in_campus = data.have_cctv_in_campus
+    if data.have_scholarship_opportunities is not None:
+        school.have_scholarship_opportunities = data.have_scholarship_opportunities
+    if data.have_extra_curricular_activities is not None:
+        school.have_extra_curricular_activities = data.have_extra_curricular_activities
+    if data.total_teachers is not None:
+        school.total_teachers = data.total_teachers
+    if data.total_students is not None:
+        school.total_students = data.total_students
+    if data.class_from is not None:
+        school.class_from = data.class_from
+    if data.class_to is not None:
+        school.class_to = data.class_to
+    if data.due_installment_type is not None:
+        school.due_installment_type = data.due_installment_type
+    if data.transportation_facility is not None:
+        school.transportation_facility = data.transportation_facility
+    if data.playground_facility is not None:
+        school.playground_facility = data.playground_facility
+    if data.teaching_method is not None:
+        school.teaching_method = data.teaching_method
+    if data.catalogue is not None:
+        school.catalogue = data.catalogue
+    if data.photo_gallery is not None:
+        school.photo_gallery = data.photo_gallery
+    if data.school_logo is not None:
+        if data.school_logo.startswith("data:") or len(data.school_logo) > 500:
+            try:
+                file_ext = "png"
+                if "image/png" in (data.school_logo or ""):
+                    file_ext = "png"
+                elif "image/jpeg" in (data.school_logo or "") or "image/jpg" in (
+                    data.school_logo or ""
+                ):
+                    file_ext = "jpg"
+                elif "image/webp" in (data.school_logo or ""):
+                    file_ext = "webp"
+                school.profile_pic_url = upload_base64_to_s3(
+                    data.school_logo,
+                    f"schools/{school.id}/logo",
+                    ext=file_ext,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400, detail=f"School logo upload failed: {str(e)}"
+                )
+        else:
+            school.profile_pic_url = data.school_logo
 
     try:
         db.commit()
@@ -845,6 +924,226 @@ async def add_catalogue_images(
         "uploaded_urls": uploaded_urls,
         "errors": errors if errors else None,
         "total_catalogue_images": len(school.catalogue) if school.catalogue else 0,
+    }
+
+
+@router.post("/verify-profile-update")
+async def verify_profile_update(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles_allow_listing_school(UserRole.SCHOOL)
+    ),
+    otp: str = Body(..., embed=True, description="6-digit OTP received in email"),
+):
+    """Confirm a pending school profile update (school role only).
+
+    After calling PATCH /school/school-profile, the school user receives an OTP
+    by email. Submit that OTP here to actually apply the stored changes.
+    - OTP is valid for 10 minutes.
+    - Max 5 incorrect attempts before the OTP is invalidated.
+    """
+    school = db.query(School).filter(School.user_id == current_user.id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School profile not found.")
+
+    otp_entry = (
+        db.query(SchoolProfileUpdateOtp)
+        .filter(
+            SchoolProfileUpdateOtp.user_id == current_user.id,
+            SchoolProfileUpdateOtp.is_verified.is_(False),
+        )
+        .order_by(SchoolProfileUpdateOtp.created_at.desc())
+        .first()
+    )
+
+    if not otp_entry:
+        raise HTTPException(
+            status_code=400,
+            detail="No pending profile update found. Please call PATCH /school/school-profile first.",
+        )
+
+    # Expiry check
+    if otp_entry.expires_at.replace(tzinfo=None) < datetime.utcnow():
+        db.delete(otp_entry)
+        db.commit()
+        raise HTTPException(status_code=400, detail="OTP has expired. Please update your profile again.")
+
+    # Attempt tracking — cap at 5 tries
+    otp_entry.attempts += 1
+    if otp_entry.attempts > 5:
+        db.delete(otp_entry)
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Too many incorrect attempts. Please call PATCH /school/school-profile again.",
+        )
+
+    if otp_entry.otp != otp.strip():
+        db.commit()  # save the incremented attempt count
+        remaining = max(0, 5 - otp_entry.attempts)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+        )
+
+    # ── OTP confirmed — apply pending changes ──────────────────────────────────
+    import json as _json
+    try:
+        body = _json.loads(otp_entry.pending_data)
+        data = SchoolProfileUpdate(**body)
+    except Exception as e:
+        db.delete(otp_entry)
+        db.commit()
+        raise HTTPException(status_code=400, detail=f"Stored update payload is invalid: {str(e)}")
+
+    if data.school_name is not None:
+        school.school_name = data.school_name
+    if data.school_type is not None:
+        school.school_type = data.school_type
+    if data.school_medium is not None:
+        school.school_medium = data.school_medium
+    if data.school_board is not None:
+        school.school_board = data.school_board
+    if data.establishment_year is not None:
+        school.establishment_year = data.establishment_year
+    if data.establishment_month is not None:
+        school.establishment_month = data.establishment_month
+    if data.register_no is not None:
+        school.register_no = data.register_no
+    if data.pin_code is not None:
+        school.pin_code = data.pin_code
+    if data.block_division is not None:
+        school.block_division = data.block_division
+    if data.district is not None:
+        school.district = data.district
+    if data.state is not None:
+        school.state = data.state
+    if data.country is not None:
+        school.country = data.country
+
+    if data.school_email is not None:
+        new_email = data.school_email.strip().lower()
+        # Race-condition guard: re-check uniqueness
+        clash = (
+            db.query(User)
+            .filter(User.email == new_email, User.id != school.user_id)
+            .first()
+        )
+        if clash:
+            db.delete(otp_entry)
+            db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="This email was registered by another account while your OTP was pending.",
+            )
+        school.school_email = new_email
+        school_owner = db.query(User).filter(User.id == school.user_id).first()
+        if school_owner:
+            school_owner.email = new_email
+
+    if data.school_phone is not None:
+        school.school_phone = data.school_phone
+    if data.school_alt_phone is not None:
+        school.school_alt_phone = data.school_alt_phone
+    if data.school_website is not None:
+        school.school_website = data.school_website
+    if data.principal_name is not None:
+        school.principal_name = data.principal_name
+    if data.principal_designation is not None:
+        school.principal_designation = data.principal_designation
+    if data.principal_email is not None:
+        school.principal_email = data.principal_email
+    if data.principal_phone is not None:
+        school.principal_phone = data.principal_phone
+    if data.school_other_email is not None:
+        school.school_other_email = data.school_other_email
+    if data.school_location is not None:
+        school.school_location = data.school_location
+    if data.institution_categories is not None:
+        school.institution_categories = data.institution_categories
+    if data.hostel is not None:
+        school.hostel = data.hostel
+    if data.computer_lab is not None:
+        school.computer_lab = data.computer_lab
+    if data.medical_faculties is not None:
+        school.medical_faculties = data.medical_faculties
+    if data.job_assurance is not None:
+        school.job_assurance = data.job_assurance
+    if data.admission_process is not None:
+        school.admission_process = data.admission_process
+    if data.internship is not None:
+        school.internship = data.internship
+    if data.lms_facility is not None:
+        school.lms_facility = data.lms_facility
+    if data.alumni_network is not None:
+        school.alumni_network = data.alumni_network
+    if data.institution_class is not None:
+        school.institution_class = data.institution_class
+    if data.library is not None:
+        school.library = data.library
+    if data.available_classes is not None:
+        school.available_classes = data.available_classes
+    if data.have_digital_board is not None:
+        school.have_digital_board = data.have_digital_board
+    if data.have_cctv_in_campus is not None:
+        school.have_cctv_in_campus = data.have_cctv_in_campus
+    if data.have_scholarship_opportunities is not None:
+        school.have_scholarship_opportunities = data.have_scholarship_opportunities
+    if data.have_extra_curricular_activities is not None:
+        school.have_extra_curricular_activities = data.have_extra_curricular_activities
+    if data.total_teachers is not None:
+        school.total_teachers = data.total_teachers
+    if data.total_students is not None:
+        school.total_students = data.total_students
+    if data.class_from is not None:
+        school.class_from = data.class_from
+    if data.class_to is not None:
+        school.class_to = data.class_to
+    if data.due_installment_type is not None:
+        school.due_installment_type = data.due_installment_type
+    if data.transportation_facility is not None:
+        school.transportation_facility = data.transportation_facility
+    if data.playground_facility is not None:
+        school.playground_facility = data.playground_facility
+    if data.teaching_method is not None:
+        school.teaching_method = data.teaching_method
+    if data.catalogue is not None:
+        school.catalogue = data.catalogue
+    if data.photo_gallery is not None:
+        school.photo_gallery = data.photo_gallery
+    if data.school_logo is not None:
+        if data.school_logo.startswith("data:") or len(data.school_logo) > 500:
+            try:
+                file_ext = "png"
+                if "image/png" in (data.school_logo or ""):
+                    file_ext = "png"
+                elif "image/jpeg" in (data.school_logo or "") or "image/jpg" in (data.school_logo or ""):
+                    file_ext = "jpg"
+                elif "image/webp" in (data.school_logo or ""):
+                    file_ext = "webp"
+                school.profile_pic_url = upload_base64_to_s3(
+                    data.school_logo,
+                    f"schools/{school.id}/logo",
+                    ext=file_ext,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"School logo upload failed: {str(e)}")
+        else:
+            school.profile_pic_url = data.school_logo
+
+    otp_entry.is_verified = True
+
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+
+    return {
+        "detail": "School profile updated successfully.",
+        "school_email": school.school_email,
+        "school_name": school.school_name,
     }
 
 

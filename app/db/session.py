@@ -1263,4 +1263,14 @@ def _add_assignment_columns_if_missing():
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass  # column already exists or table missing — handled elsewhere
+                pass  # column already exists or table missing — handled elsewhere
+
+
+def ensure_school_profile_update_otp_schema():
+    """Ensure school_profile_update_otps table exists.
+
+    Idempotent — safe to call on every startup. Creates the table only if it
+    doesn't already exist, using SQLAlchemy's checkfirst=True flag.
+    """
+    from app.models.users import SchoolProfileUpdateOtp
+    SchoolProfileUpdateOtp.__table__.create(bind=engine, checkfirst=True)

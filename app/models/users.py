@@ -172,6 +172,34 @@ class AccountDeletionOtp(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+class SchoolProfileUpdateOtp(Base):
+    """OTP gate for any school profile PATCH.
+
+    When a school user calls PATCH /school/school-profile, changes are NOT
+    applied immediately. Instead an OTP is generated, stored here along with
+    the full pending update (as JSON), and emailed to the user.
+    If the update includes a new email, the OTP is sent to the NEW email;
+    otherwise it goes to the current email.
+    The changes are applied only after POST /school/verify-profile-update
+    confirms the OTP.
+    ADMIN / SUPERADMIN bypass this — their PATCH changes are applied directly.
+    """
+    __tablename__ = "school_profile_update_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    otp = Column(String, nullable=False)
+    pending_data = Column(Text, nullable=False)   # JSON-encoded SchoolProfileUpdate payload
+    otp_sent_to = Column(String, nullable=False)  # email address the OTP was sent to
+    expires_at = Column(DateTime, nullable=False,
+                        default=lambda: datetime.now(timezone.utc) + timedelta(minutes=10))
+    is_verified = Column(Boolean, default=False, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class Template(Base):
     __tablename__ = "templates"
     id = Column(Integer, primary_key=True, index=True)

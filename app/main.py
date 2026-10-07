@@ -56,6 +56,7 @@ from app.db.session import (
     ensure_class_fee_schema,
     ensure_billing_schema,
     ensure_soft_delete_schema,
+    ensure_school_profile_update_otp_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -278,6 +279,7 @@ def on_startup():
         ensure_business_inquiry_schema()
         ensure_billing_schema()
         ensure_soft_delete_schema()
+        ensure_school_profile_update_otp_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 
