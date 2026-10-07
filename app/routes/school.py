@@ -581,86 +581,79 @@ async def update_school_profile(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
 
-    # ── SCHOOL ROLE: OTP gate ──────────────────────────────────────────────────
-    # Changes are NOT applied immediately. An OTP is generated and emailed.
-    # If school_email is changing → OTP goes to the NEW email.
-    # Otherwise → OTP goes to the current email.
-    # Call POST /school/verify-profile-update with the OTP to apply changes.
-    #
-    # ADMIN / SUPERADMIN bypass this and changes are applied directly below.
+    # ── SCHOOL ROLE: Selective OTP gate ───────────────────────────────────────
+    # OTP is required ONLY when the request contains at least one sensitive field.
+    # Sensitive fields: school_name, school_type, school_medium, school_board,
+    #   school_logo, establishment_year, establishment_month, register_no,
+    #   pin_code, school_location, school_phone.
+    # Any other field (website, principal info, address details, etc.) is
+    # applied immediately without OTP.
+    # ADMIN / SUPERADMIN always bypass and changes apply directly.
     if current_user.role == UserRole.SCHOOL:
-        # Validate new email uniqueness before storing (fast-fail)
-        if data.school_email is not None:
-            new_email_check = data.school_email.strip().lower()
-            if new_email_check != (school.school_email or "").strip().lower():
-                clash = (
-                    db.query(User)
-                    .filter(User.email == new_email_check, User.id != school.user_id)
-                    .first()
-                )
-                if clash:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="This email is already registered to another account.",
-                    )
+        _SENSITIVE_FIELDS = {
+            "school_name", "school_type", "school_medium", "school_board",
+            "school_logo", "establishment_year", "establishment_month",
+            "register_no", "pin_code", "school_location", "school_phone",
+        }
+        # Check whether any sensitive field is present in the raw body
+        sensitive_fields_in_body = _SENSITIVE_FIELDS.intersection(body.keys())
 
-        # Determine which email to send the OTP to
-        if data.school_email is not None:
-            otp_target_email = data.school_email.strip().lower()  # send to NEW email
-        else:
+        if sensitive_fields_in_body:
+            # ── OTP path: store pending changes and send OTP ──────────────────
+            # OTP is sent to the current school email
             otp_target_email = school.school_email or (
                 db.query(User).filter(User.id == school.user_id).first().email
             )
 
-        # Invalidate previous pending OTPs for this user
-        db.query(SchoolProfileUpdateOtp).filter(
-            SchoolProfileUpdateOtp.user_id == school.user_id,
-            SchoolProfileUpdateOtp.is_verified.is_(False),
-        ).delete(synchronize_session=False)
+            # Invalidate any previous pending OTP for this user
+            db.query(SchoolProfileUpdateOtp).filter(
+                SchoolProfileUpdateOtp.user_id == school.user_id,
+                SchoolProfileUpdateOtp.is_verified.is_(False),
+            ).delete(synchronize_session=False)
 
-        # Serialize and store pending payload
-        import json as _json
-        pending_json = _json.dumps(body)
-
-        otp_code = generate_otp()
-        otp_entry = SchoolProfileUpdateOtp(
-            user_id=school.user_id,
-            otp=otp_code,
-            pending_data=pending_json,
-            otp_sent_to=otp_target_email,
-        )
-        db.add(otp_entry)
-
-        try:
-            db.commit()
-        except SQLAlchemyError as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
-
-        # Send OTP email
-        try:
-            send_dynamic_email(
-                context_key="otp_verify.html",
-                subject="Confirm Your Profile Update – OTP Code",
-                recipient_email=otp_target_email,
-                context_data={
-                    "email": otp_target_email,
-                    "OTP": otp_code,
-                    "current_year": datetime.now().year,
-                },
-                db=db,
+            import json as _json
+            otp_code = generate_otp()
+            otp_entry = SchoolProfileUpdateOtp(
+                user_id=school.user_id,
+                otp=otp_code,
+                pending_data=_json.dumps(body),
+                otp_sent_to=otp_target_email,
             )
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"OTP saved but email could not be sent: {str(e)}",
-            )
+            db.add(otp_entry)
 
-        return {
-            "detail": "OTP sent. Please verify to apply your profile changes.",
-            "otp_sent_to": _mask_public_email(otp_target_email),
-            "note": "Call POST /school/verify-profile-update with the OTP to confirm.",
-        }
+            try:
+                db.commit()
+            except SQLAlchemyError as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Database error: {str(e.__cause__)}")
+
+            try:
+                send_dynamic_email(
+                    context_key="otp_verify.html",
+                    subject="Confirm Your Profile Update – OTP Code",
+                    recipient_email=otp_target_email,
+                    context_data={
+                        "email": otp_target_email,
+                        "OTP": otp_code,
+                        "current_year": datetime.now().year,
+                    },
+                    db=db,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"OTP saved but email could not be sent: {str(e)}",
+                )
+
+            return {
+                "detail": "OTP sent. Please verify to apply your profile changes.",
+                "otp_sent_to": _mask_public_email(otp_target_email),
+                "sensitive_fields_detected": sorted(sensitive_fields_in_body),
+                "note": "Call POST /school/verify-profile-update with the OTP to confirm.",
+            }
+
+        # ── No sensitive fields → apply non-sensitive changes immediately ────
+        # (falls through to the shared apply-changes block below)
 
     # ── ADMIN / SUPERADMIN: apply changes directly ─────────────────────────────
     if data.school_name is not None:
