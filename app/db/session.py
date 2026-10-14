@@ -133,6 +133,9 @@ from app.models.billing import (
     WalletTransaction,
     BusinessInquirySchool,
 )
+from app.models.agent import AgentProfile, StipendType, AgentGender, AgentExperience  # Agent module
+from app.models.agent_config import AgentPaymentConfig, AgentEarning  # Agent Phase 2
+from app.models.agent_payment import AgentPaymentAccount, AgentWithdrawal, AgentWithdrawalHistory  # Agent Phase 3
 
 def create_tables():
     """Create all tables that don't exist yet"""
@@ -163,6 +166,80 @@ def ensure_soft_delete_schema():
         from app.models.users import AccountDeletionOtp
         AccountDeletionOtp.__table__.create(bind=engine, checkfirst=True)
 
+
+def ensure_agent_schema():
+    """Ensure the agent_profiles table and its dependencies exist.
+
+    Safe to call on every startup - idempotent, does not touch existing data.
+    Creates the 3 PG enum types first, then the table (or adds missing columns
+    if the table already exists from a previous, smaller migration).
+    """
+    # 1. Ensure all three PG enum types exist
+    with engine.begin() as conn:
+        for ddl in [
+            "DO $$ BEGIN CREATE TYPE stipend_type_enum AS ENUM "
+            "('WITH_STIPEND', 'WITHOUT_STIPEND'); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+
+            "DO $$ BEGIN CREATE TYPE agent_gender_enum AS ENUM "
+            "('male', 'female', 'other'); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+
+            "DO $$ BEGIN CREATE TYPE agent_experience_enum AS ENUM "
+            "('fresher', 'experienced'); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+
+            # Ensure 'agent' value exists in the shared userrole enum
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'agent';",
+        ]:
+            conn.execute(text(ddl))
+
+    inspector = inspect_engine()
+
+    # 2a. Table doesn't exist yet - create it from the model
+    if not inspector.has_table("agent_profiles"):
+        from app.models.agent import AgentProfile
+        AgentProfile.__table__.create(bind=engine, checkfirst=True)
+        return
+
+    # 2b. Table already exists - add any columns that are missing
+    #     (handles cases where the old table was created without the new fields)
+    existing_cols = {c["name"] for c in inspector.get_columns("agent_profiles")}
+    new_cols = [
+        ("first_name",              "VARCHAR(100) NOT NULL DEFAULT ''"),
+        ("last_name",               "VARCHAR(100) NOT NULL DEFAULT ''"),
+        ("phone",                   "VARCHAR(20)"),
+        ("email",                   "VARCHAR(255)"),
+        ("gender",                  "agent_gender_enum"),
+        ("dob",                     "DATE"),
+        ("qualification",           "VARCHAR(255)"),
+        ("university",              "VARCHAR(255)"),
+        ("designation",             "VARCHAR(255)"),
+        ("experience",              "agent_experience_enum"),
+        ("pin_code",                "VARCHAR(10)"),
+        ("division",                "VARCHAR(100)"),
+        ("district",                "VARCHAR(100)"),
+        ("state",                   "VARCHAR(100)"),
+        ("landmark",                "VARCHAR(255)"),
+        ("profile_completed_step2", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ]
+    with engine.begin() as conn:
+        for col_name, col_ddl in new_cols:
+            if col_name not in existing_cols:
+                conn.execute(text(
+                    f'ALTER TABLE agent_profiles ADD COLUMN "{col_name}" {col_ddl}'
+                ))
+
+    # Remove obsolete columns that existed in the initial model (if present)
+    obsolete = {"address_line", "city", "postal_code", "country"}
+    with engine.begin() as conn:
+        for col_name in obsolete:
+            if col_name in existing_cols:
+                conn.execute(text(
+                    f'ALTER TABLE agent_profiles DROP COLUMN IF EXISTS "{col_name}"'
+                ))
+
+
 def column_exists(table_name, column_name):
     """Check if a column exists in a table"""
     inspector = inspect_engine()
@@ -170,6 +247,48 @@ def column_exists(table_name, column_name):
         return False
     columns = inspector.get_columns(table_name)
     return any(column['name'] == column_name for column in columns)
+
+
+def ensure_agent_phase2_schema():
+    """Ensure Phase 2 agent tables and columns exist.
+
+    Idempotent — safe to call on every startup.
+    1. Adds wants_initial_bonus to agent_profiles if missing.
+    2. Creates agent_payment_configs table if missing.
+    3. Creates agent_earnings table if missing.
+    """
+    # 1. Add wants_initial_bonus to agent_profiles
+    if inspect_engine().has_table("agent_profiles"):
+        if not column_exists("agent_profiles", "wants_initial_bonus"):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE agent_profiles "
+                        "ADD COLUMN wants_initial_bonus BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+
+    # 2. Create agent_payment_configs
+    AgentPaymentConfig.__table__.create(bind=engine, checkfirst=True)
+
+    # 3. Create agent_earnings
+    AgentEarning.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_agent_phase3_schema():
+    """Ensure Phase 3 agent tables exist.
+
+    Idempotent — safe to call on every startup.
+    Creates:
+      1. agent_payment_accounts
+      2. agent_withdrawals
+      3. agent_withdrawal_history
+    """
+    AgentPaymentAccount.__table__.create(bind=engine, checkfirst=True)
+    AgentWithdrawal.__table__.create(bind=engine, checkfirst=True)
+    AgentWithdrawalHistory.__table__.create(bind=engine, checkfirst=True)
+
+
 
 def add_missing_columns():
     """Add missing columns to existing tables"""

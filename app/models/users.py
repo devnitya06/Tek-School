@@ -85,6 +85,12 @@ class User(Base):
         cascade="all, delete-orphan",
         foreign_keys="SelfSignedTeacher.user_id",
     )
+    agent_profile = relationship(
+        "AgentProfile",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
     session = relationship("UserSession", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     # Add unique constraint for school name and location

@@ -16,6 +16,7 @@ class UserRole(str,Enum):
     STAFF = "staff"
     SELF_SIGNED_STUDENT = "self_signed_student"
     SELF_SIGNED_TEACHER = "self_signed_teacher"
+    AGENT = "agent"
 
 class SignupType(str, Enum):
     BUSINESS_SCHOOL = "business_school_signup"

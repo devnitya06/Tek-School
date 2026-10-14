@@ -49,6 +49,7 @@ _SELF_DELETE_ROLES = {
     UserRole.STAFF,
     UserRole.SELF_SIGNED_STUDENT,
     UserRole.SELF_SIGNED_TEACHER,
+    UserRole.AGENT,
 }
 
 
