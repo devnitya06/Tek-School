@@ -1430,3 +1430,159 @@ class AchievementListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ===========================================================================
+# Phase 4 — Agent Institution Digital Profile Schemas
+# ===========================================================================
+
+class AgentSchoolCreateRequest(BaseModel):
+    """Agent creates a new institution for digital profile.
+
+    Both confirmation booleans MUST be True or the request is rejected.
+    All required school fields must be provided for a valid DRAFT registration.
+    """
+    # ── Required institution fields ─────────────────────────────────────────
+    school_name: str
+    school_email: str
+    school_phone: str
+
+    # ── Optional school profile fields (same as AdminSchoolCreateRequest base) ─
+    location: Optional[str] = None
+    website: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    pin_code: Optional[str] = None
+    block_division: Optional[str] = None
+    country: Optional[str] = "India"
+    school_board: Optional[str] = None
+    school_type: Optional[str] = None
+    institution_categories: Optional[List[str]] = None
+    principal_name: Optional[str] = None
+    principal_phone: Optional[str] = None
+    principal_email: Optional[str] = None
+
+    # ── Mandatory Agent Declarations ─────────────────────────────────────────
+    confirms_educational_institution: bool = Field(
+        ...,
+        description=(
+            "I confirm that all details provided are related to a genuine "
+            "educational institution. Must be true."
+        ),
+    )
+    confirms_contact_information: bool = Field(
+        ...,
+        description=(
+            "I confirm that the contact information provided is true and accurate. "
+            "Must be true."
+        ),
+    )
+
+    @field_validator("confirms_educational_institution")
+    @classmethod
+    def must_confirm_institution(cls, v):
+        if not v:
+            raise ValueError(
+                "You must confirm that all details are related to a genuine "
+                "educational institution (confirms_educational_institution must be true)."
+            )
+        return v
+
+    @field_validator("confirms_contact_information")
+    @classmethod
+    def must_confirm_contact(cls, v):
+        if not v:
+            raise ValueError(
+                "You must confirm that the contact information provided is true and "
+                "accurate (confirms_contact_information must be true)."
+            )
+        return v
+
+
+class AgentSchoolSubmitRequest(BaseModel):
+    """Agent submits institution for Admin verification (DRAFT → PENDING)."""
+    school_id: str
+
+
+class AgentSchoolDetailResponse(BaseModel):
+    """Full school detail visible to the owning Agent."""
+    school_id: str
+    school_name: str
+    school_email: str
+    school_phone: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    pin_code: Optional[str] = None
+    country: Optional[str] = None
+    school_board: Optional[str] = None
+    school_type: Optional[str] = None
+    institution_categories: Optional[List[str]] = None
+    principal_name: Optional[str] = None
+    location: Optional[str] = None
+    website: Optional[str] = None
+
+    # Confirmation status
+    confirms_educational_institution: Optional[bool] = None
+    confirms_contact_information: Optional[bool] = None
+
+    # Verification lifecycle
+    institution_verification_status: Optional[str] = None
+    institution_submitted_at: Optional[datetime] = None
+    institution_verified_at: Optional[datetime] = None
+    institution_rejection_reason: Optional[str] = None
+
+    # Creator info (read-only for agents)
+    created_by_role: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AgentSchoolListItem(BaseModel):
+    """Summary item for Agent's institution list."""
+    school_id: str
+    school_name: str
+    school_email: str
+    district: Optional[str] = None
+    state: Optional[str] = None
+    institution_verification_status: Optional[str] = None
+    institution_submitted_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class InstitutionApproveRequest(BaseModel):
+    """Admin/SuperAdmin approves a PENDING institution."""
+    # Optional reviewer note — not stored but useful for audit log
+    note: Optional[str] = None
+
+
+class InstitutionRejectRequest(BaseModel):
+    """Admin/SuperAdmin rejects a PENDING institution."""
+    rejection_reason: str = Field(
+        ...,
+        min_length=5,
+        description="Reason for rejection — required.",
+    )
+
+
+class InstitutionVerificationListItem(BaseModel):
+    """Admin list item for institutions awaiting verification."""
+    school_id: str
+    school_name: str
+    school_email: str
+    school_phone: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    institution_verification_status: Optional[str] = None
+    institution_submitted_at: Optional[datetime] = None
+    created_by_role: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_by_agent_profile_id: Optional[int] = None
+    confirms_educational_institution: Optional[bool] = None
+    confirms_contact_information: Optional[bool] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}

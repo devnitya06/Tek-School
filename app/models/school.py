@@ -304,7 +304,31 @@ class School(Base):
     attendance_qr_mark_in_token = Column(String(64), nullable=True)
     attendance_qr_mark_out_token = Column(String(64), nullable=True)
 
-    user = relationship("User", backref="school")
+    # ── Phase 4: Agent Creator Tracking ─────────────────────────────────────
+    # Immutable once set — never editable by agents or school users.
+    created_by_role = Column(String(32), nullable=True)          # e.g. "agent", "admin", "superadmin"
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name = Column(String(255), nullable=True)
+    created_by_agent_profile_id = Column(Integer, ForeignKey("agent_profiles.id", ondelete="SET NULL"), nullable=True)
+
+    # ── Phase 4: Agent Institution Confirmations ──────────────────────────────
+    # Both must be True before the Agent can submit for verification.
+    confirms_educational_institution = Column(Boolean, nullable=True, default=False)
+    confirms_contact_information = Column(Boolean, nullable=True, default=False)
+    confirmation_educational_at = Column(DateTime(timezone=True), nullable=True)
+    confirmation_contact_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Phase 4: Institution Verification Lifecycle ──────────────────────────
+    # DRAFT → PENDING → APPROVED | REJECTED
+    # Default NULL for existing non-agent schools (backward compatible).
+    institution_verification_status = Column(String(32), nullable=True, index=True)
+    institution_submitted_at = Column(DateTime(timezone=True), nullable=True)
+    institution_submitted_by_agent_id = Column(Integer, ForeignKey("agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    institution_verified_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    institution_verified_at = Column(DateTime(timezone=True), nullable=True)
+    institution_rejection_reason = Column(String(1000), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id], backref="school")
     teachers = relationship(
         "Teacher", back_populates="school", cascade="all, delete-orphan"
     )

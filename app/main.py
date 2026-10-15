@@ -61,6 +61,7 @@ from app.db.session import (
     ensure_agent_schema,
     ensure_agent_phase2_schema,
     ensure_agent_phase3_schema,
+    ensure_agent_phase4_schema,
 )
 import os
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -288,6 +289,7 @@ def on_startup():
         ensure_agent_schema()
         ensure_agent_phase2_schema()
         ensure_agent_phase3_schema()
+        ensure_agent_phase4_schema()
     except Exception as e:
         print(f"Error ensuring runtime schema requirements: {str(e)}")
 

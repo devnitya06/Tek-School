@@ -57,7 +57,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.agent import AgentProfile, StipendType
-from app.models.agent_config import AgentEarning, AgentEarningStatus
+from app.models.agent_config import AgentEarning, AgentEarningStatus, AgentEarningType
 from app.models.users import User, Token
 from app.models.user_session import UserSession
 from app.schemas.agent import (
@@ -1659,3 +1659,713 @@ def admin_get_withdrawal_history(
         }
         for h in history
     ]
+
+
+# ===========================================================================
+# Phase 4 — Agent Institution Digital Profile
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Imports (phase-4 specific)
+# ---------------------------------------------------------------------------
+from datetime import date as _date
+from decimal import Decimal as _Decimal
+
+from app.models.school import School, SchoolInfo, SchoolClassFee
+from app.models.admin import FAQ, school_faqs
+from app.schemas.school import (
+    AgentSchoolCreateRequest,
+    AgentSchoolDetailResponse,
+    AgentSchoolListItem,
+    AgentSchoolSubmitRequest,
+    InstitutionApproveRequest,
+    InstitutionRejectRequest,
+    InstitutionVerificationListItem,
+)
+
+# Statuses used in the institution lifecycle
+_IVS_DRAFT = "DRAFT"
+_IVS_PENDING = "PENDING"
+_IVS_APPROVED = "APPROVED"
+_IVS_REJECTED = "REJECTED"
+
+# Fields Agents may NOT modify on the school profile (immutable / admin-only)
+_AGENT_FORBIDDEN_SCHOOL_FIELDS = {
+    "created_by_role", "created_by_user_id", "created_by_name",
+    "created_by_agent_profile_id", "institution_verification_status",
+    "institution_submitted_at", "institution_submitted_by_agent_id",
+    "institution_verified_by", "institution_verified_at",
+    "institution_rejection_reason", "is_verified", "is_business_approved",
+    "is_promotion_pending", "created_by_admin", "user_id", "id",
+    "confirms_educational_institution", "confirms_contact_information",
+    "confirmation_educational_at", "confirmation_contact_at",
+}
+
+
+# ---------------------------------------------------------------------------
+# Phase-4 helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_agent_for_phase4(current_user: User, db: Session):
+    """Return (agent_profile, payment_config).  Raises 403 if not eligible."""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only AGENT accounts can access institution digital profile features.",
+        )
+    profile = db.query(AgentProfile).filter(AgentProfile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Agent profile not found.")
+
+    config = db.query(AgentPaymentConfig).filter(
+        AgentPaymentConfig.agent_profile_id == profile.id
+    ).first()
+    if not config or not config.idp_is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Institution Digital Profile feature is not enabled for your account. "
+                "Contact your administrator."
+            ),
+        )
+    return profile, config
+
+
+def _get_agent_school_or_403(school_id: str, agent_profile: AgentProfile, db: Session) -> School:
+    """Return the school only if it belongs to this agent.  Raises 403/404 otherwise."""
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="Institution not found.")
+    if school.created_by_agent_profile_id != agent_profile.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this institution.",
+        )
+    return school
+
+
+def _assert_agent_school_editable(school: School):
+    """Raise 403 if the school is in PENDING/APPROVED state (read-only to agent)."""
+    if school.institution_verification_status in (_IVS_PENDING, _IVS_APPROVED):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Institution is currently in '{school.institution_verification_status}' status "
+                "and cannot be edited by the Agent."
+            ),
+        )
+
+
+def _serialize_school_for_agent(school: School) -> dict:
+    return {
+        "school_id": school.id,
+        "school_name": school.school_name,
+        "school_email": school.school_email,
+        "school_phone": school.school_phone,
+        "district": school.district,
+        "state": school.state,
+        "pin_code": school.pin_code,
+        "country": school.country,
+        "school_board": school.school_board.value if hasattr(school.school_board, "value") else school.school_board,
+        "school_type": school.school_type.value if hasattr(school.school_type, "value") else school.school_type,
+        "institution_categories": school.institution_categories,
+        "principal_name": school.principal_name,
+        "location": school.school_location,
+        "website": school.school_website,
+        "confirms_educational_institution": school.confirms_educational_institution,
+        "confirms_contact_information": school.confirms_contact_information,
+        "institution_verification_status": school.institution_verification_status,
+        "institution_submitted_at": school.institution_submitted_at,
+        "institution_verified_at": school.institution_verified_at,
+        "institution_rejection_reason": school.institution_rejection_reason,
+        "created_by_role": school.created_by_role,
+        "created_by_name": school.created_by_name,
+        "created_at": school.created_at,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: AGENT — Create Institution
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/institutions/",
+    status_code=status.HTTP_201_CREATED,
+    summary="Phase 4 — Agent creates an institution for digital profile",
+    description=(
+        "Creates a school record owned by the authenticated Agent with "
+        "institution_verification_status = DRAFT. Both confirmation booleans "
+        "must be True. Requires idp_is_enabled."
+    ),
+)
+def agent_create_institution(
+    data: AgentSchoolCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.AGENT)),
+):
+    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+
+    # ── Duplicate email check ────────────────────────────────────────────────
+    existing_user = db.query(User).filter(User.email == data.school_email.strip().lower()).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user account with this email already exists.",
+        )
+
+    # ── Validate both confirmations (Pydantic validators already ran, but re-check defensively)
+    if not data.confirms_educational_institution or not data.confirms_contact_information:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Both confirms_educational_institution and confirms_contact_information must be true.",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        # Create a school-role user with a system-generated password
+        plain_password = generate_password(prefix=data.school_name)
+        school_user = User(
+            name=data.school_name,
+            email=data.school_email.strip().lower(),
+            phone=data.school_phone.strip(),
+            role=UserRole.SCHOOL,
+            hashed_password=get_password_hash(plain_password),
+            is_verified=False,
+            is_active=True,
+        )
+        db.add(school_user)
+        db.flush()
+
+        creator_full_name = f"{agent_profile.first_name} {agent_profile.last_name}".strip()
+        school = School(
+            user_id=school_user.id,
+            school_name=data.school_name,
+            school_email=data.school_email.strip().lower(),
+            school_phone=data.school_phone.strip(),
+            school_website=data.website,
+            school_location=data.location,
+            district=data.district,
+            state=data.state,
+            pin_code=data.pin_code,
+            block_division=data.block_division,
+            country=data.country or "India",
+            institution_categories=data.institution_categories,
+            principal_name=data.principal_name,
+            principal_phone=data.principal_phone,
+            principal_email=data.principal_email,
+            account_type="listing",
+            is_verified=False,
+            is_business_approved=False,
+            default_settlement_channel="cash_offline",
+            created_by_admin=False,
+            followup_enabled=False,
+            followup_status="inactive",
+            # Phase 4 creator tracking (captured server-side — never from client)
+            created_by_role="agent",
+            created_by_user_id=current_user.id,
+            created_by_name=creator_full_name,
+            created_by_agent_profile_id=agent_profile.id,
+            # Confirmations
+            confirms_educational_institution=True,
+            confirms_contact_information=True,
+            confirmation_educational_at=now,
+            confirmation_contact_at=now,
+            # Verification lifecycle — starts as DRAFT
+            institution_verification_status=_IVS_DRAFT,
+        )
+        db.add(school)
+        db.commit()
+        db.refresh(school)
+
+    except IntegrityError as exc:
+        db.rollback()
+        msg = str(exc).lower()
+        if "email" in msg or "unique" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate registration: an institution with this email already exists.",
+            )
+        raise HTTPException(status_code=400, detail="Could not create institution. Check input data.")
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while creating institution.")
+
+    return {
+        "detail": "Institution registered successfully as DRAFT.",
+        "school_id": school.id,
+        "institution_verification_status": school.institution_verification_status,
+        "confirms_educational_institution": school.confirms_educational_institution,
+        "confirms_contact_information": school.confirms_contact_information,
+        "created_by_agent_profile_id": agent_profile.id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: AGENT — List Own Institutions
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/institutions/",
+    summary="Phase 4 — Agent lists own institutions",
+    description="Returns all institutions created by the authenticated Agent.",
+)
+def agent_list_institutions(
+    status_filter: Optional[str] = Query(None, description="Filter by verification status: DRAFT, PENDING, APPROVED, REJECTED"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.AGENT)),
+):
+    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+
+    q = db.query(School).filter(School.created_by_agent_profile_id == agent_profile.id)
+    if status_filter:
+        q = q.filter(School.institution_verification_status == status_filter.upper())
+    q = q.order_by(School.created_at.desc())
+    total = q.count()
+    schools = q.offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "items": [_serialize_school_for_agent(s) for s in schools],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: AGENT — Get Institution Detail
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/institutions/{school_id}",
+    summary="Phase 4 — Agent views an institution detail",
+)
+def agent_get_institution(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.AGENT)),
+):
+    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+    school = _get_agent_school_or_403(school_id, agent_profile, db)
+    return _serialize_school_for_agent(school)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: AGENT — Submit Institution for Verification (DRAFT → PENDING)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/institutions/submit",
+    summary="Phase 4 — Agent submits institution for Admin verification",
+    description=(
+        "Moves institution from DRAFT to PENDING. Both confirmations must be "
+        "True. Once submitted the Agent cannot edit the school until it is "
+        "reviewed. Duplicate submission is prevented."
+    ),
+)
+def agent_submit_institution(
+    data: AgentSchoolSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.AGENT)),
+):
+    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+    school = _get_agent_school_or_403(data.school_id, agent_profile, db)
+
+    # Only DRAFT can be submitted
+    if school.institution_verification_status != _IVS_DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Institution is in '{school.institution_verification_status}' status. "
+                "Only DRAFT institutions can be submitted for verification."
+            ),
+        )
+
+    # Validate confirmations (must be persisted True before submit)
+    if not school.confirms_educational_institution or not school.confirms_contact_information:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Both confirms_educational_institution and confirms_contact_information "
+                "must be acknowledged (true) before submission."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    school.institution_verification_status = _IVS_PENDING
+    school.institution_submitted_at = now
+    school.institution_submitted_by_agent_id = agent_profile.id
+
+    try:
+        db.commit()
+        db.refresh(school)
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while submitting institution.")
+
+    return {
+        "detail": "Institution submitted for verification.",
+        "school_id": school.id,
+        "institution_verification_status": school.institution_verification_status,
+        "institution_submitted_at": school.institution_submitted_at,
+    }
+
+
+
+# ---------------------------------------------------------------------------
+# NOTE — Removed duplicate routes (now handled by existing /school/ endpoints)
+# ---------------------------------------------------------------------------
+# The following operations are now performed through the existing school APIs
+# (updated to also accept UserRole.AGENT with ownership & editability guards):
+#
+#   PATCH /school/school-profile?school_id=SCH-xxx  — update profile (DRAFT only)
+#   POST  /school/school-info/?school_id=SCH-xxx    — create school info
+#   PUT   /school/school-info/{id}/                 — update school info
+#   DELETE /school/school-info/{id}/                — delete school info
+#   GET   /school/school-info/?school_id=SCH-xxx    — list school info (public)
+#   POST  /school/class-fees/?school_id=SCH-xxx     — create class fee
+#   PUT   /school/class-fees/{id}/                  — update class fee
+#   DELETE /school/class-fees/{id}/                 — delete class fee
+#   GET   /school/class-fees/?school_id=SCH-xxx     — list class fees (public)
+#   POST  /school/faqs/select?school_id=SCH-xxx     — select FAQs (DRAFT only)
+#   GET   /admin/faqs/?is_active=true               — browse FAQ catalogue
+# ---------------------------------------------------------------------------
+
+
+
+# ===========================================================================
+# Phase 4 — Admin/SuperAdmin Institution Verification
+# ===========================================================================
+
+@router.get(
+    "/admin/institutions/pending",
+    summary="Phase 4 — Admin: list institutions pending verification",
+)
+def admin_list_pending_institutions(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, le=200),
+    agent_profile_id: Optional[int] = Query(None, description="Filter by agent profile ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    """Returns all agent-created institutions currently in PENDING status."""
+    q = db.query(School).filter(
+        School.institution_verification_status == _IVS_PENDING,
+        School.created_by_agent_profile_id.isnot(None),
+    )
+    if agent_profile_id:
+        q = q.filter(School.created_by_agent_profile_id == agent_profile_id)
+
+    total = q.count()
+    schools = q.order_by(School.institution_submitted_at.desc()).offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "school_id": s.id,
+                "school_name": s.school_name,
+                "school_email": s.school_email,
+                "school_phone": s.school_phone,
+                "district": s.district,
+                "state": s.state,
+                "institution_verification_status": s.institution_verification_status,
+                "institution_submitted_at": s.institution_submitted_at,
+                "created_by_role": s.created_by_role,
+                "created_by_name": s.created_by_name,
+                "created_by_agent_profile_id": s.created_by_agent_profile_id,
+                "confirms_educational_institution": s.confirms_educational_institution,
+                "confirms_contact_information": s.confirms_contact_information,
+                "created_at": s.created_at,
+            }
+            for s in schools
+        ],
+    }
+
+
+@router.get(
+    "/admin/institutions/{school_id}",
+    summary="Phase 4 — Admin: get complete institution registration",
+)
+def admin_get_institution_detail(
+    school_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="Institution not found.")
+
+    # Resolve agent details if applicable
+    agent_info = None
+    if school.created_by_agent_profile_id:
+        ap = db.query(AgentProfile).filter(AgentProfile.id == school.created_by_agent_profile_id).first()
+        if ap:
+            agent_info = {
+                "agent_profile_id": ap.id,
+                "agent_id": ap.agent_id,
+                "agent_name": f"{ap.first_name} {ap.last_name}".strip(),
+                "agent_phone": ap.phone,
+                "agent_email": ap.email,
+            }
+
+    return {
+        "school_id": school.id,
+        "school_name": school.school_name,
+        "school_email": school.school_email,
+        "school_phone": school.school_phone,
+        "district": school.district,
+        "state": school.state,
+        "pin_code": school.pin_code,
+        "country": school.country,
+        "school_board": school.school_board.value if hasattr(school.school_board, "value") else school.school_board,
+        "school_type": school.school_type.value if hasattr(school.school_type, "value") else school.school_type,
+        "institution_categories": school.institution_categories,
+        "principal_name": school.principal_name,
+        # Confirmations
+        "confirms_educational_institution": school.confirms_educational_institution,
+        "confirms_contact_information": school.confirms_contact_information,
+        "confirmation_educational_at": school.confirmation_educational_at,
+        "confirmation_contact_at": school.confirmation_contact_at,
+        # Lifecycle
+        "institution_verification_status": school.institution_verification_status,
+        "institution_submitted_at": school.institution_submitted_at,
+        "institution_submitted_by_agent_id": school.institution_submitted_by_agent_id,
+        "institution_verified_by": school.institution_verified_by,
+        "institution_verified_at": school.institution_verified_at,
+        "institution_rejection_reason": school.institution_rejection_reason,
+        # Creator
+        "created_by_role": school.created_by_role,
+        "created_by_name": school.created_by_name,
+        "created_by_user_id": school.created_by_user_id,
+        "created_by_agent_profile_id": school.created_by_agent_profile_id,
+        "agent_info": agent_info,
+        "created_at": school.created_at,
+    }
+
+
+@router.patch(
+    "/admin/institutions/{school_id}/approve",
+    summary="Phase 4 — Admin: approve a PENDING institution & trigger Agent earning",
+)
+def admin_approve_institution(
+    school_id: str,
+    data: InstitutionApproveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    """
+    Approves a PENDING institution.
+
+    Security rules:
+    - Only ADMIN / SUPERADMIN.
+    - Institution must exist and be PENDING.
+    - Creates exactly one AgentEarning (duplicate-safe via UNIQUE constraint).
+    - Earning is at the rate configured at approval time.
+    - If idp_is_enabled is False or rate is zero at approval time, logs it but
+      does not create an earning.
+    """
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="Institution not found.")
+
+    if school.institution_verification_status != _IVS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Institution is in '{school.institution_verification_status}' status. "
+                "Only PENDING institutions can be approved."
+            ),
+        )
+
+    # Prevent agent self-approval (extra guard)
+    if school.created_by_user_id and school.created_by_user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="An Agent cannot approve their own institution.",
+        )
+
+    now = datetime.now(timezone.utc)
+    school.institution_verification_status = _IVS_APPROVED
+    school.institution_verified_by = current_user.id
+    school.institution_verified_at = now
+    school.is_verified = True
+
+    earning_created = False
+    earning_id = None
+
+    # ── Trigger Agent earning ────────────────────────────────────────────────
+    if school.created_by_agent_profile_id:
+        agent_profile = db.query(AgentProfile).filter(
+            AgentProfile.id == school.created_by_agent_profile_id
+        ).first()
+        if agent_profile:
+            config = db.query(AgentPaymentConfig).filter(
+                AgentPaymentConfig.agent_profile_id == agent_profile.id
+            ).first()
+
+            if config and config.idp_is_enabled and config.idp_rate and config.idp_rate > 0:
+                rate = _Decimal(str(config.idp_rate))
+                earning = AgentEarning(
+                    agent_profile_id=agent_profile.id,
+                    earning_type=AgentEarningType.INSTITUTION_DIGITAL_PROFILE.value,
+                    status=AgentEarningStatus.APPROVED.value,
+                    reference_type="school",
+                    reference_id=school.id,          # unique per school — prevents duplicates
+                    applied_rate=rate,
+                    amount=rate,
+                    earning_date=now.date(),
+                    description=(
+                        f"Institution Digital Profile approved: {school.school_name} "
+                        f"({school.id}) — Rate: {rate}"
+                    ),
+                    approved_at=now,
+                    approved_by=current_user.id,
+                )
+                db.add(earning)
+                try:
+                    db.flush()  # flush to catch UNIQUE constraint before full commit
+                    earning_id = earning.id
+                    earning_created = True
+                except IntegrityError:
+                    # Duplicate earning — idempotent, do not raise
+                    db.rollback()
+                    db.add(school)
+                    school.institution_verification_status = _IVS_APPROVED
+                    school.institution_verified_by = current_user.id
+                    school.institution_verified_at = now
+                    school.is_verified = True
+                    logger.warning(
+                        "[Phase4] Duplicate earning prevented for school=%s agent=%s",
+                        school.id, agent_profile.id,
+                    )
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if "uq_agent_earning_type_ref" in str(exc):
+            # Earning already exists — school approval still goes through
+            school_obj = db.query(School).filter(School.id == school_id).first()
+            if school_obj:
+                school_obj.institution_verification_status = _IVS_APPROVED
+                school_obj.institution_verified_by = current_user.id
+                school_obj.institution_verified_at = now
+                school_obj.is_verified = True
+                db.commit()
+            return {
+                "detail": "Institution approved. Earning already existed (idempotent).",
+                "school_id": school_id,
+                "institution_verification_status": _IVS_APPROVED,
+                "earning_created": False,
+            }
+        raise HTTPException(status_code=500, detail=f"Database error during approval: {exc}")
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while approving institution.")
+
+    return {
+        "detail": "Institution approved successfully.",
+        "school_id": school_id,
+        "institution_verification_status": _IVS_APPROVED,
+        "institution_verified_at": now,
+        "earning_created": earning_created,
+        "earning_id": earning_id,
+    }
+
+
+@router.patch(
+    "/admin/institutions/{school_id}/reject",
+    summary="Phase 4 — Admin: reject a PENDING institution",
+)
+def admin_reject_institution(
+    school_id: str,
+    data: InstitutionRejectRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    """
+    Rejects a PENDING institution.
+
+    - Requires a rejection_reason (min 5 chars).
+    - No Agent earning is created.
+    - Sets institution_verification_status = REJECTED.
+    - Agent cannot bypass rejection by resubmitting the same record.
+    """
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="Institution not found.")
+
+    if school.institution_verification_status != _IVS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Institution is in '{school.institution_verification_status}' status. "
+                "Only PENDING institutions can be rejected."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    school.institution_verification_status = _IVS_REJECTED
+    school.institution_verified_by = current_user.id
+    school.institution_verified_at = now
+    school.institution_rejection_reason = data.rejection_reason.strip()
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while rejecting institution.")
+
+    return {
+        "detail": "Institution rejected.",
+        "school_id": school_id,
+        "institution_verification_status": _IVS_REJECTED,
+        "institution_rejection_reason": school.institution_rejection_reason,
+        "institution_verified_at": now,
+        "earning_created": False,
+    }
+
+
+@router.get(
+    "/admin/institutions/",
+    summary="Phase 4 — Admin: list all agent-created institutions with filters",
+)
+def admin_list_institutions(
+    verification_status: Optional[str] = Query(None, description="DRAFT, PENDING, APPROVED, REJECTED"),
+    agent_profile_id: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    q = db.query(School).filter(School.created_by_agent_profile_id.isnot(None))
+    if verification_status:
+        q = q.filter(School.institution_verification_status == verification_status.upper())
+    if agent_profile_id:
+        q = q.filter(School.created_by_agent_profile_id == agent_profile_id)
+
+    total = q.count()
+    schools = q.order_by(School.created_at.desc()).offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "school_id": s.id,
+                "school_name": s.school_name,
+                "school_email": s.school_email,
+                "school_phone": s.school_phone,
+                "district": s.district,
+                "state": s.state,
+                "institution_verification_status": s.institution_verification_status,
+                "institution_submitted_at": s.institution_submitted_at,
+                "institution_verified_at": s.institution_verified_at,
+                "created_by_role": s.created_by_role,
+                "created_by_name": s.created_by_name,
+                "created_by_agent_profile_id": s.created_by_agent_profile_id,
+                "created_at": s.created_at,
+            }
+            for s in schools
+        ],
+    }

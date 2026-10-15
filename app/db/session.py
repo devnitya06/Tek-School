@@ -289,6 +289,60 @@ def ensure_agent_phase3_schema():
     AgentWithdrawalHistory.__table__.create(bind=engine, checkfirst=True)
 
 
+def ensure_agent_phase4_schema():
+    """Ensure Phase 4 agent columns exist on the schools table.
+
+    Idempotent — safe to call on every startup.
+    Adds (all nullable, no existing data touched):
+      - created_by_role, created_by_user_id, created_by_name, created_by_agent_profile_id
+      - confirms_educational_institution, confirms_contact_information
+      - confirmation_educational_at, confirmation_contact_at
+      - institution_verification_status, institution_submitted_at
+      - institution_submitted_by_agent_id
+      - institution_verified_by, institution_verified_at
+      - institution_rejection_reason
+    """
+    inspector = inspect_engine()
+    if not inspector.has_table("schools"):
+        return
+
+    _phase4_cols = [
+        ("created_by_role",                  "VARCHAR(32)"),
+        ("created_by_user_id",               "INTEGER"),
+        ("created_by_name",                  "VARCHAR(255)"),
+        ("created_by_agent_profile_id",      "INTEGER"),
+        ("confirms_educational_institution", "BOOLEAN DEFAULT FALSE"),
+        ("confirms_contact_information",     "BOOLEAN DEFAULT FALSE"),
+        ("confirmation_educational_at",      "TIMESTAMP WITH TIME ZONE"),
+        ("confirmation_contact_at",          "TIMESTAMP WITH TIME ZONE"),
+        ("institution_verification_status",  "VARCHAR(32)"),
+        ("institution_submitted_at",         "TIMESTAMP WITH TIME ZONE"),
+        ("institution_submitted_by_agent_id","INTEGER"),
+        ("institution_verified_by",          "INTEGER"),
+        ("institution_verified_at",          "TIMESTAMP WITH TIME ZONE"),
+        ("institution_rejection_reason",     "VARCHAR(1000)"),
+    ]
+    with engine.begin() as conn:
+        for col_name, col_ddl in _phase4_cols:
+            if not column_exists("schools", col_name):
+                conn.execute(text(
+                    f'ALTER TABLE schools ADD COLUMN "{col_name}" {col_ddl}'
+                ))
+
+    # Create indexes if missing (pg only — ignore errors on SQLite)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_schools_institution_verification_status "
+                'ON schools ("institution_verification_status")'
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_schools_created_by_agent_profile_id "
+                'ON schools ("created_by_agent_profile_id")'
+            ))
+    except Exception:
+        pass
+
 
 def add_missing_columns():
     """Add missing columns to existing tables"""

@@ -50,6 +50,8 @@ from app.utils.permission import (
     require_roles_allow_listing_school,
     verify_school_business_access,
 )
+from app.models.agent import AgentProfile
+from app.models.agent_config import AgentPaymentConfig
 from app.utils.email_utility import generate_password, send_dynamic_email, generate_otp
 from app.models.users import SchoolProfileUpdateOtp
 from app.core.security import get_password_hash
@@ -114,7 +116,8 @@ def _slugify_batch_name(value: str) -> str:
 def _get_school_for_admin_or_school(
     current_user: User, db: Session, school_id: Optional[str] = None
 ) -> School:
-    """Get school: SCHOOL role from user profile, ADMIN/SUPERADMIN role from school_id param (required)."""
+    """Get school: SCHOOL role from user profile, ADMIN/SUPERADMIN role from school_id param (required).
+    AGENT role resolves the school identified by school_id and verifies ownership."""
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         if not school_id:
             raise HTTPException(
@@ -129,10 +132,66 @@ def _get_school_for_admin_or_school(
         if not school:
             raise HTTPException(status_code=404, detail="School profile not found.")
         return school
+    elif current_user.role == UserRole.AGENT:
+        # Agent must pass school_id and must be the creator of that school
+        if not school_id:
+            raise HTTPException(
+                status_code=400,
+                detail="school_id is required when accessing as agent.",
+            )
+        agent_profile = db.query(AgentProfile).filter(
+            AgentProfile.user_id == current_user.id
+        ).first()
+        if not agent_profile:
+            raise HTTPException(status_code=404, detail="Agent profile not found.")
+        school = db.query(School).filter(School.id == school_id).first()
+        if not school:
+            raise HTTPException(status_code=404, detail="Institution not found.")
+        if school.created_by_agent_profile_id != agent_profile.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to access this institution.",
+            )
+        return school
     else:
         raise HTTPException(
             status_code=403,
             detail="Only school and admin users can access this resource.",
+        )
+
+
+def _resolve_agent_for_school_endpoint(current_user: User, db: Session):
+    """Validate AGENT eligibility for Institution Digital Profile endpoints.
+    Returns (agent_profile, payment_config). Raises 403 if not eligible."""
+    agent_profile = db.query(AgentProfile).filter(
+        AgentProfile.user_id == current_user.id
+    ).first()
+    if not agent_profile:
+        raise HTTPException(status_code=404, detail="Agent profile not found.")
+    config = db.query(AgentPaymentConfig).filter(
+        AgentPaymentConfig.agent_profile_id == agent_profile.id
+    ).first()
+    if not config or not config.idp_is_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Institution Digital Profile feature is not enabled for your account. "
+                "Contact your administrator."
+            ),
+        )
+    return agent_profile, config
+
+
+def _assert_school_editable_by_agent(school: School):
+    """Raise 403 if the school is PENDING or APPROVED (edit-locked for agents)."""
+    locked = ("PENDING", "APPROVED")
+    if school.institution_verification_status in locked:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Institution is in '{school.institution_verification_status}' status "
+                "and cannot be edited by the Agent."
+            ),
         )
 
 
@@ -565,14 +624,22 @@ def get_similar_schools(
 async def update_school_profile(
     request: Request,
     school_id: Optional[str] = Query(
-        None, description="Required when accessing as admin"
+        None, description="Required when accessing as admin or agent"
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN)
+        require_roles_allow_listing_school(UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT)
     ),
 ):
+    # ── AGENT: IDP eligibility + ownership + editability guard ──────────────
+    if current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+
     school = _get_school_for_admin_or_school(current_user, db, school_id)
+
+    # ── AGENT: only DRAFT/REJECTED institutions are editable ─────────────────
+    if current_user.role == UserRole.AGENT:
+        _assert_school_editable_by_agent(school)
 
     # Parse JSON body
     try:
@@ -589,7 +656,10 @@ async def update_school_profile(
     # Any other field (website, principal info, address details, etc.) is
     # applied immediately without OTP.
     # ADMIN / SUPERADMIN always bypass and changes apply directly.
-    if current_user.role == UserRole.SCHOOL:
+    # ── AGENT: skip OTP entirely — apply changes directly like ADMIN ─────────
+    if current_user.role == UserRole.AGENT:
+        pass  # falls through to the shared apply-changes block below
+    elif current_user.role == UserRole.SCHOOL:
         _SENSITIVE_FIELDS = {
             "school_name", "school_type", "school_medium", "school_board",
             "school_logo", "establishment_year", "establishment_month",
@@ -9650,16 +9720,17 @@ def delete_bank_account(
 def create_school_info(
     data: SchoolInfoCreate,
     school_id: Optional[str] = Query(
-        None, description="Required when accessing as admin/super admin"
+        None, description="Required when accessing as admin/super admin or agent"
     ),
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Create school info. School users create for their own school; admin/super admin must pass school_id."""
+    """Create school info. School users create for their own school; admin/super admin must pass school_id;
+    agent must pass school_id of their own DRAFT institution."""
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         sid = school_id or data.school_id
         if not sid:
@@ -9668,6 +9739,16 @@ def create_school_info(
                 detail="school_id is required when creating as admin/super admin.",
             )
         school = db.query(School).filter(School.id == sid).first()
+    elif current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        sid = school_id or data.school_id
+        if not sid:
+            raise HTTPException(
+                status_code=400,
+                detail="school_id is required when creating as agent.",
+            )
+        school = _get_school_for_admin_or_school(current_user, db, sid)
+        _assert_school_editable_by_agent(school)
     else:
         school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
@@ -9771,16 +9852,20 @@ def update_school_info(
     data: SchoolInfoUpdate,
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Update school info. School users can only update their own."""
+    """Update school info. School users can only update their own. Agents can update own DRAFT institution."""
     obj = db.query(SchoolInfo).filter(SchoolInfo.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="School info not found.")
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    if current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        school = _get_school_for_admin_or_school(current_user, db, obj.school_id)
+        _assert_school_editable_by_agent(school)
+    elif current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(
@@ -9799,16 +9884,20 @@ def delete_school_info(
     id: int,
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Delete school info. School users can only delete their own."""
+    """Delete school info. School users can only delete their own. Agents can delete from own DRAFT institution."""
     obj = db.query(SchoolInfo).filter(SchoolInfo.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="School info not found.")
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    if current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        school = _get_school_for_admin_or_school(current_user, db, obj.school_id)
+        _assert_school_editable_by_agent(school)
+    elif current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(
@@ -9830,16 +9919,17 @@ def delete_school_info(
 def create_school_class_fee(
     data: SchoolClassFeeCreate,
     school_id: Optional[str] = Query(
-        None, description="Required when accessing as admin/super admin"
+        None, description="Required when accessing as admin/super admin or agent"
     ),
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Create class fee. School users create for their own school; admin/super admin must pass school_id."""
+    """Create class fee. School users create for their own school; admin/super admin must pass school_id;
+    agent must pass school_id of their own DRAFT institution."""
     if current_user.role in (UserRole.ADMIN, UserRole.SUPERADMIN):
         sid = school_id or data.school_id
         if not sid:
@@ -9848,6 +9938,16 @@ def create_school_class_fee(
                 detail="school_id is required when creating as admin/super admin.",
             )
         school = db.query(School).filter(School.id == sid).first()
+    elif current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        sid = school_id or data.school_id
+        if not sid:
+            raise HTTPException(
+                status_code=400,
+                detail="school_id is required when creating as agent.",
+            )
+        school = _get_school_for_admin_or_school(current_user, db, sid)
+        _assert_school_editable_by_agent(school)
     else:
         school = db.query(School).filter(School.user_id == current_user.id).first()
     if not school:
@@ -9973,16 +10073,20 @@ def update_school_class_fee(
     data: SchoolClassFeeUpdate,
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Update class fee. School users can only update their own."""
+    """Update class fee. School users can only update their own. Agents can update own DRAFT institution."""
     obj = db.query(SchoolClassFee).filter(SchoolClassFee.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Class fee not found.")
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    if current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        school = _get_school_for_admin_or_school(current_user, db, obj.school_id)
+        _assert_school_editable_by_agent(school)
+    elif current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(
@@ -10025,16 +10129,20 @@ def delete_school_class_fee(
     id: int,
     current_user: User = Depends(
         require_roles_allow_listing_school(
-            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN
+            UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT
         )
     ),
     db: Session = Depends(get_db),
 ):
-    """Delete class fee. School users can only delete their own."""
+    """Delete class fee. School users can only delete their own. Agents can delete from own DRAFT institution."""
     obj = db.query(SchoolClassFee).filter(SchoolClassFee.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Class fee not found.")
-    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+    if current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        school = _get_school_for_admin_or_school(current_user, db, obj.school_id)
+        _assert_school_editable_by_agent(school)
+    elif current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         school = db.query(School).filter(School.user_id == current_user.id).first()
         if not school or obj.school_id != school.id:
             raise HTTPException(
@@ -10958,22 +11066,32 @@ async def select_faqs(
     faq_data: dict,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    school_id: Optional[str] = Query(None, description="Required for admin/superadmin. School ID in format SCH-XXXXXX"),
+    school_id: Optional[str] = Query(None, description="Required for admin/superadmin/agent. School ID in format SCH-XXXXXX"),
 ):
     """
-    School selects FAQs to display on their page.
-    Requires school, admin, or superadmin authentication.
-    Superadmin and admin must pass school_id as a query parameter (e.g. ?school_id=SCH-298380).
+    School/Agent selects FAQs to display on their page.
+    Requires school, agent, admin, or superadmin authentication.
+    Superadmin, admin, and agent must pass school_id as a query parameter (e.g. ?school_id=SCH-298380).
+    Agent: only allowed for own DRAFT/REJECTED institutions and must have idp_is_enabled.
     """
-    if current_user.role not in [UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN]:
+    if current_user.role not in [UserRole.SCHOOL, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only school, admin, and superadmin users can select FAQs",
+            detail="Only school, agent, admin, and superadmin users can select FAQs",
         )
 
     # Get school
     if current_user.role == UserRole.SCHOOL:
         school = db.query(School).filter(School.user_id == current_user.id).first()
+    elif current_user.role == UserRole.AGENT:
+        _resolve_agent_for_school_endpoint(current_user, db)
+        if not school_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="school_id query parameter is required when selecting FAQs as agent (e.g. ?school_id=SCH-298380)",
+            )
+        school = _get_school_for_admin_or_school(current_user, db, school_id)
+        _assert_school_editable_by_agent(school)
     else:
         # SUPERADMIN / ADMIN: school_id required as query param
         if not school_id:

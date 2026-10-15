@@ -4753,11 +4753,12 @@ def get_all_faqs(
 ):
     """
     Get all FAQs. Admin and school can view all FAQs.
+    Agent can also browse the FAQ catalogue (read-only) when idp_is_enabled.
     """
-    if current_user.role not in (UserRole.ADMIN, UserRole.SCHOOL):
+    if current_user.role not in (UserRole.ADMIN, UserRole.SCHOOL, UserRole.AGENT):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or school can view all FAQs",
+            detail="Only admin, school, or agent can view all FAQs",
         )
 
     query = db.query(FAQ)

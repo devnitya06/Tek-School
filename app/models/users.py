@@ -74,7 +74,15 @@ class User(Base):
     otps = relationship("Otp", back_populates="user", cascade="all, delete-orphan")
     admin_profile = relationship("Admin", back_populates="user", uselist=False, cascade="all, delete-orphan")
     teacher_profile = relationship("Teacher", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    school_profile = relationship("School", back_populates="user", uselist=False, cascade="all, delete-orphan", overlaps="school")
+    school_profile = relationship(
+        "School",
+        primaryjoin="School.user_id == User.id",
+        foreign_keys="School.user_id",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        overlaps="school",
+    )
     student_profile = relationship("Student", back_populates="user", uselist=False, cascade="all, delete-orphan")
     staff_profile = relationship("Staff", back_populates="user", uselist=False, cascade="all, delete-orphan")
     self_signed_student_profile = relationship("SelfSignedStudent", back_populates="user", uselist=False, cascade="all, delete-orphan")
