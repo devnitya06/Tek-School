@@ -441,14 +441,13 @@ def view_business_inquiry(
         )
 
     # Step 5: Viewer number and price
-    # Use FOR UPDATE on the junction aggregate to prevent race conditions
+    # The locked wallet row serializes billing for this school; aggregates cannot use FOR UPDATE.
     seen_count = (
         db.query(func.count(BusinessInquirySchool.id))
         .filter(
             BusinessInquirySchool.school_id == school_id,
             BusinessInquirySchool.is_seen == True,  # noqa: E712
         )
-        .with_for_update()
         .scalar()
     ) or 0
     next_viewer_number = seen_count + 1
