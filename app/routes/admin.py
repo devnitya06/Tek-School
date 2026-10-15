@@ -1,3 +1,5 @@
+from app.models.agent_config import AgentPaymentConfig
+from app.models.agent import AgentProfile
 from fastapi import (
     APIRouter,
     Depends,
@@ -1790,13 +1792,33 @@ def get_pending_business_signups(
 @router.post(
     "/schools/",
     status_code=status.HTTP_201_CREATED,
-    summary="Create a listing school account by admin",
+    summary="Create a listing school account (admin or authorized agent)",
 )
 def create_school_account(
     data: AdminSchoolCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT)),
 ):
+    # ── AGENT: IDP eligibility check ────────────────────────────────────────
+    agent_profile = None
+    if current_user.role == UserRole.AGENT:
+        agent_profile = db.query(AgentProfile).filter(
+            AgentProfile.user_id == current_user.id
+        ).first()
+        if not agent_profile:
+            raise HTTPException(status_code=404, detail="Agent profile not found.")
+        config = db.query(AgentPaymentConfig).filter(
+            AgentPaymentConfig.agent_profile_id == agent_profile.id
+        ).first()
+        if not config or not config.idp_is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Institution Digital Profile feature is not enabled for your account. "
+                    "Contact your administrator."
+                ),
+            )
+
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already exists.")
@@ -1804,6 +1826,9 @@ def create_school_account(
     password = generate_password(prefix=data.name)
 
     try:
+        is_agent = current_user.role == UserRole.AGENT
+        now = datetime.now(timezone.utc)
+
         user = User(
             name=data.name,
             email=data.email,
@@ -1812,7 +1837,8 @@ def create_school_account(
             website=data.website,
             role=UserRole.SCHOOL,
             hashed_password=get_password_hash(password),
-            is_verified=True,
+            # Admin-created schools are pre-verified; agent-created schools go through Phase 4 workflow
+            is_verified=not is_agent,
         )
         db.add(user)
         db.flush()
@@ -1820,51 +1846,94 @@ def create_school_account(
         followup_enabled = bool(data.auto_followup)
         followup_status = "pending" if followup_enabled else "inactive"
 
-        school = School(
-            user_id=user.id,
-            school_name=data.name,
-            school_email=data.email,
-            school_phone=data.phone,
-            school_website=data.website,
-            school_location=data.location,
-            account_type=SchoolAccountType.LISTING,
-            is_business_approved=False,
-            is_verified=True,
-            default_settlement_channel="cash_offline",
-            created_by_admin=True,
-            followup_enabled=followup_enabled,
-            followup_status=followup_status,
-            followup_note=data.followup_note,
-        )
+        if is_agent:
+            creator_name = f"{agent_profile.first_name} {agent_profile.last_name}".strip()
+            school = School(
+                user_id=user.id,
+                school_name=data.name,
+                school_email=data.email,
+                school_phone=data.phone,
+                school_website=data.website,
+                school_location=data.location,
+                account_type=SchoolAccountType.LISTING,
+                is_business_approved=False,
+                is_verified=False,
+                default_settlement_channel="cash_offline",
+                created_by_admin=False,
+                followup_enabled=False,
+                followup_status="inactive",
+                # Phase 4 creator tracking (server-set — never from client)
+                created_by_role="agent",
+                created_by_user_id=current_user.id,
+                created_by_name=creator_name,
+                created_by_agent_profile_id=agent_profile.id,
+                # Confirmation timestamps
+                confirms_educational_institution=True,
+                confirms_contact_information=True,
+                confirmation_educational_at=now,
+                confirmation_contact_at=now,
+                # Verification lifecycle — starts as DRAFT
+                institution_verification_status="DRAFT",
+            )
+        else:
+            school = School(
+                user_id=user.id,
+                school_name=data.name,
+                school_email=data.email,
+                school_phone=data.phone,
+                school_website=data.website,
+                school_location=data.location,
+                account_type=SchoolAccountType.LISTING,
+                is_business_approved=False,
+                is_verified=True,
+                default_settlement_channel="cash_offline",
+                created_by_admin=True,
+                followup_enabled=followup_enabled,
+                followup_status=followup_status,
+                followup_note=data.followup_note,
+            )
         db.add(school)
         db.commit()
 
-        send_dynamic_email(
-            context_key="credential.html",
-            subject="Your BeingIdeal School Account Credentials",
-            recipient_email=data.email,
-            context_data={
-                "name": data.name,
-                "application_name": "beingideal",
-                "email": data.email,
-                "password": password,
-                "note": data.followup_note,
-                "current_year": datetime.now().year,
-            },
-            db=db,
-        )
+        if current_user.role != UserRole.AGENT:
+            send_dynamic_email(
+                context_key="credential.html",
+                subject="Your BeingIdeal School Account Credentials",
+                recipient_email=data.email,
+                context_data={
+                    "name": data.name,
+                    "application_name": "beingideal",
+                    "email": data.email,
+                    "password": password,
+                    "note": data.followup_note,
+                    "current_year": datetime.now().year,
+                },
+                db=db,
+            )
 
-        if followup_enabled:
-            school.followup_last_sent_at = datetime.now(timezone.utc)
-            db.commit()
+            if followup_enabled:
+                school.followup_last_sent_at = datetime.now(timezone.utc)
+                db.commit()
 
-        return {
-            "detail": "School account created and credentials sent.",
+        response = {
+            "detail": "School account created and credentials sent." if current_user.role != UserRole.AGENT
+                      else "Institution registered as DRAFT. Submit for verification when ready.",
             "school_id": school.id,
             "user_id": user.id,
-            "followup_status": school.followup_status,
-            "auto_followup": school.followup_enabled,
         }
+        if current_user.role == UserRole.AGENT:
+            response.update({
+                "institution_verification_status": school.institution_verification_status,
+                "created_by_agent_profile_id": agent_profile.id,
+                "confirms_educational_institution": school.confirms_educational_institution,
+                "confirms_contact_information": school.confirms_contact_information,
+            })
+        else:
+            response.update({
+                "followup_status": school.followup_status,
+                "auto_followup": school.followup_enabled,
+            })
+        return response
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create school account: {str(e)}")
