@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
-from app.models.agent import StipendType, AgentGender, AgentExperience
+from app.models.agent import StipendType, AgentGender
 
 
 def _validate_phone(v):
@@ -65,7 +65,7 @@ class AgentProfileUpdate(BaseModel):
     qualification: Optional[str] = None
     university: Optional[str] = None
     designation: Optional[str] = None
-    experience: Optional[AgentExperience] = None
+    experience: Optional[str] = None
 
     # Address / Location
     pin_code: Optional[str] = None
@@ -133,7 +133,7 @@ class AgentProfileResponse(BaseModel):
     qualification: Optional[str] = None
     university: Optional[str] = None
     designation: Optional[str] = None
-    experience: Optional[AgentExperience] = None
+    experience: Optional[str] = None
 
     # Address
     pin_code: Optional[str] = None

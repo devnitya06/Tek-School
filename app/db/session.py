@@ -133,7 +133,7 @@ from app.models.billing import (
     WalletTransaction,
     BusinessInquirySchool,
 )
-from app.models.agent import AgentProfile, StipendType, AgentGender, AgentExperience  # Agent module
+from app.models.agent import AgentProfile, StipendType, AgentGender  # Agent module
 from app.models.agent_config import AgentPaymentConfig, AgentEarning  # Agent Phase 2
 from app.models.agent_payment import AgentPaymentAccount, AgentWithdrawal, AgentWithdrawalHistory  # Agent Phase 3
 
@@ -170,11 +170,11 @@ def ensure_soft_delete_schema():
 def ensure_agent_schema():
     """Ensure the agent_profiles table and its dependencies exist.
 
-    Safe to call on every startup - idempotent, does not touch existing data.
-    Creates the 3 PG enum types first, then the table (or adds missing columns
+    Safe to call on every startup - idempotent, preserves existing profile data.
+    Creates the 2 PG enum types first, then the table (or adds missing columns
     if the table already exists from a previous, smaller migration).
     """
-    # 1. Ensure all three PG enum types exist
+    # 1. Ensure the PG enum types still used by agent profiles exist
     with engine.begin() as conn:
         for ddl in [
             "DO $$ BEGIN CREATE TYPE stipend_type_enum AS ENUM "
@@ -183,10 +183,6 @@ def ensure_agent_schema():
 
             "DO $$ BEGIN CREATE TYPE agent_gender_enum AS ENUM "
             "('male', 'female', 'other'); "
-            "EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
-
-            "DO $$ BEGIN CREATE TYPE agent_experience_enum AS ENUM "
-            "('fresher', 'experienced'); "
             "EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
 
             # Ensure 'agent' value exists in the shared userrole enum
@@ -205,6 +201,14 @@ def ensure_agent_schema():
     # 2b. Table already exists - add any columns that are missing
     #     (handles cases where the old table was created without the new fields)
     existing_cols = {c["name"] for c in inspector.get_columns("agent_profiles")}
+    if "experience" in existing_cols:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE agent_profiles "
+                "ALTER COLUMN experience TYPE TEXT USING experience::text"
+            ))
+            conn.execute(text("DROP TYPE IF EXISTS agent_experience_enum"))
+
     new_cols = [
         ("first_name",              "VARCHAR(100) NOT NULL DEFAULT ''"),
         ("last_name",               "VARCHAR(100) NOT NULL DEFAULT ''"),
@@ -215,7 +219,7 @@ def ensure_agent_schema():
         ("qualification",           "VARCHAR(255)"),
         ("university",              "VARCHAR(255)"),
         ("designation",             "VARCHAR(255)"),
-        ("experience",              "agent_experience_enum"),
+        ("experience",              "TEXT"),
         ("pin_code",                "VARCHAR(10)"),
         ("division",                "VARCHAR(100)"),
         ("district",                "VARCHAR(100)"),

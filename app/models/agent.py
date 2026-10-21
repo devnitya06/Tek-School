@@ -21,6 +21,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     Enum as SQLEnum,
 )
@@ -43,11 +44,6 @@ class AgentGender(str, PyEnum):
     MALE = "male"
     FEMALE = "female"
     OTHER = "other"
-
-
-class AgentExperience(str, PyEnum):
-    FRESHER = "fresher"
-    EXPERIENCED = "experienced"
 
 
 # ---------------------------------------------------------------------------
@@ -104,14 +100,7 @@ class AgentProfile(Base):
     qualification  = Column(String(255), nullable=True)
     university     = Column(String(255), nullable=True)   # University / Institution
     designation    = Column(String(255), nullable=True)   # Agent Designation
-    experience     = Column(
-        SQLEnum(
-            AgentExperience,
-            name="agent_experience_enum",
-            values_callable=lambda enum: [member.value for member in enum],
-        ),
-        nullable=True,
-    )
+    experience     = Column(Text, nullable=True)
 
     # Address / Location (PIN-code based; frontend auto-fills division/district/state)
     pin_code  = Column(String(10),  nullable=True)

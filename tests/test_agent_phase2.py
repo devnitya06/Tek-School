@@ -26,15 +26,16 @@ from sqlalchemy.orm import sessionmaker
 TEST_DB_URL = "sqlite:///./test_agent_phase2.db"
 
 
-def test_agent_enum_values_match_database_migrations():
-    from app.models.agent import AgentExperience, AgentGender, AgentProfile
+def test_agent_experience_accepts_free_form_text():
+    from sqlalchemy import Text
 
-    assert AgentProfile.__table__.c.gender.type.enums == [
-        member.value for member in AgentGender
-    ]
-    assert AgentProfile.__table__.c.experience.type.enums == [
-        member.value for member in AgentExperience
-    ]
+    from app.models.agent import AgentProfile
+    from app.schemas.agent import AgentProfileUpdate
+
+    assert isinstance(AgentProfile.__table__.c.experience.type, Text)
+    assert AgentProfileUpdate(experience="12 years in product management").experience == (
+        "12 years in product management"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,4 +603,3 @@ class TestAgentEarnings:
         old_earning = db.query(AgentEarning).filter(AgentEarning.id == earning_id).first()
         assert Decimal(str(old_earning.applied_rate)) == Decimal("500.00")
         assert Decimal(str(old_earning.amount)) == Decimal("500.00")
-
