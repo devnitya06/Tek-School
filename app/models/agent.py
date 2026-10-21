@@ -92,12 +92,26 @@ class AgentProfile(Base):
     )
 
     # ── Step-2 profile fields (filled via profile-update endpoint) ───────────
-    gender      = Column(SQLEnum(AgentGender,     name="agent_gender_enum"),     nullable=True)
+    gender      = Column(
+        SQLEnum(
+            AgentGender,
+            name="agent_gender_enum",
+            values_callable=lambda enum: [member.value for member in enum],
+        ),
+        nullable=True,
+    )
     dob         = Column(Date, nullable=True)
     qualification  = Column(String(255), nullable=True)
     university     = Column(String(255), nullable=True)   # University / Institution
     designation    = Column(String(255), nullable=True)   # Agent Designation
-    experience     = Column(SQLEnum(AgentExperience, name="agent_experience_enum"), nullable=True)
+    experience     = Column(
+        SQLEnum(
+            AgentExperience,
+            name="agent_experience_enum",
+            values_callable=lambda enum: [member.value for member in enum],
+        ),
+        nullable=True,
+    )
 
     # Address / Location (PIN-code based; frontend auto-fills division/district/state)
     pin_code  = Column(String(10),  nullable=True)
@@ -157,4 +171,3 @@ class AgentProfile(Base):
         if not self.agent_id:
             import uuid as _uuid
             self.agent_id = f"AGT-{str(_uuid.uuid4().int)[:6]}"
-

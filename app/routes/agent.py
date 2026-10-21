@@ -413,6 +413,10 @@ def update_agent(
         db.refresh(user)
     except SQLAlchemyError:
         db.rollback()
+        logger.exception(
+            "Database error updating agent profile (agent_profile_id=%s)",
+            agent_profile_id,
+        )
         raise HTTPException(status_code=500, detail="Database error while updating agent profile.")
 
     return _serialize(user, profile)
