@@ -55,13 +55,26 @@ def engine():
     from app.models.users import User
     from app.models.agent import AgentProfile
     from app.models.agent_config import AgentPaymentConfig, AgentEarning
-    for tbl in (User.__table__, AgentProfile.__table__, AgentPaymentConfig.__table__, AgentEarning.__table__):
+    from app.models.agent_config import AgentStipendRate
+    for tbl in (
+        User.__table__,
+        AgentProfile.__table__,
+        AgentPaymentConfig.__table__,
+        AgentEarning.__table__,
+        AgentStipendRate.__table__,
+    ):
         tbl.create(bind=eng, checkfirst=True)
     yield eng
     from app.models.users import User
     from app.models.agent import AgentProfile
-    from app.models.agent_config import AgentPaymentConfig, AgentEarning
-    for tbl in (AgentEarning.__table__, AgentPaymentConfig.__table__, AgentProfile.__table__, User.__table__):
+    from app.models.agent_config import AgentPaymentConfig, AgentEarning, AgentStipendRate
+    for tbl in (
+        AgentStipendRate.__table__,
+        AgentEarning.__table__,
+        AgentPaymentConfig.__table__,
+        AgentProfile.__table__,
+        User.__table__,
+    ):
         tbl.drop(bind=eng, checkfirst=True)
 
 
@@ -201,7 +214,7 @@ def make_config_data():
     from app.schemas.agent_config import AgentConfigRequest, ActivityConfig, StipendConfig
     return AgentConfigRequest(
         institution_digital_profile=ActivityConfig(is_enabled=True, rate=Decimal("1200.00")),
-        daily_stipend=StipendConfig(is_enabled=True, daily_rate=Decimal("500.00")),
+        monthly_stipend=StipendConfig(is_enabled=True, monthly_rate=Decimal("500.00")),
         physical_verification=ActivityConfig(is_enabled=True, rate=Decimal("250.00")),
         online_demonstration=ActivityConfig(is_enabled=False, rate=Decimal("600.00")),
         offline_demonstration=ActivityConfig(is_enabled=True, rate=Decimal("750.00")),
@@ -227,7 +240,7 @@ class TestSchemaValidation:
         with pytest.raises(ValidationError):
             AgentConfigRequest(
                 institution_digital_profile=ActivityConfig(is_enabled=True, rate=Decimal("100.00")),
-                daily_stipend=StipendConfig(is_enabled=True, daily_rate=Decimal("100.00")),
+                monthly_stipend=StipendConfig(is_enabled=True, monthly_rate=Decimal("100.00")),
                 physical_verification=ActivityConfig(is_enabled=True, rate=Decimal("100.00")),
                 online_demonstration=ActivityConfig(is_enabled=True, rate=Decimal("100.00")),
                 offline_demonstration=ActivityConfig(is_enabled=True, rate=Decimal("100.00")),
@@ -266,8 +279,8 @@ class TestAgentPaymentConfig:
             agent_profile_id=profile.id,
             idp_is_enabled=data.institution_digital_profile.is_enabled,
             idp_rate=data.institution_digital_profile.rate,
-            stipend_is_enabled=data.daily_stipend.is_enabled,
-            stipend_daily_rate=data.daily_stipend.daily_rate,
+            stipend_monthly_is_enabled=data.monthly_stipend.is_enabled,
+            stipend_monthly_rate=data.monthly_stipend.monthly_rate,
             pv_is_enabled=data.physical_verification.is_enabled,
             pv_rate=data.physical_verification.rate,
             od_is_enabled=data.online_demonstration.is_enabled,
@@ -603,3 +616,122 @@ class TestAgentEarnings:
         old_earning = db.query(AgentEarning).filter(AgentEarning.id == earning_id).first()
         assert Decimal(str(old_earning.applied_rate)) == Decimal("500.00")
         assert Decimal(str(old_earning.amount)) == Decimal("500.00")
+
+
+class TestMonthlyAgentStipends:
+    def test_with_stipend_agent_gets_monthly_configured_rate_once(self, db, agent_profile):
+        from app.models.agent import StipendType
+        from app.models.agent_config import AgentEarning, AgentStipendRate
+        from app.tasks.agent_tasks import generate_monthly_agent_stipends_for_period
+
+        _, profile = agent_profile
+        profile.stipend_type = StipendType.WITH_STIPEND
+        db.add(AgentStipendRate(
+            agent_profile_id=profile.id,
+            effective_from=date(2026, 9, 1),
+            is_enabled=True,
+            monthly_rate=Decimal("1800.00"),
+        ))
+        db.commit()
+
+        period_start = date(2026, 9, 1)
+        period_end = date(2026, 10, 1)
+        assert generate_monthly_agent_stipends_for_period(
+            db, period_start, period_end
+        ) == 1
+        assert generate_monthly_agent_stipends_for_period(
+            db, period_start, period_end
+        ) == 0
+
+        earning = db.query(AgentEarning).filter(
+            AgentEarning.agent_profile_id == profile.id,
+            AgentEarning.earning_type == "MONTHLY_STIPEND",
+        ).one()
+        assert earning.reference_id == "2026-09"
+        assert earning.earning_date == date(2026, 9, 30)
+        assert Decimal(str(earning.amount)) == Decimal("1800.00")
+        assert Decimal(str(earning.applied_rate)) == Decimal("1800.00")
+
+    def test_without_stipend_agent_never_receives_monthly_stipend(self, db, agent_profile):
+        from app.models.agent import StipendType
+        from app.models.agent_config import AgentEarning, AgentStipendRate
+        from app.tasks.agent_tasks import generate_monthly_agent_stipends_for_period
+
+        _, profile = agent_profile
+        profile.stipend_type = StipendType.WITHOUT_STIPEND
+        db.add(AgentStipendRate(
+            agent_profile_id=profile.id,
+            effective_from=date(2026, 9, 1),
+            is_enabled=True,
+            monthly_rate=Decimal("1800.00"),
+        ))
+        db.commit()
+
+        assert generate_monthly_agent_stipends_for_period(
+            db, date(2026, 9, 1), date(2026, 10, 1)
+        ) == 0
+        assert db.query(AgentEarning).filter(
+            AgentEarning.agent_profile_id == profile.id,
+            AgentEarning.earning_type == "MONTHLY_STIPEND",
+        ).count() == 0
+
+    def test_monthly_rate_changes_are_effective_next_month(self, db, agent_profile):
+        from app.models.agent_config import AgentStipendRate
+        from app.routes.agent import (
+            _next_stipend_effective_date,
+            _save_stipend_rate_snapshot,
+        )
+
+        _, profile = agent_profile
+        effective_date = _next_stipend_effective_date()
+        _save_stipend_rate_snapshot(
+            db, profile.id, True, Decimal("2000.00")
+        )
+        db.commit()
+        _save_stipend_rate_snapshot(
+            db, profile.id, True, Decimal("2500.00")
+        )
+        db.commit()
+
+        snapshots = db.query(AgentStipendRate).filter(
+            AgentStipendRate.agent_profile_id == profile.id
+        ).all()
+        assert len(snapshots) == 1
+        assert snapshots[0].effective_from == effective_date
+        assert Decimal(str(snapshots[0].monthly_rate)) == Decimal("2500.00")
+
+
+    def test_stipend_rate_snapshot_is_not_retroactive(self, db, agent_profile):
+        from app.models.agent import StipendType
+        from app.models.agent_config import AgentEarning, AgentStipendRate
+        from app.tasks.agent_tasks import generate_monthly_agent_stipends_for_period
+
+        _, profile = agent_profile
+        profile.stipend_type = StipendType.WITH_STIPEND
+        db.add(AgentStipendRate(
+            agent_profile_id=profile.id,
+            effective_from=date(2026, 10, 1),
+            is_enabled=True,
+            monthly_rate=Decimal("2100.00"),
+        ))
+        db.commit()
+
+        assert generate_monthly_agent_stipends_for_period(
+            db, date(2026, 9, 1), date(2026, 10, 1)
+        ) == 0
+        assert db.query(AgentEarning).filter(
+            AgentEarning.agent_profile_id == profile.id,
+            AgentEarning.earning_type == "MONTHLY_STIPEND",
+        ).count() == 0
+
+
+def test_agent_statistics_require_month_and_year_together():
+    from fastapi import HTTPException
+
+    from app.routes.agent import _stats_period
+
+    assert _stats_period(None, None) is None
+    assert _stats_period(3, 2026)[0:2] == (date(2026, 3, 1), date(2026, 4, 1))
+    with pytest.raises(HTTPException) as exc:
+        _stats_period(3, None)
+    assert exc.value.status_code == 422

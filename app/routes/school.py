@@ -168,6 +168,11 @@ def _resolve_agent_for_school_endpoint(current_user: User, db: Session):
     ).first()
     if not agent_profile:
         raise HTTPException(status_code=404, detail="Agent profile not found.")
+    if not agent_profile.can_onboard_school:
+        raise HTTPException(
+            status_code=403,
+            detail="School onboarding permission is disabled for your account.",
+        )
     config = db.query(AgentPaymentConfig).filter(
         AgentPaymentConfig.agent_profile_id == agent_profile.id
     ).first()
@@ -175,7 +180,7 @@ def _resolve_agent_for_school_endpoint(current_user: User, db: Session):
         raise HTTPException(
             status_code=403,
             detail=(
-                "Institution Digital Profile feature is not enabled for your account. "
+                "Agent school onboarding is not enabled for your account. "
                 "Contact your administrator."
             ),
         )

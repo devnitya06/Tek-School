@@ -1807,6 +1807,11 @@ def create_school_account(
         ).first()
         if not agent_profile:
             raise HTTPException(status_code=404, detail="Agent profile not found.")
+        if not agent_profile.can_onboard_school:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="School onboarding permission is disabled for your account.",
+            )
         config = db.query(AgentPaymentConfig).filter(
             AgentPaymentConfig.agent_profile_id == agent_profile.id
         ).first()
@@ -1814,7 +1819,7 @@ def create_school_account(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    "Institution Digital Profile feature is not enabled for your account. "
+                    "Institution Digital Profile is not enabled for your account. "
                     "Contact your administrator."
                 ),
             )
@@ -5663,4 +5668,3 @@ def admin_list_users(
     ]
 
     return pagination.format_response(items, total_count)
-

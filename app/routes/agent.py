@@ -1,4 +1,4 @@
-"""Agent Routes - Phase 1, 2 & 3
+"""Agent routes for profiles, configuration, earnings, onboarding and withdrawals.
 
 Phase 1:
   POST   /agent/agents/                              - Step 1: Create agent account
@@ -29,6 +29,10 @@ Phase 3:
   PATCH  /agent/agents/{id}/withdrawals/{wid}/approve   - Admin: approve withdrawal
   PATCH  /agent/agents/{id}/withdrawals/{wid}/reject    - Admin: reject withdrawal
   PATCH  /agent/agents/{id}/withdrawals/{wid}/mark-paid - Admin: mark paid (multipart)
+
+Dashboard statistics:
+  GET    /agent/agents/{id}/dashboard-statistics - Agent or admin: profile statistics
+  GET    /agent/admin/dashboard-statistics       - Admin: overall Agent statistics
 """
 
 from app.models.agent_config import AgentPaymentConfig
@@ -42,14 +46,15 @@ from app.models.agent_payment import (
 from app.utils.email_utility import generate_password
 from app.utils.s3 import upload_multipart_file_to_s3, delete_s3_object
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -57,7 +62,12 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.agent import AgentProfile, StipendType
-from app.models.agent_config import AgentEarning, AgentEarningStatus, AgentEarningType
+from app.models.agent_config import (
+    AgentEarning,
+    AgentEarningStatus,
+    AgentEarningType,
+    AgentStipendRate,
+)
 from app.models.users import User, Token
 from app.models.user_session import UserSession
 from app.schemas.agent import (
@@ -278,6 +288,10 @@ def create_agent(
     "/agents/",
     response_model=List[AgentListItem],
     summary="List all Agents",
+    description=(
+        "pay_request counts all withdrawal requests regardless of status. "
+        "no_of_tasks is zero because no Agent-linked task records exist in the current schema."
+    ),
 )
 def list_agents(
     skip: int = Query(default=0, ge=0),
@@ -297,9 +311,26 @@ def list_agents(
     if profile_complete is not None:
         query = query.filter(AgentProfile.profile_completed_step2.is_(profile_complete))
 
-    rows = query.offset(skip).limit(limit).all()
+    withdrawal_counts = (
+        db.query(
+            AgentWithdrawal.agent_profile_id.label("agent_profile_id"),
+            func.count(AgentWithdrawal.id).label("pay_request"),
+        )
+        .group_by(AgentWithdrawal.agent_profile_id)
+        .subquery()
+    )
+    rows = (
+        query.outerjoin(
+            withdrawal_counts,
+            withdrawal_counts.c.agent_profile_id == AgentProfile.id,
+        )
+        .add_columns(withdrawal_counts.c.pay_request)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     result = []
-    for user, profile in rows:
+    for user, profile, pay_request in rows:
         result.append(AgentListItem(
             user_id=user.id,
             is_active=user.is_active,
@@ -311,6 +342,10 @@ def list_agents(
             phone=profile.phone,
             email=profile.email,
             state=profile.state,
+            district=profile.district,
+            designation=profile.designation,
+            no_of_tasks=0,
+            pay_request=pay_request or 0,
             stipend_type=profile.stipend_type,
             profile_completed_step2=profile.profile_completed_step2,
             created_at=user.created_at,
@@ -337,6 +372,169 @@ def get_agent(
     if not user:
         raise HTTPException(status_code=404, detail="Associated user not found.")
     return _serialize(user, profile)
+
+
+def _stats_period(month: Optional[int], year: Optional[int]):
+    if (month is None) != (year is None):
+        raise HTTPException(
+            status_code=422,
+            detail="Both month and year must be provided together.",
+        )
+    if month is None:
+        return None
+
+    start_date = date(year, month, 1)
+    if month == 12:
+        end_date = date(year + 1, 1, 1)
+    else:
+        end_date = date(year, month + 1, 1)
+    start_at = datetime.combine(start_date, time.min, tzinfo=_AGENT_TIMEZONE)
+    end_at = datetime.combine(end_date, time.min, tzinfo=_AGENT_TIMEZONE)
+    return start_date, end_date, start_at, end_at
+
+
+def _earning_date_filter(query, period):
+    if period is None:
+        return query
+    start_date, end_date, start_at, end_at = period
+    return query.filter(
+        or_(
+            and_(
+                AgentEarning.earning_date >= start_date,
+                AgentEarning.earning_date < end_date,
+            ),
+            and_(
+                AgentEarning.earning_date.is_(None),
+                AgentEarning.created_at >= start_at,
+                AgentEarning.created_at < end_at,
+            ),
+        )
+    )
+
+
+@router.get(
+    "/agents/{agent_profile_id}/dashboard-statistics",
+    summary="Get Agent dashboard statistics",
+)
+def get_agent_dashboard_statistics(
+    agent_profile_id: int,
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=1000, le=9999),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.AGENT)
+    ),
+):
+    period = _stats_period(month, year)
+    if _normalize_role(current_user.role) == UserRole.AGENT:
+        own_profile = _get_profile_by_user_or_404(current_user.id, db)
+        if own_profile.id != agent_profile_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Agents can only view their own dashboard statistics.",
+            )
+        profile = own_profile
+    else:
+        profile = _get_profile_or_404(agent_profile_id, db)
+
+    listings = db.query(func.count(School.id)).filter(
+        School.created_by_agent_profile_id == profile.id,
+        School.institution_verification_status == _IVS_APPROVED,
+    )
+    if period is not None:
+        start_date, end_date, start_at, end_at = period
+        listings = listings.filter(
+            or_(
+                and_(
+                    School.institution_verified_at >= start_at,
+                    School.institution_verified_at < end_at,
+                ),
+                and_(
+                    School.institution_verified_at.is_(None),
+                    School.created_at >= start_at,
+                    School.created_at < end_at,
+                ),
+            )
+        )
+    institution_listing = listings.scalar() or 0
+
+    earnings_query = db.query(func.coalesce(func.sum(AgentEarning.amount), 0)).filter(
+        AgentEarning.agent_profile_id == profile.id,
+        AgentEarning.status == AgentEarningStatus.APPROVED.value,
+    )
+    net_earnings = Decimal(str(_earning_date_filter(earnings_query, period).scalar() or 0))
+
+    return {
+        "agent_profile_id": profile.id,
+        "institution_listing": institution_listing,
+        "demonstration": 0,
+        "field_verification": 0,
+        "net_earnings": net_earnings,
+        "currency": "INR",
+        "month": month,
+        "year": year,
+        "definitions": {
+            "institution_listing": "Approved agent-created schools, counted by approval date.",
+            "demonstration": "Zero until Agent-linked demonstration records exist.",
+            "field_verification": "Zero until Agent-linked field-verification records exist.",
+            "net_earnings": (
+                "Sum of APPROVED ledger earnings; withdrawals are not subtracted."
+            ),
+        },
+    }
+
+
+@router.get(
+    "/admin/dashboard-statistics",
+    summary="Get overall Agent dashboard statistics (Admin)",
+)
+def get_admin_agent_dashboard_statistics(
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=1000, le=9999),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPERADMIN)),
+):
+    period = _stats_period(month, year)
+    agents = (
+        db.query(User)
+        .join(AgentProfile, AgentProfile.user_id == User.id)
+        .filter(User.role == UserRole.AGENT, User.is_deleted.is_(False))
+    )
+    total_agents = agents.count()
+    active_agents = agents.filter(User.is_active.is_(True)).count()
+    inactive_agents = total_agents - active_agents
+
+    earnings_query = db.query(func.coalesce(func.sum(AgentEarning.amount), 0)).filter(
+        AgentEarning.status == AgentEarningStatus.APPROVED.value,
+    )
+    agent_earnings = Decimal(str(_earning_date_filter(earnings_query, period).scalar() or 0))
+
+    pending_withdrawals = db.query(
+        func.coalesce(func.sum(AgentWithdrawal.requested_amount), 0)
+    ).filter(AgentWithdrawal.status == WithdrawalStatus.PENDING.value)
+    if period is not None:
+        _, _, start_at, end_at = period
+        pending_withdrawals = pending_withdrawals.filter(
+            AgentWithdrawal.created_at >= start_at,
+            AgentWithdrawal.created_at < end_at,
+        )
+    pending_withdrawal = Decimal(str(pending_withdrawals.scalar() or 0))
+
+    return {
+        "total_agents": total_agents,
+        "active_agents": active_agents,
+        "inactive_agents": inactive_agents,
+        "agent_earnings": agent_earnings,
+        "pending_withdrawal": pending_withdrawal,
+        "currency": "INR",
+        "month": month,
+        "year": year,
+        "definitions": {
+            "agent_counts": "Current status counts exclude soft-deleted Agent accounts.",
+            "agent_earnings": "Sum of APPROVED ledger entries; paid withdrawals are not expenses.",
+            "pending_withdrawal": "Sum of PENDING requests created in the selected period.",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +722,12 @@ def agent_consent(
     profile.wants_initial_bonus = data.wants_initial_bonus
 
     try:
+        if data.wants_initial_bonus:
+            config = db.query(AgentPaymentConfig).filter(
+                AgentPaymentConfig.agent_profile_id == profile.id
+            ).first()
+            if config:
+                _issue_initial_bonus_if_eligible(db, profile, config)
         db.commit()
         db.refresh(profile)
     except SQLAlchemyError:
@@ -550,9 +754,10 @@ def _config_to_response(profile: "AgentProfile", cfg: "AgentPaymentConfig") -> d
             "is_enabled": cfg.idp_is_enabled,
             "rate": Decimal(str(cfg.idp_rate)),
         },
-        "daily_stipend": {
-            "is_enabled": cfg.stipend_is_enabled,
-            "daily_rate": Decimal(str(cfg.stipend_daily_rate)),
+        "monthly_stipend": {
+            "is_enabled": cfg.stipend_monthly_is_enabled,
+            "monthly_rate": Decimal(str(cfg.stipend_monthly_rate)),
+            "effective_from": cfg.stipend_effective_from,
         },
         "physical_verification": {
             "is_enabled": cfg.pv_is_enabled,
@@ -572,9 +777,88 @@ def _config_to_response(profile: "AgentProfile", cfg: "AgentPaymentConfig") -> d
         },
         "initial_bonus": Decimal(str(cfg.initial_bonus)),
         "is_bonus_withdrawn": cfg.is_bonus_withdrawn,
+        "effective_from": cfg.effective_from,
         "created_at": cfg.created_at,
         "updated_at": cfg.updated_at,
     }
+
+
+_AGENT_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _next_stipend_effective_date(today: Optional[date] = None) -> date:
+    today = today or datetime.now(_AGENT_TIMEZONE).date()
+    if today.month == 12:
+        return date(today.year + 1, 1, 1)
+    return date(today.year, today.month + 1, 1)
+
+
+def _save_stipend_rate_snapshot(
+    db: Session,
+    profile_id: int,
+    is_enabled: bool,
+    monthly_rate: Decimal,
+) -> None:
+    effective_date = _next_stipend_effective_date()
+    snapshot = (
+        db.query(AgentStipendRate)
+        .filter(
+            AgentStipendRate.agent_profile_id == profile_id,
+            AgentStipendRate.effective_from == effective_date,
+        )
+        .first()
+    )
+    if snapshot is None:
+        snapshot = AgentStipendRate(
+            agent_profile_id=profile_id,
+            effective_from=effective_date,
+        )
+        db.add(snapshot)
+    snapshot.is_enabled = is_enabled
+    snapshot.monthly_rate = monthly_rate
+
+
+def _issue_initial_bonus_if_eligible(
+    db: Session,
+    profile: AgentProfile,
+    config: AgentPaymentConfig,
+) -> bool:
+    if not profile.wants_initial_bonus or config.initial_bonus <= 0:
+        return False
+
+    bonus_ref = f"agent-{profile.id}"
+    existing_bonus = db.query(AgentEarning.id).filter(
+        AgentEarning.agent_profile_id == profile.id,
+        AgentEarning.earning_type == AgentEarningType.INITIAL_BONUS.value,
+        AgentEarning.reference_id == bonus_ref,
+    ).first()
+    if existing_bonus:
+        return False
+
+    now = datetime.now(timezone.utc)
+    earning = AgentEarning(
+        agent_profile_id=profile.id,
+        earning_type=AgentEarningType.INITIAL_BONUS.value,
+        status=AgentEarningStatus.APPROVED.value,
+        reference_type="agent_consent",
+        reference_id=bonus_ref,
+        applied_rate=config.initial_bonus,
+        amount=config.initial_bonus,
+        earning_date=now.date(),
+        description="Initial bonus earned after Agent consent.",
+        approved_at=now,
+    )
+    try:
+        with db.begin_nested():
+            db.add(earning)
+            db.flush()
+        return True
+    except IntegrityError:
+        logger.info(
+            "[Agent] Duplicate initial bonus prevented for agent_profile_id=%s",
+            profile.id,
+        )
+        return False
 
 
 @router.post(
@@ -613,8 +897,9 @@ def create_agent_config(
         agent_profile_id=profile.id,
         idp_is_enabled=data.institution_digital_profile.is_enabled,
         idp_rate=data.institution_digital_profile.rate,
-        stipend_is_enabled=data.daily_stipend.is_enabled,
-        stipend_daily_rate=data.daily_stipend.daily_rate,
+        stipend_monthly_is_enabled=data.monthly_stipend.is_enabled,
+        stipend_monthly_rate=data.monthly_stipend.monthly_rate,
+        stipend_effective_from=_next_stipend_effective_date(),
         pv_is_enabled=data.physical_verification.is_enabled,
         pv_rate=data.physical_verification.rate,
         od_is_enabled=data.online_demonstration.is_enabled,
@@ -627,9 +912,18 @@ def create_agent_config(
         is_bonus_withdrawn=False,           # always false on creation
         created_by=current_user.id,
         updated_by=current_user.id,
+        effective_from=datetime.now(timezone.utc),
     )
     try:
         db.add(cfg)
+        db.flush()
+        _issue_initial_bonus_if_eligible(db, profile, cfg)
+        _save_stipend_rate_snapshot(
+            db,
+            profile.id,
+            data.monthly_stipend.is_enabled,
+            data.monthly_stipend.monthly_rate,
+        )
         db.commit()
         db.refresh(cfg)
     except IntegrityError:
@@ -652,7 +946,8 @@ def create_agent_config(
     description=(
         "Updates the existing configuration record in-place. "
         "Does NOT create a second record or version. "
-        "created_at is preserved. updated_at is auto-refreshed. "
+        "created_at is preserved. effective_from is generated by the backend. "
+        "Monthly stipend rates become effective on the first day of the next calendar month. "
         "is_bonus_withdrawn is never changed by this endpoint."
     ),
 )
@@ -670,7 +965,7 @@ def update_agent_config(
 
     cfg = db.query(AgentPaymentConfig).filter(
         AgentPaymentConfig.agent_profile_id == profile.id
-    ).first()
+    ).with_for_update().first()
     if not cfg:
         raise HTTPException(
             status_code=404,
@@ -680,8 +975,9 @@ def update_agent_config(
     # Apply updates — is_bonus_withdrawn is intentionally excluded
     cfg.idp_is_enabled = data.institution_digital_profile.is_enabled
     cfg.idp_rate = data.institution_digital_profile.rate
-    cfg.stipend_is_enabled = data.daily_stipend.is_enabled
-    cfg.stipend_daily_rate = data.daily_stipend.daily_rate
+    cfg.stipend_monthly_is_enabled = data.monthly_stipend.is_enabled
+    cfg.stipend_monthly_rate = data.monthly_stipend.monthly_rate
+    cfg.stipend_effective_from = _next_stipend_effective_date()
     cfg.pv_is_enabled = data.physical_verification.is_enabled
     cfg.pv_rate = data.physical_verification.rate
     cfg.od_is_enabled = data.online_demonstration.is_enabled
@@ -692,9 +988,17 @@ def update_agent_config(
     cfg.oa_rate = data.other_activities.rate
     cfg.initial_bonus = data.initial_bonus
     cfg.updated_by = current_user.id
+    cfg.effective_from = datetime.now(timezone.utc)
     # created_at is never touched — preserved by the ORM
 
     try:
+        _issue_initial_bonus_if_eligible(db, profile, cfg)
+        _save_stipend_rate_snapshot(
+            db,
+            profile.id,
+            data.monthly_stipend.is_enabled,
+            data.monthly_stipend.monthly_rate,
+        )
         db.commit()
         db.refresh(cfg)
     except SQLAlchemyError:
@@ -1696,7 +2000,8 @@ _IVS_REJECTED = "REJECTED"
 # Fields Agents may NOT modify on the school profile (immutable / admin-only)
 _AGENT_FORBIDDEN_SCHOOL_FIELDS = {
     "created_by_role", "created_by_user_id", "created_by_name",
-    "created_by_agent_profile_id", "institution_verification_status",
+    "created_by_agent_profile_id",
+    "institution_verification_status",
     "institution_submitted_at", "institution_submitted_by_agent_id",
     "institution_verified_by", "institution_verified_at",
     "institution_rejection_reason", "is_verified", "is_business_approved",
@@ -1728,7 +2033,7 @@ def _resolve_agent_for_phase4(current_user: User, db: Session):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Institution Digital Profile feature is not enabled for your account. "
+                "Agent school onboarding is not enabled for your account. "
                 "Contact your administrator."
             ),
         )
@@ -1807,7 +2112,17 @@ def agent_create_institution(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.AGENT)),
 ):
-    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+    agent_profile, config = _resolve_agent_for_phase4(current_user, db)
+    if not agent_profile.can_onboard_school:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School onboarding permission is disabled for your account.",
+        )
+    if not config.idp_is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Institution Digital Profile feature is not enabled for your account.",
+        )
 
     # ── Duplicate email check ────────────────────────────────────────────────
     existing_user = db.query(User).filter(User.email == data.school_email.strip().lower()).first()
@@ -1972,8 +2287,18 @@ def agent_submit_institution(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.AGENT)),
 ):
-    agent_profile, _config = _resolve_agent_for_phase4(current_user, db)
+    agent_profile, config = _resolve_agent_for_phase4(current_user, db)
+    if not agent_profile.can_onboard_school:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School onboarding permission is disabled for your account.",
+        )
     school = _get_agent_school_or_403(data.school_id, agent_profile, db)
+    if not config.idp_is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The feature used to create this institution is no longer enabled.",
+        )
 
     # Only DRAFT can be submitted
     if school.institution_verification_status != _IVS_DRAFT:
@@ -2169,7 +2494,7 @@ def admin_approve_institution(
     - If idp_is_enabled is False or rate is zero at approval time, logs it but
       does not create an earning.
     """
-    school = db.query(School).filter(School.id == school_id).first()
+    school = db.query(School).filter(School.id == school_id).with_for_update().first()
     if not school:
         raise HTTPException(status_code=404, detail="Institution not found.")
 
@@ -2208,7 +2533,12 @@ def admin_approve_institution(
                 AgentPaymentConfig.agent_profile_id == agent_profile.id
             ).first()
 
-            if config and config.idp_is_enabled and config.idp_rate and config.idp_rate > 0:
+            if (
+                config
+                and config.idp_is_enabled
+                and config.idp_rate
+                and config.idp_rate > 0
+            ):
                 rate = _Decimal(str(config.idp_rate))
                 earning = AgentEarning(
                     agent_profile_id=agent_profile.id,

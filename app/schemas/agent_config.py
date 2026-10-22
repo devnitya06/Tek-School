@@ -1,6 +1,6 @@
 ﻿"""Agent Phase 2 — Payment Configuration Schemas"""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
@@ -28,11 +28,11 @@ class ActivityConfig(BaseModel):
 
 
 class StipendConfig(BaseModel):
-    """Daily stipend uses daily_rate instead of rate."""
+    """Monthly stipend rate."""
     is_enabled: bool
-    daily_rate: Decimal = Field(..., decimal_places=2)
+    monthly_rate: Decimal = Field(..., decimal_places=2)
 
-    @field_validator("daily_rate")
+    @field_validator("monthly_rate")
     @classmethod
     def rate_positive(cls, v):
         return _validate_rate(v)
@@ -44,7 +44,7 @@ class StipendConfig(BaseModel):
 
 class AgentConfigRequest(BaseModel):
     institution_digital_profile: ActivityConfig
-    daily_stipend: StipendConfig
+    monthly_stipend: StipendConfig
     physical_verification: ActivityConfig
     online_demonstration: ActivityConfig
     offline_demonstration: ActivityConfig
@@ -70,7 +70,8 @@ class ActivityConfigResponse(BaseModel):
 
 class StipendConfigResponse(BaseModel):
     is_enabled: bool
-    daily_rate: Decimal
+    monthly_rate: Decimal
+    effective_from: Optional[date] = None
 
     model_config = {"from_attributes": True}
 
@@ -79,13 +80,14 @@ class AgentConfigResponse(BaseModel):
     agent_profile_id: int
     agent_id: str
     institution_digital_profile: ActivityConfigResponse
-    daily_stipend: StipendConfigResponse
+    monthly_stipend: StipendConfigResponse
     physical_verification: ActivityConfigResponse
     online_demonstration: ActivityConfigResponse
     offline_demonstration: ActivityConfigResponse
     other_activities: ActivityConfigResponse
     initial_bonus: Decimal
     is_bonus_withdrawn: bool
+    effective_from: datetime
     created_at: datetime
     updated_at: Optional[datetime] = None
 

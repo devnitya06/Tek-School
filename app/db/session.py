@@ -134,7 +134,7 @@ from app.models.billing import (
     BusinessInquirySchool,
 )
 from app.models.agent import AgentProfile, StipendType, AgentGender  # Agent module
-from app.models.agent_config import AgentPaymentConfig, AgentEarning  # Agent Phase 2
+from app.models.agent_config import AgentPaymentConfig, AgentEarning, AgentStipendRate  # Agent Phase 2
 from app.models.agent_payment import AgentPaymentAccount, AgentWithdrawal, AgentWithdrawalHistory  # Agent Phase 3
 
 def create_tables():
@@ -277,6 +277,9 @@ def ensure_agent_phase2_schema():
 
     # 3. Create agent_earnings
     AgentEarning.__table__.create(bind=engine, checkfirst=True)
+
+    # 4. Create monthly stipend rate snapshots
+    AgentStipendRate.__table__.create(bind=engine, checkfirst=True)
 
 
 def ensure_agent_phase3_schema():

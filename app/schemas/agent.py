@@ -169,6 +169,10 @@ class AgentListItem(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     state: Optional[str] = None
+    district: Optional[str] = None
+    designation: Optional[str] = None
+    no_of_tasks: int = 0
+    pay_request: int = 0
     stipend_type: StipendType
     profile_completed_step2: bool
     created_at: datetime

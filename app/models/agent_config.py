@@ -39,6 +39,7 @@ from app.db.session import Base
 class AgentEarningType(str, PyEnum):
     INSTITUTION_DIGITAL_PROFILE = "INSTITUTION_DIGITAL_PROFILE"
     DAILY_STIPEND = "DAILY_STIPEND"
+    MONTHLY_STIPEND = "MONTHLY_STIPEND"
     PHYSICAL_VERIFICATION = "PHYSICAL_VERIFICATION"
     ONLINE_DEMONSTRATION = "ONLINE_DEMONSTRATION"
     OFFLINE_DEMONSTRATION = "OFFLINE_DEMONSTRATION"
@@ -84,9 +85,12 @@ class AgentPaymentConfig(Base):
     idp_is_enabled = Column(Boolean, nullable=False, default=False)
     idp_rate = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
 
-    # ── Daily Stipend ────────────────────────────────────────────────────────
+    # Legacy daily settings remain stored but are not used for monthly stipends.
+    stipend_monthly_is_enabled = Column(Boolean, nullable=False, default=False)
     stipend_is_enabled = Column(Boolean, nullable=False, default=False)
     stipend_daily_rate = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
+    stipend_monthly_rate = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
+    stipend_effective_from = Column(Date, nullable=True)
 
     # ── Physical Verification ────────────────────────────────────────────────
     pv_is_enabled = Column(Boolean, nullable=False, default=False)
@@ -119,6 +123,7 @@ class AgentPaymentConfig(Base):
         onupdate=func.now(),
         nullable=True,
     )
+    effective_from = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Audit
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -126,6 +131,31 @@ class AgentPaymentConfig(Base):
 
     # Relationships
     agent_profile = relationship("AgentProfile", back_populates="payment_config")
+
+
+class AgentStipendRate(Base):
+    """Monthly stipend rate snapshots effective from a calendar month."""
+
+    __tablename__ = "agent_stipend_rates"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_profile_id",
+            "effective_from",
+            name="uq_agent_stipend_rate_effective_from",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_profile_id = Column(
+        Integer,
+        ForeignKey("agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    effective_from = Column(Date, nullable=False, index=True)
+    is_enabled = Column(Boolean, nullable=False)
+    monthly_rate = Column(Numeric(12, 2), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 # ---------------------------------------------------------------------------

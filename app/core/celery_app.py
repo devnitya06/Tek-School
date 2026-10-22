@@ -10,6 +10,7 @@ celery_app = Celery(
         "app.tasks.student_tasks",
         "app.tasks.followup_tasks",
         "app.tasks.demo_email_tasks",
+        "app.tasks.agent_tasks",
     ],
 )
 
@@ -42,5 +43,10 @@ celery_app.conf.beat_schedule = {
     "send-monthly-followup-emails": {
         "task": "app.tasks.followup_tasks.send_monthly_followup_emails",
         "schedule": crontab(hour=5, minute=0),
+    },
+    # 1:30 AM IST on the first day — process the previous calendar month's stipends.
+    "generate-monthly-agent-stipends": {
+        "task": "app.tasks.agent_tasks.generate_monthly_agent_stipends",
+        "schedule": crontab(day_of_month=1, hour=1, minute=30),
     },
 }
