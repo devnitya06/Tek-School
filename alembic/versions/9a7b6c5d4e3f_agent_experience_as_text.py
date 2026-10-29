@@ -16,17 +16,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "agent_profiles",
-        "experience",
-        existing_type=sa.Enum(
-            "fresher",
-            "experienced",
-            name="agent_experience_enum",
-        ),
-        type_=sa.Text(),
-        postgresql_using="experience::text",
-    )
+    experience_type = op.get_bind().execute(
+        sa.text(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = current_schema() "
+            "AND table_name = 'agent_profiles' AND column_name = 'experience'"
+        )
+    ).scalar_one_or_none()
+    if experience_type != "text":
+        op.alter_column(
+            "agent_profiles",
+            "experience",
+            existing_type=sa.Enum(
+                "fresher",
+                "experienced",
+                name="agent_experience_enum",
+            ),
+            type_=sa.Text(),
+            postgresql_using="experience::text",
+        )
     op.execute("DROP TYPE IF EXISTS agent_experience_enum")
 
 

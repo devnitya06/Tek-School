@@ -16,6 +16,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+    payment_columns = (
+        {column["name"] for column in inspector.get_columns("agent_payment_configs")}
+        if inspector.has_table("agent_payment_configs")
+        else set()
+    )
+    if (
+        {
+            "stipend_monthly_is_enabled",
+            "stipend_monthly_rate",
+            "stipend_effective_from",
+            "effective_from",
+        }.issubset(payment_columns)
+        and inspector.has_table("agent_stipend_rates")
+    ):
+        return
+
     op.add_column(
         "agent_payment_configs",
         sa.Column(

@@ -24,10 +24,18 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _add_column_if_missing(table: str, column: sa.Column) -> None:
+    columns = {
+        item["name"] for item in sa.inspect(op.get_bind()).get_columns(table)
+    }
+    if column.name not in columns:
+        op.add_column(table, column)
+
+
 def upgrade() -> None:
     # 1. Agent creator-tracking
-    op.add_column("schools", sa.Column("created_by_role", sa.String(32), nullable=True))
-    op.add_column(
+    _add_column_if_missing("schools", sa.Column("created_by_role", sa.String(32), nullable=True))
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "created_by_user_id",
@@ -36,8 +44,8 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.add_column("schools", sa.Column("created_by_name", sa.String(255), nullable=True))
-    op.add_column(
+    _add_column_if_missing("schools", sa.Column("created_by_name", sa.String(255), nullable=True))
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "created_by_agent_profile_id",
@@ -48,7 +56,7 @@ def upgrade() -> None:
     )
 
     # 2. Agent institution confirmations
-    op.add_column(
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "confirms_educational_institution",
@@ -57,7 +65,7 @@ def upgrade() -> None:
             server_default=sa.text("false"),
         ),
     )
-    op.add_column(
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "confirms_contact_information",
@@ -66,13 +74,13 @@ def upgrade() -> None:
             server_default=sa.text("false"),
         ),
     )
-    op.add_column("schools", sa.Column("confirmation_educational_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("schools", sa.Column("confirmation_contact_at", sa.DateTime(timezone=True), nullable=True))
+    _add_column_if_missing("schools", sa.Column("confirmation_educational_at", sa.DateTime(timezone=True), nullable=True))
+    _add_column_if_missing("schools", sa.Column("confirmation_contact_at", sa.DateTime(timezone=True), nullable=True))
 
     # 3. Institution verification lifecycle
-    op.add_column("schools", sa.Column("institution_verification_status", sa.String(32), nullable=True))
-    op.add_column("schools", sa.Column("institution_submitted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column(
+    _add_column_if_missing("schools", sa.Column("institution_verification_status", sa.String(32), nullable=True))
+    _add_column_if_missing("schools", sa.Column("institution_submitted_at", sa.DateTime(timezone=True), nullable=True))
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "institution_submitted_by_agent_id",
@@ -81,7 +89,7 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.add_column(
+    _add_column_if_missing(
         "schools",
         sa.Column(
             "institution_verified_by",
@@ -90,12 +98,17 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.add_column("schools", sa.Column("institution_verified_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("schools", sa.Column("institution_rejection_reason", sa.String(1000), nullable=True))
+    _add_column_if_missing("schools", sa.Column("institution_verified_at", sa.DateTime(timezone=True), nullable=True))
+    _add_column_if_missing("schools", sa.Column("institution_rejection_reason", sa.String(1000), nullable=True))
 
     # 4. Indexes
-    op.create_index("ix_schools_institution_verification_status", "schools", ["institution_verification_status"])
-    op.create_index("ix_schools_created_by_agent_profile_id", "schools", ["created_by_agent_profile_id"])
+    indexes = {
+        index["name"] for index in sa.inspect(op.get_bind()).get_indexes("schools")
+    }
+    if "ix_schools_institution_verification_status" not in indexes:
+        op.create_index("ix_schools_institution_verification_status", "schools", ["institution_verification_status"])
+    if "ix_schools_created_by_agent_profile_id" not in indexes:
+        op.create_index("ix_schools_created_by_agent_profile_id", "schools", ["created_by_agent_profile_id"])
 
 
 def downgrade() -> None:

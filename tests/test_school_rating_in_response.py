@@ -18,6 +18,7 @@ def test_build_school_response_payload_includes_rating_stats():
         register_no=None,
         pin_code=None,
         block_division=None,
+        city=None,
         district=None,
         state=None,
         country=None,

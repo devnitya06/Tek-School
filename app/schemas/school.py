@@ -7,6 +7,16 @@ from fastapi import Query
 from app.models.school import *
 
 
+def _normalize_hostel_selections(value):
+    if value is None:
+        return None
+    if HostelEnum.NOT_AVAILABLE in value and len(value) > 1:
+        raise ValueError("'Not Available' cannot be selected with other hostel options")
+    if HostelEnum.BOTH in value:
+        return [HostelEnum.BOYS, HostelEnum.GIRLS]
+    return list(dict.fromkeys(value))
+
+
 class SchoolProfileBase(BaseModel):
     # School Information
     school_name: str
@@ -20,6 +30,7 @@ class SchoolProfileBase(BaseModel):
     # Address Information
     pin_code: str
     block_division: Optional[str] = None
+    city: Optional[str] = None
     district: str
     state: str
     country: Optional[str] = "India"
@@ -37,21 +48,72 @@ class SchoolProfileBase(BaseModel):
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=5)
-    hostel: Optional[List[str]] = None
-    computer_lab: Optional[FacilityStatusEnum] = None
-    medical_faculties: Optional[str] = None
+    accreditation: Optional[List[AccreditationEnum]] = Field(
+        default=None, description="Selections: naac, nba, nirf, other."
+    )
+    recognition_approval: Optional[List[RecognitionApprovalEnum]] = Field(
+        default=None,
+        description="Selections: ugc, aicte, nmc, pci, bci, ncte, other. Add authorities to RecognitionApprovalEnum as needed.",
+    )
+    institution_type: Optional[InstitutionTypeEnum] = Field(
+        default=None,
+        description="One of: school, college, university, coaching_centre, training_center, creative_training_center.",
+    )
+    accommodation_type: Optional[List[AccommodationTypeEnum]] = Field(
+        default=None,
+        description="Selections: day_general, day_boarding, boarding_residential, day_cum_boarding, online, hybrid.",
+    )
+    hostel: Optional[List[HostelEnum]] = Field(
+        default=None,
+        description="Selections: boys, girls, both, not_available. both is stored and returned as [boys, girls]; not_available cannot be combined.",
+    )
+    computer_lab: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    medical_faculties: Optional[MedicalFacilitiesEnum] = Field(
+        default=None,
+        description="One of: first_aid, medical_room, on_campus_medical_staff, not_available.",
+    )
     job_assurance: Optional[str] = None
-    admission_process: Optional[str] = None
+    admission_process: Optional[List[AdmissionProcessEnum]] = Field(
+        default=None,
+        description="Selections: direct, entrance_exam, merit_mark_based, interview, other.",
+    )
     internship: Optional[YesNoNotApplicableEnum] = None
-    lms_facility: Optional[bool] = False
+    lms_facility: Optional[LmsFacilityEnum] = Field(
+        default=None,
+        description="One of: integrated, not_integrated, under_implementation.",
+    )
     alumni_network: Optional[bool] = False
     institution_class: Optional[str] = None
-    library: Optional[FacilityStatusEnum] = None
+    library: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[FacilityStatusEnum] = None
-    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
-    have_scholarship_opportunities: Optional[bool] = False
-    have_extra_curricular_activities: Optional[bool] = False
+    have_digital_board: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = Field(
+        default=None, description="One of: available, not_available, partial_coverage."
+    )
+    have_scholarship_opportunities: Optional[ScholarshipAvailabilityEnum] = Field(
+        default=None, description="One of: available, not_available, contact_institution."
+    )
+    have_extra_curricular_activities: Optional[FacilityAvailabilityEnum] = Field(
+        default=None, description="One of: available, not_available."
+    )
+    transportation_facility: Optional[TransportationFacilityEnum] = Field(
+        default=None,
+        description="One of: available, not_available, temporarily_unavailable.",
+    )
+    playground_facility: Optional[PlaygroundFacilityEnum] = Field(
+        default=None, description="One of: none, indoor, outdoor, both."
+    )
+
+    @field_validator("hostel")
+    @classmethod
+    def normalize_hostel(cls, value):
+        return _normalize_hostel_selections(value)
 
 
 class SchoolProfileCreate(SchoolProfileBase):
@@ -65,21 +127,33 @@ class SchoolProfileOut(SchoolProfileBase):
     school_medium: Optional[List[SchoolMedium]] = None
     school_board: Optional[str] = None
     institution_categories: Optional[List[str]] = None
-    hostel: Optional[List[str]] = None
-    computer_lab: Optional[FacilityStatusEnum] = None
-    medical_faculties: Optional[str] = None
+    hostel: Optional[List[HostelEnum]] = None
+    accreditation: Optional[List[AccreditationEnum]] = None
+    recognition_approval: Optional[List[RecognitionApprovalEnum]] = None
+    institution_type: Optional[InstitutionTypeEnum] = None
+    accommodation_type: Optional[List[AccommodationTypeEnum]] = None
+    computer_lab: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    medical_faculties: Optional[MedicalFacilitiesEnum] = None
     job_assurance: Optional[str] = None
-    admission_process: Optional[str] = None
+    admission_process: Optional[List[AdmissionProcessEnum]] = None
     internship: Optional[YesNoNotApplicableEnum] = None
-    lms_facility: Optional[bool] = None
+    lms_facility: Optional[LmsFacilityEnum] = None
     alumni_network: Optional[bool] = None
-    library: Optional[FacilityStatusEnum] = None
+    library: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[FacilityStatusEnum] = None
-    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
-    have_scholarship_opportunities: Optional[bool] = None
-    have_extra_curricular_activities: Optional[bool] = None
-    transportation_facility: Optional[YesNoNotApplicableEnum] = None
+    have_digital_board: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = Field(
+        default=None, description="One of: available, not_available, partial_coverage."
+    )
+    have_scholarship_opportunities: Optional[ScholarshipAvailabilityEnum] = None
+    have_extra_curricular_activities: Optional[FacilityAvailabilityEnum] = None
+    transportation_facility: Optional[TransportationFacilityEnum] = None
     playground_facility: Optional[PlaygroundFacilityEnum] = None
 
     model_config = {"from_attributes": True, "arbitrary_types_allowed": True}
@@ -157,6 +231,7 @@ class SchoolProfileUpdate(BaseModel):
     register_no: Optional[str] = None
     pin_code: Optional[str] = None
     block_division: Optional[str] = None
+    city: Optional[str] = None
     district: Optional[str] = None
     state: Optional[str] = None
     country: Optional[str] = None
@@ -169,21 +244,60 @@ class SchoolProfileUpdate(BaseModel):
     principal_email: Optional[EmailStr] = None
     principal_phone: Optional[str] = None
     institution_categories: Optional[List[str]] = Field(default=None, max_length=5)
-    hostel: Optional[List[str]] = None
-    computer_lab: Optional[FacilityStatusEnum] = None
-    medical_faculties: Optional[str] = None
+    accreditation: Optional[List[AccreditationEnum]] = Field(
+        default=None, description="Selections: naac, nba, nirf, other."
+    )
+    recognition_approval: Optional[List[RecognitionApprovalEnum]] = Field(
+        default=None,
+        description="Selections: ugc, aicte, nmc, pci, bci, ncte, other.",
+    )
+    institution_type: Optional[InstitutionTypeEnum] = Field(
+        default=None,
+        description="One of: school, college, university, coaching_centre, training_center, creative_training_center.",
+    )
+    accommodation_type: Optional[List[AccommodationTypeEnum]] = Field(
+        default=None,
+        description="Selections: day_general, day_boarding, boarding_residential, day_cum_boarding, online, hybrid.",
+    )
+    hostel: Optional[List[HostelEnum]] = Field(
+        default=None,
+        description="Selections: boys, girls, both, not_available. both is stored and returned as [boys, girls]; not_available cannot be combined.",
+    )
+    computer_lab: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    medical_faculties: Optional[MedicalFacilitiesEnum] = Field(
+        default=None,
+        description="One of: first_aid, medical_room, on_campus_medical_staff, not_available.",
+    )
     job_assurance: Optional[str] = None
-    admission_process: Optional[str] = None
+    admission_process: Optional[List[AdmissionProcessEnum]] = Field(
+        default=None,
+        description="Selections: direct, entrance_exam, merit_mark_based, interview, other.",
+    )
     internship: Optional[YesNoNotApplicableEnum] = None
-    lms_facility: Optional[bool] = None
+    lms_facility: Optional[LmsFacilityEnum] = Field(
+        default=None,
+        description="One of: integrated, not_integrated, under_implementation.",
+    )
     alumni_network: Optional[bool] = None
     institution_class: Optional[str] = None
-    library: Optional[FacilityStatusEnum] = None
+    library: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
     available_classes: Optional[List[str]] = None
-    have_digital_board: Optional[FacilityStatusEnum] = None
-    have_cctv_in_campus: Optional[CctvFacilityEnum] = None
-    have_scholarship_opportunities: Optional[bool] = None
-    have_extra_curricular_activities: Optional[bool] = None
+    have_digital_board: Optional[FacilityStatusEnum] = Field(
+        default=None, description="One of: yes, no, under_development."
+    )
+    have_cctv_in_campus: Optional[CctvFacilityEnum] = Field(
+        default=None, description="One of: available, not_available, partial_coverage."
+    )
+    have_scholarship_opportunities: Optional[ScholarshipAvailabilityEnum] = Field(
+        default=None, description="One of: available, not_available, contact_institution."
+    )
+    have_extra_curricular_activities: Optional[FacilityAvailabilityEnum] = Field(
+        default=None, description="One of: available, not_available."
+    )
     school_other_email: Optional[str] = None
     school_location: Optional[str] = None
     total_teachers: Optional[int] = None
@@ -191,14 +305,24 @@ class SchoolProfileUpdate(BaseModel):
     class_from: Optional[str] = None
     class_to: Optional[str] = None
     due_installment_type: Optional[List[str]] = None
-    transportation_facility: Optional[YesNoNotApplicableEnum] = None
-    playground_facility: Optional[PlaygroundFacilityEnum] = None
+    transportation_facility: Optional[TransportationFacilityEnum] = Field(
+        default=None,
+        description="One of: available, not_available, temporarily_unavailable.",
+    )
+    playground_facility: Optional[PlaygroundFacilityEnum] = Field(
+        default=None, description="One of: none, indoor, outdoor, both."
+    )
     teaching_method: Optional[List[str]] = None
     catalogue: Optional[List[str]] = None
     photo_gallery: Optional[List[str]] = None
     school_logo: Optional[str] = (
         None  # URL or base64 data URL (data:image/...;base64,...)
     )
+
+    @field_validator("hostel")
+    @classmethod
+    def normalize_hostel(cls, value):
+        return _normalize_hostel_selections(value)
 
 
 class PhotoGalleryBatch(BaseModel):
@@ -1439,8 +1563,8 @@ class AchievementListResponse(BaseModel):
 class AgentSchoolCreateRequest(BaseModel):
     """Agent creates a new institution for digital profile.
 
-    Both confirmation booleans MUST be True or the request is rejected.
-    All required school fields must be provided for a valid DRAFT registration.
+    Confirmation declarations are collected when the agent submits the
+    completed DRAFT for verification.
     """
     # ── Required institution fields ─────────────────────────────────────────
     school_name: str
@@ -1462,46 +1586,43 @@ class AgentSchoolCreateRequest(BaseModel):
     principal_phone: Optional[str] = None
     principal_email: Optional[str] = None
 
-    # ── Mandatory Agent Declarations ─────────────────────────────────────────
+class AgentSchoolSubmitRequest(BaseModel):
+    """Agent confirms declarations and submits a completed DRAFT (DRAFT → PENDING)."""
+    school_id: str
     confirms_educational_institution: bool = Field(
         ...,
         description=(
-            "I confirm that all details provided are related to a genuine "
-            "educational institution. Must be true."
+            "Confirm that the institution details are for a genuine educational "
+            "institution. Must be true to submit."
         ),
     )
     confirms_contact_information: bool = Field(
         ...,
         description=(
-            "I confirm that the contact information provided is true and accurate. "
-            "Must be true."
+            "Confirm that the institution contact information is accurate. "
+            "Must be true to submit."
         ),
     )
 
     @field_validator("confirms_educational_institution")
     @classmethod
-    def must_confirm_institution(cls, v):
-        if not v:
+    def must_confirm_institution(cls, value):
+        if not value:
             raise ValueError(
-                "You must confirm that all details are related to a genuine "
-                "educational institution (confirms_educational_institution must be true)."
+                "Confirm the institution details before submission "
+                "(confirms_educational_institution must be true)."
             )
-        return v
+        return value
 
     @field_validator("confirms_contact_information")
     @classmethod
-    def must_confirm_contact(cls, v):
-        if not v:
+    def must_confirm_contact(cls, value):
+        if not value:
             raise ValueError(
-                "You must confirm that the contact information provided is true and "
-                "accurate (confirms_contact_information must be true)."
+                "Confirm the contact information before submission "
+                "(confirms_contact_information must be true)."
             )
-        return v
-
-
-class AgentSchoolSubmitRequest(BaseModel):
-    """Agent submits institution for Admin verification (DRAFT → PENDING)."""
-    school_id: str
+        return value
 
 
 class AgentSchoolDetailResponse(BaseModel):
@@ -1511,6 +1632,7 @@ class AgentSchoolDetailResponse(BaseModel):
     school_email: str
     school_phone: Optional[str] = None
     district: Optional[str] = None
+    city: Optional[str] = None
     state: Optional[str] = None
     pin_code: Optional[str] = None
     country: Optional[str] = None
@@ -1545,6 +1667,7 @@ class AgentSchoolListItem(BaseModel):
     school_name: str
     school_email: str
     district: Optional[str] = None
+    city: Optional[str] = None
     state: Optional[str] = None
     institution_verification_status: Optional[str] = None
     institution_submitted_at: Optional[datetime] = None
@@ -1575,6 +1698,7 @@ class InstitutionVerificationListItem(BaseModel):
     school_email: str
     school_phone: Optional[str] = None
     district: Optional[str] = None
+    city: Optional[str] = None
     state: Optional[str] = None
     institution_verification_status: Optional[str] = None
     institution_submitted_at: Optional[datetime] = None

@@ -153,7 +153,6 @@ def _serialize(user: User, profile: AgentProfile) -> dict:
         "district": profile.district,
         "state": profile.state,
         "landmark": profile.landmark,
-        "can_onboard_school": profile.can_onboard_school,
         "can_enroll_student": profile.can_enroll_student,
         "can_collect_fees": profile.can_collect_fees,
         "can_do_followup": profile.can_do_followup,
@@ -2071,6 +2070,7 @@ def _serialize_school_for_agent(school: School) -> dict:
         "school_name": school.school_name,
         "school_email": school.school_email,
         "school_phone": school.school_phone,
+        "city": school.city,
         "district": school.district,
         "state": school.state,
         "pin_code": school.pin_code,
@@ -2093,6 +2093,15 @@ def _serialize_school_for_agent(school: School) -> dict:
     }
 
 
+def _apply_institution_submission_confirmations(
+    school: School, data: AgentSchoolSubmitRequest, submitted_at: datetime
+) -> None:
+    school.confirms_educational_institution = data.confirms_educational_institution
+    school.confirms_contact_information = data.confirms_contact_information
+    school.confirmation_educational_at = submitted_at
+    school.confirmation_contact_at = submitted_at
+
+
 # ---------------------------------------------------------------------------
 # Phase 4: AGENT — Create Institution
 # ---------------------------------------------------------------------------
@@ -2103,8 +2112,9 @@ def _serialize_school_for_agent(school: School) -> dict:
     summary="Phase 4 — Agent creates an institution for digital profile",
     description=(
         "Creates a school record owned by the authenticated Agent with "
-        "institution_verification_status = DRAFT. Both confirmation booleans "
-        "must be True. Requires idp_is_enabled."
+        "institution_verification_status = DRAFT. Confirmation declarations "
+        "are collected when the completed institution is submitted for "
+        "verification. Requires idp_is_enabled."
     ),
 )
 def agent_create_institution(
@@ -2113,11 +2123,6 @@ def agent_create_institution(
     current_user: User = Depends(require_roles(UserRole.AGENT)),
 ):
     agent_profile, config = _resolve_agent_for_phase4(current_user, db)
-    if not agent_profile.can_onboard_school:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="School onboarding permission is disabled for your account.",
-        )
     if not config.idp_is_enabled:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2131,15 +2136,6 @@ def agent_create_institution(
             status_code=status.HTTP_409_CONFLICT,
             detail="A user account with this email already exists.",
         )
-
-    # ── Validate both confirmations (Pydantic validators already ran, but re-check defensively)
-    if not data.confirms_educational_institution or not data.confirms_contact_information:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Both confirms_educational_institution and confirms_contact_information must be true.",
-        )
-
-    now = datetime.now(timezone.utc)
 
     try:
         # Create a school-role user with a system-generated password
@@ -2186,10 +2182,8 @@ def agent_create_institution(
             created_by_name=creator_full_name,
             created_by_agent_profile_id=agent_profile.id,
             # Confirmations
-            confirms_educational_institution=True,
-            confirms_contact_information=True,
-            confirmation_educational_at=now,
-            confirmation_contact_at=now,
+            confirms_educational_institution=False,
+            confirms_contact_information=False,
             # Verification lifecycle — starts as DRAFT
             institution_verification_status=_IVS_DRAFT,
         )
@@ -2277,9 +2271,9 @@ def agent_get_institution(
     "/institutions/submit",
     summary="Phase 4 — Agent submits institution for Admin verification",
     description=(
-        "Moves institution from DRAFT to PENDING. Both confirmations must be "
-        "True. Once submitted the Agent cannot edit the school until it is "
-        "reviewed. Duplicate submission is prevented."
+        "Records both agent confirmations and moves institution from DRAFT "
+        "to PENDING. Once submitted the Agent cannot edit the school until it "
+        "is reviewed. Duplicate submission is prevented."
     ),
 )
 def agent_submit_institution(
@@ -2288,11 +2282,6 @@ def agent_submit_institution(
     current_user: User = Depends(require_roles(UserRole.AGENT)),
 ):
     agent_profile, config = _resolve_agent_for_phase4(current_user, db)
-    if not agent_profile.can_onboard_school:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="School onboarding permission is disabled for your account.",
-        )
     school = _get_agent_school_or_403(data.school_id, agent_profile, db)
     if not config.idp_is_enabled:
         raise HTTPException(
@@ -2310,17 +2299,8 @@ def agent_submit_institution(
             ),
         )
 
-    # Validate confirmations (must be persisted True before submit)
-    if not school.confirms_educational_institution or not school.confirms_contact_information:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Both confirms_educational_institution and confirms_contact_information "
-                "must be acknowledged (true) before submission."
-            ),
-        )
-
     now = datetime.now(timezone.utc)
+    _apply_institution_submission_confirmations(school, data, now)
     school.institution_verification_status = _IVS_PENDING
     school.institution_submitted_at = now
     school.institution_submitted_by_agent_id = agent_profile.id

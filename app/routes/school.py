@@ -168,11 +168,6 @@ def _resolve_agent_for_school_endpoint(current_user: User, db: Session):
     ).first()
     if not agent_profile:
         raise HTTPException(status_code=404, detail="Agent profile not found.")
-    if not agent_profile.can_onboard_school:
-        raise HTTPException(
-            status_code=403,
-            detail="School onboarding permission is disabled for your account.",
-        )
     config = db.query(AgentPaymentConfig).filter(
         AgentPaymentConfig.agent_profile_id == agent_profile.id
     ).first()
@@ -315,6 +310,169 @@ def claim_school(
 
 
 
+def _get_school_rating_payload(db: Session, school_id: str) -> dict:
+    rating_stats = (
+        db.query(
+            func.count(SchoolRating.id).label("rating_count"),
+            func.round(func.avg(SchoolRating.rating), 2).label("average_rating"),
+            func.round(func.avg(SchoolRating.infrastructure), 2).label("infrastructure"),
+            func.round(func.avg(SchoolRating.value_for_fee), 2).label("value_for_fee"),
+            func.round(func.avg(SchoolRating.teaching_quality), 2).label("teaching_quality"),
+            func.round(func.avg(SchoolRating.academic_results), 2).label("academic_results"),
+            func.round(func.avg(SchoolRating.placement_support), 2).label("placement_support"),
+            func.round(func.avg(SchoolRating.industrial_training), 2).label("industrial_training"),
+            func.round(func.avg(SchoolRating.extracurricular), 2).label("extracurricular"),
+            func.round(func.avg(SchoolRating.student_alumni), 2).label("student_alumni"),
+            func.round(func.avg(SchoolRating.hostel_and_foods), 2).label("hostel_and_foods"),
+            func.round(func.avg(SchoolRating.transportation), 2).label("transportation"),
+            func.round(func.avg(SchoolRating.safety_and_discipline), 2).label("safety_and_discipline"),
+            func.round(func.avg(SchoolRating.management), 2).label("management"),
+            func.count(SchoolRating.infrastructure).label("cnt_infrastructure"),
+            func.count(SchoolRating.value_for_fee).label("cnt_value_for_fee"),
+            func.count(SchoolRating.teaching_quality).label("cnt_teaching_quality"),
+            func.count(SchoolRating.academic_results).label("cnt_academic_results"),
+            func.count(SchoolRating.placement_support).label("cnt_placement_support"),
+            func.count(SchoolRating.industrial_training).label("cnt_industrial_training"),
+            func.count(SchoolRating.extracurricular).label("cnt_extracurricular"),
+            func.count(SchoolRating.student_alumni).label("cnt_student_alumni"),
+            func.count(SchoolRating.hostel_and_foods).label("cnt_hostel_and_foods"),
+            func.count(SchoolRating.transportation).label("cnt_transportation"),
+            func.count(SchoolRating.safety_and_discipline).label("cnt_safety_and_discipline"),
+            func.count(SchoolRating.management).label("cnt_management"),
+        )
+        .filter(SchoolRating.school_id == school_id)
+        .first()
+    )
+
+    def as_float(value):
+        return float(value) if value is not None else None
+
+    categories = (
+        "infrastructure",
+        "value_for_fee",
+        "teaching_quality",
+        "academic_results",
+        "placement_support",
+        "industrial_training",
+        "extracurricular",
+        "student_alumni",
+        "hostel_and_foods",
+        "transportation",
+        "safety_and_discipline",
+        "management",
+    )
+    return {
+        "rating_count": int(rating_stats.rating_count or 0) if rating_stats else 0,
+        "average_rating": as_float(rating_stats.average_rating) if rating_stats else None,
+        "category_averages": {
+            category: as_float(getattr(rating_stats, category)) if rating_stats else None
+            for category in categories
+        },
+        "category_rating_counts": {
+            category: int(getattr(rating_stats, f"cnt_{category}") or 0)
+            if rating_stats else 0
+            for category in categories
+        },
+    }
+
+
+def _build_school_response_payload(
+    school: School,
+    is_authenticated: bool,
+    rating_count: int = 0,
+    average_rating: Optional[float] = None,
+    category_averages: Optional[dict] = None,
+    category_rating_counts: Optional[dict] = None,
+) -> dict:
+    def enum_value(value):
+        return value.value if hasattr(value, "value") else value
+
+    data = {
+        "id": school.id,
+        "user_id": school.user_id,
+        "school_name": school.school_name,
+        "school_type": enum_value(school.school_type),
+        "school_medium": [enum_value(medium) for medium in school.school_medium]
+        if school.school_medium else [],
+        "school_board": enum_value(school.school_board),
+        "school_logo": school.profile_pic_url,
+        "school_banner": school.banner_pic_url,
+        "establishment_year": school.establishment_year,
+        "establishment_month": school.establishment_month,
+        "register_no": school.register_no,
+        "pin_code": school.pin_code,
+        "block_division": school.block_division,
+        "city": school.city,
+        "district": school.district,
+        "state": school.state,
+        "country": school.country,
+        "school_email": school.school_email if is_authenticated else _mask_public_email(school.school_email),
+        "school_phone": school.school_phone if is_authenticated else _mask_public_phone(school.school_phone),
+        "school_alt_phone": school.school_alt_phone if is_authenticated else _mask_public_phone(school.school_alt_phone),
+        "school_website": school.school_website,
+        "school_other_email": school.school_other_email,
+        "school_location": school.school_location,
+        "principal_name": school.principal_name,
+        "principal_designation": school.principal_designation,
+        "principal_email": school.principal_email if is_authenticated else _mask_public_email(school.principal_email),
+        "principal_phone": school.principal_phone if is_authenticated else _mask_public_phone(school.principal_phone),
+        "is_active": school.is_active,
+        "is_verified": school.is_verified,
+        "account_type": enum_value(school.account_type),
+        "is_business_approved": school.is_business_approved,
+        "is_promotion_pending": school.is_promotion_pending,
+        "created_at": school.created_at,
+        "institution_categories": school.institution_categories,
+        "accreditation": getattr(school, "accreditation", None),
+        "recognition_approval": getattr(school, "recognition_approval", None),
+        "institution_type": getattr(school, "institution_type", None),
+        "accommodation_type": getattr(school, "accommodation_type", None),
+        "hostel": school.hostel,
+        "computer_lab": enum_value(school.computer_lab),
+        "medical_faculties": enum_value(school.medical_faculties),
+        "job_assurance": school.job_assurance,
+        "admission_process": school.admission_process,
+        "internship": enum_value(school.internship),
+        "lms_facility": enum_value(school.lms_facility),
+        "alumni_network": school.alumni_network,
+        "institution_class": school.institution_class,
+        "library": enum_value(school.library),
+        "available_classes": school.available_classes,
+        "have_digital_board": enum_value(school.have_digital_board),
+        "have_cctv_in_campus": enum_value(school.have_cctv_in_campus),
+        "have_scholarship_opportunities": enum_value(school.have_scholarship_opportunities),
+        "have_extra_curricular_activities": enum_value(school.have_extra_curricular_activities),
+        "total_teachers": school.total_teachers,
+        "total_students": school.total_students,
+        "class_from": school.class_from,
+        "class_to": school.class_to,
+        "due_installment_type": school.due_installment_type,
+        "transportation_facility": enum_value(school.transportation_facility),
+        "playground_facility": enum_value(school.playground_facility),
+        "teaching_method": school.teaching_method,
+        "default_settlement_channel": school.default_settlement_channel,
+        "created_by_admin": school.created_by_admin,
+        "claim_status": getattr(school, "claim_status", "unclaimed"),
+        "claim_completed_at": getattr(school, "claim_completed_at", None),
+        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if is_authenticated else None,
+        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
+        "rating_count": rating_count,
+        "average_rating": average_rating,
+        "category_averages": category_averages or {},
+        "category_rating_counts": category_rating_counts or {},
+    }
+    if is_authenticated:
+        data.update({
+            "followup_enabled": getattr(school, "followup_enabled", None),
+            "followup_days": getattr(school, "followup_days", None),
+            "followup_status": getattr(school, "followup_status", None),
+            "followup_note": getattr(school, "followup_note", None),
+            "followup_last_sent_at": getattr(school, "followup_last_sent_at", None),
+            "followup_completed_at": getattr(school, "followup_completed_at", None),
+        })
+    return data
+
+
 @router.get(
     "/school",
     summary="Get school profile (public or authenticated)",
@@ -408,97 +566,14 @@ def get_school_self(
         "management":            int(rating_stats.cnt_management)            if rating_stats else 0,
     }
 
-    account_type_val = None
-    if school.account_type:
-        account_type_val = school.account_type.value if hasattr(school.account_type, "value") else str(school.account_type)
-
-    data = {
-        "id": school.id,
-        "user_id": school.user_id,
-        "school_name": school.school_name,
-        "school_type": (school.school_type.value if school.school_type else None),
-        "school_medium": (
-            [medium.value for medium in school.school_medium]
-            if school.school_medium
-            else []
-        ),
-        "school_board": (school.school_board.value if school.school_board else None),
-        "school_logo": school.profile_pic_url,
-        "school_banner": school.banner_pic_url,
-        "establishment_year": school.establishment_year,
-        "establishment_month": school.establishment_month,
-        "register_no": school.register_no,
-        "pin_code": school.pin_code,
-        "block_division": school.block_division,
-        "district": school.district,
-        "state": school.state,
-        "country": school.country,
-        "school_email": school.school_email if is_authenticated else _mask_public_email(school.school_email),
-        "school_phone": school.school_phone if is_authenticated else _mask_public_phone(school.school_phone),
-        "school_alt_phone": school.school_alt_phone if is_authenticated else _mask_public_phone(school.school_alt_phone),
-        "school_website": school.school_website,
-        "school_other_email": school.school_other_email,
-        "school_location": school.school_location,
-        "principal_name": school.principal_name,
-        "principal_designation": school.principal_designation,
-        "principal_email": school.principal_email if is_authenticated else _mask_public_email(school.principal_email),
-        "principal_phone": school.principal_phone if is_authenticated else _mask_public_phone(school.principal_phone),
-        "is_active": school.is_active,
-        "is_verified": school.is_verified,
-        "account_type": account_type_val,
-        "is_business_approved": school.is_business_approved,
-        "is_promotion_pending": school.is_promotion_pending,
-        "created_at": school.created_at,
-        "institution_categories": school.institution_categories,
-        "hostel": school.hostel,
-        "computer_lab": school.computer_lab.value if hasattr(school.computer_lab, "value") else school.computer_lab,
-        "medical_faculties": school.medical_faculties,
-        "job_assurance": school.job_assurance,
-        "admission_process": school.admission_process,
-        "internship": school.internship.value if hasattr(school.internship, "value") else school.internship,
-        "lms_facility": school.lms_facility,
-        "alumni_network": school.alumni_network,
-        "institution_class": school.institution_class,
-        "library": school.library.value if hasattr(school.library, "value") else school.library,
-        "available_classes": school.available_classes,
-        "have_digital_board": school.have_digital_board.value if hasattr(school.have_digital_board, "value") else school.have_digital_board,
-        "have_cctv_in_campus": school.have_cctv_in_campus.value if hasattr(school.have_cctv_in_campus, "value") else school.have_cctv_in_campus,
-        "have_scholarship_opportunities": school.have_scholarship_opportunities,
-        "have_extra_curricular_activities": school.have_extra_curricular_activities,
-        "total_teachers": school.total_teachers,
-        "total_students": school.total_students,
-        "class_from": school.class_from,
-        "class_to": school.class_to,
-        "due_installment_type": school.due_installment_type,
-        "transportation_facility": school.transportation_facility.value if hasattr(school.transportation_facility, "value") else school.transportation_facility,
-        "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
-        "teaching_method": school.teaching_method,
-        "default_settlement_channel": school.default_settlement_channel,
-        "created_by_admin": school.created_by_admin,
-        "claim_status": getattr(school, "claim_status", "unclaimed"),
-        "claim_completed_at": getattr(school, "claim_completed_at", None),
-        # QR tokens are internal — only expose to authenticated users
-        "attendance_qr_mark_in_token": school.attendance_qr_mark_in_token if is_authenticated else None,
-        "attendance_qr_mark_out_token": school.attendance_qr_mark_out_token if is_authenticated else None,
-        "rating_count": rating_count,
-        "average_rating": average_rating,
-        "category_averages": category_averages,
-        "category_rating_counts": category_rating_counts,
-    }
-
-    # Extra fields only available to authenticated users (internal/admin data)
-    if is_authenticated:
-        data.update({
-            "created_by_admin": school.created_by_admin,
-            "followup_enabled": school.followup_enabled,
-            "followup_days": school.followup_days,
-            "followup_status": school.followup_status,
-            "followup_note": school.followup_note,
-            "followup_last_sent_at": school.followup_last_sent_at,
-            "followup_completed_at": school.followup_completed_at,
-        })
-
-    return data
+    return _build_school_response_payload(
+        school,
+        is_authenticated,
+        rating_count,
+        average_rating,
+        category_averages,
+        category_rating_counts,
+    )
 
 
 @router.get("/institution-class-summary")
@@ -628,6 +703,7 @@ def get_similar_schools(
 @router.patch("/school-profile")
 async def update_school_profile(
     request: Request,
+    data: SchoolProfileUpdate,
     school_id: Optional[str] = Query(
         None, description="Required when accessing as admin or agent"
     ),
@@ -646,12 +722,7 @@ async def update_school_profile(
     if current_user.role == UserRole.AGENT:
         _assert_school_editable_by_agent(school)
 
-    # Parse JSON body
-    try:
-        body = await request.json()
-        data = SchoolProfileUpdate(**body)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+    body = await request.json()
 
     # ── SCHOOL ROLE: Selective OTP gate ───────────────────────────────────────
     # OTP is required ONLY when the request contains at least one sensitive field.
@@ -750,6 +821,8 @@ async def update_school_profile(
         school.pin_code = data.pin_code
     if data.block_division is not None:
         school.block_division = data.block_division
+    if data.city is not None:
+        school.city = data.city
     if data.district is not None:
         school.district = data.district
     if data.state is not None:
@@ -795,36 +868,44 @@ async def update_school_profile(
         school.school_location = data.school_location
     if data.institution_categories is not None:
         school.institution_categories = data.institution_categories
+    if data.accreditation is not None:
+        school.accreditation = [value.value for value in data.accreditation]
+    if data.recognition_approval is not None:
+        school.recognition_approval = [value.value for value in data.recognition_approval]
+    if data.institution_type is not None:
+        school.institution_type = data.institution_type.value
+    if data.accommodation_type is not None:
+        school.accommodation_type = [value.value for value in data.accommodation_type]
     if data.hostel is not None:
-        school.hostel = data.hostel
+        school.hostel = [value.value for value in data.hostel]
     if data.computer_lab is not None:
-        school.computer_lab = data.computer_lab
+        school.computer_lab = data.computer_lab.value
     if data.medical_faculties is not None:
-        school.medical_faculties = data.medical_faculties
+        school.medical_faculties = data.medical_faculties.value
     if data.job_assurance is not None:
         school.job_assurance = data.job_assurance
     if data.admission_process is not None:
-        school.admission_process = data.admission_process
+        school.admission_process = [value.value for value in data.admission_process]
     if data.internship is not None:
         school.internship = data.internship
     if data.lms_facility is not None:
-        school.lms_facility = data.lms_facility
+        school.lms_facility = data.lms_facility.value
     if data.alumni_network is not None:
         school.alumni_network = data.alumni_network
     if data.institution_class is not None:
         school.institution_class = data.institution_class
     if data.library is not None:
-        school.library = data.library
+        school.library = data.library.value
     if data.available_classes is not None:
         school.available_classes = data.available_classes
     if data.have_digital_board is not None:
-        school.have_digital_board = data.have_digital_board
+        school.have_digital_board = data.have_digital_board.value
     if data.have_cctv_in_campus is not None:
-        school.have_cctv_in_campus = data.have_cctv_in_campus
+        school.have_cctv_in_campus = data.have_cctv_in_campus.value
     if data.have_scholarship_opportunities is not None:
-        school.have_scholarship_opportunities = data.have_scholarship_opportunities
+        school.have_scholarship_opportunities = data.have_scholarship_opportunities.value
     if data.have_extra_curricular_activities is not None:
-        school.have_extra_curricular_activities = data.have_extra_curricular_activities
+        school.have_extra_curricular_activities = data.have_extra_curricular_activities.value
     if data.total_teachers is not None:
         school.total_teachers = data.total_teachers
     if data.total_students is not None:
@@ -836,9 +917,9 @@ async def update_school_profile(
     if data.due_installment_type is not None:
         school.due_installment_type = data.due_installment_type
     if data.transportation_facility is not None:
-        school.transportation_facility = data.transportation_facility
+        school.transportation_facility = data.transportation_facility.value
     if data.playground_facility is not None:
-        school.playground_facility = data.playground_facility
+        school.playground_facility = data.playground_facility.value
     if data.teaching_method is not None:
         school.teaching_method = data.teaching_method
     if data.catalogue is not None:
@@ -880,68 +961,11 @@ async def update_school_profile(
 
     return {
         "detail": "School profile updated successfully",
-        "profile": {
-            "id": school.id,
-            "user_id": school.user_id,
-            "school_name": school.school_name,
-            "school_type": (school.school_type.value if school.school_type else None),
-            "school_medium": (
-                [medium.value for medium in school.school_medium]
-                if school.school_medium
-                else []
-            ),
-            "school_board": (
-                school.school_board.value if school.school_board else None
-            ),
-            "school_logo": school.profile_pic_url,
-            "school_banner": school.banner_pic_url,
-            "establishment_year": school.establishment_year,
-            "establishment_month": school.establishment_month,
-            "register_no": school.register_no,
-            "pin_code": school.pin_code,
-            "block_division": school.block_division,
-            "district": school.district,
-            "state": school.state,
-            "country": school.country,
-            "school_email": school.school_email,
-            "school_phone": school.school_phone,
-            "school_alt_phone": school.school_alt_phone,
-            "school_website": school.school_website,
-            "principal_name": school.principal_name,
-            "principal_designation": school.principal_designation,
-            "principal_email": school.principal_email,
-            "principal_phone": school.principal_phone,
-            "account_type": school.account_type.value if school.account_type else None,
-            "is_business_approved": school.is_business_approved,
-            "is_promotion_pending": school.is_promotion_pending,
-            "created_at": school.created_at,
-            "school_other_email": school.school_other_email,
-            "school_location": school.school_location,
-            "institution_categories": school.institution_categories,
-            "hostel": school.hostel,
-            "computer_lab": school.computer_lab.value if hasattr(school.computer_lab, "value") else school.computer_lab,
-            "medical_faculties": school.medical_faculties,
-            "job_assurance": school.job_assurance,
-            "admission_process": school.admission_process,
-            "internship": school.internship.value if hasattr(school.internship, "value") else school.internship,
-            "lms_facility": school.lms_facility,
-            "alumni_network": school.alumni_network,
-            "institution_class": school.institution_class,
-            "library": school.library.value if hasattr(school.library, "value") else school.library,
-            "available_classes": school.available_classes,
-            "have_digital_board": school.have_digital_board.value if hasattr(school.have_digital_board, "value") else school.have_digital_board,
-            "have_cctv_in_campus": school.have_cctv_in_campus.value if hasattr(school.have_cctv_in_campus, "value") else school.have_cctv_in_campus,
-            "have_scholarship_opportunities": school.have_scholarship_opportunities,
-            "have_extra_curricular_activities": school.have_extra_curricular_activities,
-            "total_teachers": school.total_teachers,
-            "total_students": school.total_students,
-            "class_from": school.class_from,
-            "class_to": school.class_to,
-            "due_installment_type": school.due_installment_type,
-            "transportation_facility": school.transportation_facility.value if hasattr(school.transportation_facility, "value") else school.transportation_facility,
-            "playground_facility": school.playground_facility.value if hasattr(school.playground_facility, "value") else school.playground_facility,
-            "teaching_method": school.teaching_method,
-        },
+        "profile": _build_school_response_payload(
+            school,
+            is_authenticated=True,
+            **_get_school_rating_payload(db, school.id),
+        ),
     }
 
 
@@ -1082,6 +1106,8 @@ async def verify_profile_update(
         school.pin_code = data.pin_code
     if data.block_division is not None:
         school.block_division = data.block_division
+    if data.city is not None:
+        school.city = data.city
     if data.district is not None:
         school.district = data.district
     if data.state is not None:
@@ -1129,36 +1155,44 @@ async def verify_profile_update(
         school.school_location = data.school_location
     if data.institution_categories is not None:
         school.institution_categories = data.institution_categories
+    if data.accreditation is not None:
+        school.accreditation = [value.value for value in data.accreditation]
+    if data.recognition_approval is not None:
+        school.recognition_approval = [value.value for value in data.recognition_approval]
+    if data.institution_type is not None:
+        school.institution_type = data.institution_type.value
+    if data.accommodation_type is not None:
+        school.accommodation_type = [value.value for value in data.accommodation_type]
     if data.hostel is not None:
-        school.hostel = data.hostel
+        school.hostel = [value.value for value in data.hostel]
     if data.computer_lab is not None:
-        school.computer_lab = data.computer_lab
+        school.computer_lab = data.computer_lab.value
     if data.medical_faculties is not None:
-        school.medical_faculties = data.medical_faculties
+        school.medical_faculties = data.medical_faculties.value
     if data.job_assurance is not None:
         school.job_assurance = data.job_assurance
     if data.admission_process is not None:
-        school.admission_process = data.admission_process
+        school.admission_process = [value.value for value in data.admission_process]
     if data.internship is not None:
         school.internship = data.internship
     if data.lms_facility is not None:
-        school.lms_facility = data.lms_facility
+        school.lms_facility = data.lms_facility.value
     if data.alumni_network is not None:
         school.alumni_network = data.alumni_network
     if data.institution_class is not None:
         school.institution_class = data.institution_class
     if data.library is not None:
-        school.library = data.library
+        school.library = data.library.value
     if data.available_classes is not None:
         school.available_classes = data.available_classes
     if data.have_digital_board is not None:
-        school.have_digital_board = data.have_digital_board
+        school.have_digital_board = data.have_digital_board.value
     if data.have_cctv_in_campus is not None:
-        school.have_cctv_in_campus = data.have_cctv_in_campus
+        school.have_cctv_in_campus = data.have_cctv_in_campus.value
     if data.have_scholarship_opportunities is not None:
-        school.have_scholarship_opportunities = data.have_scholarship_opportunities
+        school.have_scholarship_opportunities = data.have_scholarship_opportunities.value
     if data.have_extra_curricular_activities is not None:
-        school.have_extra_curricular_activities = data.have_extra_curricular_activities
+        school.have_extra_curricular_activities = data.have_extra_curricular_activities.value
     if data.total_teachers is not None:
         school.total_teachers = data.total_teachers
     if data.total_students is not None:
@@ -1170,9 +1204,9 @@ async def verify_profile_update(
     if data.due_installment_type is not None:
         school.due_installment_type = data.due_installment_type
     if data.transportation_facility is not None:
-        school.transportation_facility = data.transportation_facility
+        school.transportation_facility = data.transportation_facility.value
     if data.playground_facility is not None:
-        school.playground_facility = data.playground_facility
+        school.playground_facility = data.playground_facility.value
     if data.teaching_method is not None:
         school.teaching_method = data.teaching_method
     if data.catalogue is not None:
@@ -1210,8 +1244,11 @@ async def verify_profile_update(
 
     return {
         "detail": "School profile updated successfully.",
-        "school_email": school.school_email,
-        "school_name": school.school_name,
+        "profile": _build_school_response_payload(
+            school,
+            is_authenticated=True,
+            **_get_school_rating_payload(db, school.id),
+        ),
     }
 
 
@@ -1659,6 +1696,7 @@ async def get_school_profile(
         "register_no": school.register_no,
         "pin_code": school.pin_code,
         "block_division": school.block_division,
+        "city": school.city,
         "district": school.district,
         "state": school.state,
         "country": school.country,
@@ -1677,6 +1715,10 @@ async def get_school_profile(
         "school_other_email": school.school_other_email,
         "school_location": school.school_location,
         "institution_categories": school.institution_categories,
+        "accreditation": school.accreditation,
+        "recognition_approval": school.recognition_approval,
+        "institution_type": school.institution_type,
+        "accommodation_type": school.accommodation_type,
         "hostel": school.hostel,
         "computer_lab": school.computer_lab.value if hasattr(school.computer_lab, "value") else school.computer_lab,
         "medical_faculties": school.medical_faculties,

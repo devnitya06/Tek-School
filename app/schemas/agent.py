@@ -88,7 +88,6 @@ class AgentProfileUpdate(BaseModel):
 # ------------------------------------------------------------------
 
 class AgentPermissionUpdate(BaseModel):
-    can_onboard_school: Optional[bool] = None
     can_enroll_student: Optional[bool] = None
     can_collect_fees: Optional[bool] = None
     can_do_followup: Optional[bool] = None
@@ -143,7 +142,6 @@ class AgentProfileResponse(BaseModel):
     landmark: Optional[str] = None
 
     # Permission flags
-    can_onboard_school: bool
     can_enroll_student: bool
     can_collect_fees: bool
     can_do_followup: bool

@@ -190,6 +190,37 @@ def ensure_agent_schema():
         ]:
             conn.execute(text(ddl))
 
+        gender_labels = set(
+            conn.execute(
+                text(
+                    "SELECT e.enumlabel "
+                    "FROM pg_type t "
+                    "JOIN pg_enum e ON e.enumtypid = t.oid "
+                    "WHERE t.typname = 'agent_gender_enum' "
+                    "AND t.typnamespace = current_schema()::regnamespace"
+                )
+            ).scalars()
+        )
+        for legacy_value, canonical_value in (
+            ("MALE", "male"),
+            ("FEMALE", "female"),
+            ("OTHER", "other"),
+        ):
+            if legacy_value in gender_labels:
+                if canonical_value in gender_labels:
+                    raise RuntimeError(
+                        "agent_gender_enum contains both uppercase and lowercase "
+                        f"labels for {canonical_value!r}; normalize the enum manually."
+                    )
+                conn.execute(
+                    text(
+                        "ALTER TYPE agent_gender_enum "
+                        f"RENAME VALUE '{legacy_value}' TO '{canonical_value}'"
+                    )
+                )
+                gender_labels.remove(legacy_value)
+                gender_labels.add(canonical_value)
+
     inspector = inspect_engine()
 
     # 2a. Table doesn't exist yet - create it from the model
@@ -259,7 +290,8 @@ def ensure_agent_phase2_schema():
     Idempotent — safe to call on every startup.
     1. Adds wants_initial_bonus to agent_profiles if missing.
     2. Creates agent_payment_configs table if missing.
-    3. Creates agent_earnings table if missing.
+    3. Adds monthly-stipend configuration columns if missing.
+    4. Creates agent_earnings table if missing.
     """
     # 1. Add wants_initial_bonus to agent_profiles
     if inspect_engine().has_table("agent_profiles"):
@@ -275,10 +307,26 @@ def ensure_agent_phase2_schema():
     # 2. Create agent_payment_configs
     AgentPaymentConfig.__table__.create(bind=engine, checkfirst=True)
 
-    # 3. Create agent_earnings
+    payment_config_columns = (
+        ("stipend_monthly_is_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("stipend_monthly_rate", "NUMERIC(12, 2) NOT NULL DEFAULT 0.00"),
+        ("stipend_effective_from", "DATE"),
+        ("effective_from", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()"),
+    )
+    with engine.begin() as conn:
+        for column_name, column_definition in payment_config_columns:
+            if not column_exists("agent_payment_configs", column_name):
+                conn.execute(
+                    text(
+                        "ALTER TABLE agent_payment_configs "
+                        f'ADD COLUMN "{column_name}" {column_definition}'
+                    )
+                )
+
+    # 4. Create agent_earnings
     AgentEarning.__table__.create(bind=engine, checkfirst=True)
 
-    # 4. Create monthly stipend rate snapshots
+    # 5. Create monthly stipend rate snapshots
     AgentStipendRate.__table__.create(bind=engine, checkfirst=True)
 
 

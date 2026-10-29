@@ -5,8 +5,8 @@ Two-step creation flow:
   Step 2 (Admin fills full profile): all remaining profile fields
 
 Agent accounts live in the existing `users` table with role = 'agent'.
-Six activity permissions (ADMIN/SUPERADMIN only):
-  can_onboard_school, can_enroll_student, can_collect_fees,
+Five activity permissions (ADMIN/SUPERADMIN only):
+  can_enroll_student, can_collect_fees,
   can_do_followup, can_verify_documents, can_coordinate_events
 """
 
@@ -109,8 +109,7 @@ class AgentProfile(Base):
     state     = Column(String(100), nullable=True)
     landmark  = Column(String(255), nullable=True)
 
-    # ── Six activity permission flags (ADMIN/SUPERADMIN only) ─────────────────
-    can_onboard_school    = Column(Boolean, nullable=False, default=False)
+    # ── Activity permission flags (ADMIN/SUPERADMIN only) ─────────────────────
     can_enroll_student    = Column(Boolean, nullable=False, default=False)
     can_collect_fees      = Column(Boolean, nullable=False, default=False)
     can_do_followup       = Column(Boolean, nullable=False, default=False)

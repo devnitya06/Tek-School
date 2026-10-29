@@ -25,6 +25,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Startup schema synchronization may have created this table before
+    # Alembic recorded the corresponding revision.
+    if sa.inspect(op.get_bind()).has_table("agent_profiles"):
+        return
+
     # The existing project stores users.role as VARCHAR via TypeDecorator.
     # Adding 'agent' to the Python UserRole enum is sufficient - no ALTER TYPE.
 

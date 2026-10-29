@@ -22,6 +22,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+    if all(
+        inspector.has_table(table)
+        for table in (
+            "agent_payment_accounts",
+            "agent_withdrawals",
+            "agent_withdrawal_history",
+        )
+    ):
+        return
+
     # 1. agent_payment_accounts
     op.create_table(
         "agent_payment_accounts",

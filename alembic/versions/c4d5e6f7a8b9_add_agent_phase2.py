@@ -22,6 +22,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+    if (
+        inspector.has_table("agent_payment_configs")
+        and inspector.has_table("agent_earnings")
+        and any(
+            column["name"] == "wants_initial_bonus"
+            for column in inspector.get_columns("agent_profiles")
+        )
+    ):
+        return
+
     # 1. Add wants_initial_bonus to agent_profiles
     op.add_column(
         'agent_profiles',

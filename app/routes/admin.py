@@ -141,6 +141,23 @@ def normalize_array_query_values(values: Optional[List[str]]) -> List[str]:
     return normalized
 
 
+def normalize_school_facility_filter(
+    field_name: str,
+    value: str,
+    enum_class,
+    legacy_aliases: Optional[dict[str, str]] = None,
+) -> str:
+    normalized = value.strip().casefold()
+    aliases = legacy_aliases or {}
+    if normalized in aliases:
+        return aliases[normalized]
+    for option in enum_class:
+        if option.value.casefold() == normalized:
+            return option.value
+    allowed = ", ".join(option.value for option in enum_class)
+    raise ValueError(f"{field_name} must be one of: {allowed}")
+
+
 def _ensure_admin_staff_permission(
     current_user: User,
     db: Session,
@@ -912,7 +929,8 @@ async def list_all_schools(
         description="Filter by teaching_method (multiple, JSON field contains any value)",
     ),
     transportation_facility: Optional[str] = Query(
-        None, description="Filter by transportation_facility. Values: yes, no, not_applicable"
+        None,
+        description="Filter by transportation_facility. Values: available, not_available, temporarily_unavailable (legacy yes/no accepted).",
     ),
     institution_categories: Optional[List[str]] = Query(
         None,
@@ -920,7 +938,7 @@ async def list_all_schools(
     ),
     hostel: Optional[List[str]] = Query(
         None,
-        description="Filter by hostel (multiple, ARRAY overlap). E.g. ?hostel=boys&hostel=girls",
+        description="Filter by hostel (multiple, ARRAY overlap). Values: boys, girls, both, not_available.",
     ),
     available_classes: Optional[List[str]] = Query(
         None,
@@ -931,7 +949,7 @@ async def list_all_schools(
     ),
     computer_lab: Optional[str] = Query(
         None,
-        description="Filter by computer_lab facility status. Values: yes, no, under_progress",
+        description="Filter by computer_lab. Values: yes, no, under_development (legacy under_progress accepted).",
     ),
     medical_faculties: Optional[str] = Query(
         None, description="Filter by medical_faculties (partial match)"
@@ -940,14 +958,14 @@ async def list_all_schools(
         None, description="Filter by job_assurance (partial match)"
     ),
     admission_process: Optional[str] = Query(
-        None, description="Filter by admission_process (partial match)"
+        None, description="Filter by admission_process (partial match across selected values)"
     ),
     internship: Optional[str] = Query(
         None,
         description="Filter by internship. Values: yes, no, not_applicable",
     ),
-    lms_facility: Optional[bool] = Query(
-        None, description="Filter by lms_facility (true/false)"
+    lms_facility: Optional[str] = Query(
+        None, description="Filter by lms_facility. Values: integrated, not_integrated, under_implementation (legacy true/false accepted)."
     ),
     alumni_network: Optional[bool] = Query(
         None, description="Filter by alumni_network (true/false)"
@@ -957,21 +975,21 @@ async def list_all_schools(
     ),
     library: Optional[str] = Query(
         None,
-        description="Filter by library facility status. Values: yes, no, under_progress",
+        description="Filter by library. Values: yes, no, under_development (legacy under_progress accepted).",
     ),
     have_digital_board: Optional[str] = Query(
         None,
-        description="Filter by have_digital_board facility status. Values: yes, no, under_progress",
+        description="Filter by have_digital_board. Values: yes, no, under_development (legacy under_progress accepted).",
     ),
     have_cctv_in_campus: Optional[str] = Query(
         None,
-        description="Filter by have_cctv_in_campus. Values: yes, no, only_where_required",
+        description="Filter by have_cctv_in_campus. Values: available, not_available, partial_coverage (legacy yes/no/only_where_required accepted).",
     ),
-    have_scholarship_opportunities: Optional[bool] = Query(
-        None, description="Filter by have_scholarship_opportunities (true/false)"
+    have_scholarship_opportunities: Optional[str] = Query(
+        None, description="Filter by scholarship availability. Values: available, not_available, contact_institution (legacy true/false accepted)."
     ),
-    have_extra_curricular_activities: Optional[bool] = Query(
-        None, description="Filter by have_extra_curricular_activities (true/false)"
+    have_extra_curricular_activities: Optional[str] = Query(
+        None, description="Filter by extracurricular availability. Values: available, not_available (legacy true/false accepted)."
     ),
     from_date: Optional[str] = Query(
         None, description="Filter by created_at from (YYYY-MM-DD)"
@@ -1084,13 +1102,19 @@ async def list_all_schools(
             query = query.where(or_(*conds))
     if transportation_facility:
         try:
-            query = query.where(
-                School.transportation_facility == YesNoNotApplicableEnum(transportation_facility.strip().lower())
+            transportation_value = normalize_school_facility_filter(
+                "transportation_facility",
+                transportation_facility,
+                TransportationFacilityEnum,
+                {"yes": "available", "no": "not_available"},
             )
-        except ValueError:
+            query = query.where(
+                School.transportation_facility == transportation_value
+            )
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid transportation_facility value. Use: yes, no, not_applicable",
+                detail=str(exc),
             )
     if institution_categories:
         values = [v.strip() for v in institution_categories if v and v.strip()]
@@ -1100,7 +1124,26 @@ async def list_all_schools(
                 cast(School.institution_categories, ARRAY(String)).overlap(cast(values, ARRAY(String))),
             )
     if hostel:
-        values = [v.strip() for v in hostel if v and v.strip()]
+        try:
+            values = [
+                normalize_school_facility_filter(
+                    "hostel",
+                    value,
+                    HostelEnum,
+                    {
+                        "boys hostel": "boys",
+                        "girls hostel": "girls",
+                        "not available": "not_available",
+                    },
+                )
+                for value in hostel if value and value.strip()
+            ]
+            if "not_available" in values and len(set(values)) > 1:
+                raise ValueError("'not_available' cannot be combined with other hostel options")
+            if "both" in values:
+                values = ["boys", "girls"]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         if values:
             query = query.where(
                 School.hostel != None,
@@ -1120,20 +1163,30 @@ async def list_all_schools(
         query = query.where(School.is_verified == is_verified)
     if computer_lab:
         try:
-            query = query.where(
-                School.computer_lab == FacilityStatusEnum(computer_lab.strip().lower())
+            computer_lab_value = normalize_school_facility_filter(
+                "computer_lab",
+                computer_lab,
+                FacilityStatusEnum,
+                {
+                    "under_progress": "under_development",
+                },
             )
-        except ValueError:
+            query = query.where(
+                School.computer_lab == computer_lab_value
+            )
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid computer_lab value. Use: yes, no, under_progress",
+                detail=str(exc),
             )
     if medical_faculties:
         query = query.where(School.medical_faculties.ilike(f"%{medical_faculties}%"))
     if job_assurance:
         query = query.where(School.job_assurance.ilike(f"%{job_assurance}%"))
     if admission_process:
-        query = query.where(School.admission_process.ilike(f"%{admission_process}%"))
+        query = query.where(
+            cast(School.admission_process, String).ilike(f"%{admission_process}%")
+        )
     if internship:
         try:
             query = query.where(
@@ -1145,45 +1198,94 @@ async def list_all_schools(
                 detail="Invalid internship value. Use: yes, no, not_applicable",
             )
     if lms_facility is not None:
-        query = query.where(School.lms_facility == lms_facility)
+        try:
+            lms_value = normalize_school_facility_filter(
+                "lms_facility",
+                lms_facility,
+                LmsFacilityEnum,
+                {"true": "Integrated", "false": "Not Integrated"},
+            )
+            query = query.where(School.lms_facility == lms_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if alumni_network is not None:
         query = query.where(School.alumni_network == alumni_network)
     if institution_class:
         query = query.where(School.institution_class.ilike(f"%{institution_class}%"))
     if library:
         try:
-            query = query.where(
-                School.library == FacilityStatusEnum(library.strip().lower())
+            library_value = normalize_school_facility_filter(
+                "library",
+                library,
+                FacilityStatusEnum,
+                {"under_progress": "under_development"},
             )
-        except ValueError:
+            query = query.where(
+                School.library == library_value
+            )
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid library value. Use: yes, no, under_progress",
+                detail=str(exc),
             )
     if have_digital_board:
         try:
-            query = query.where(
-                School.have_digital_board == FacilityStatusEnum(have_digital_board.strip().lower())
+            digital_board_value = normalize_school_facility_filter(
+                "have_digital_board",
+                have_digital_board,
+                FacilityStatusEnum,
+                {"under_progress": "under_development"},
             )
-        except ValueError:
+            query = query.where(
+                School.have_digital_board == digital_board_value
+            )
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid have_digital_board value. Use: yes, no, under_progress",
+                detail=str(exc),
             )
     if have_cctv_in_campus:
         try:
-            query = query.where(
-                School.have_cctv_in_campus == CctvFacilityEnum(have_cctv_in_campus.strip().lower())
+            cctv_value = normalize_school_facility_filter(
+                "have_cctv_in_campus",
+                have_cctv_in_campus,
+                CctvFacilityEnum,
+                {
+                    "yes": "available",
+                    "no": "not_available",
+                    "only_where_required": "partial_coverage",
+                },
             )
-        except ValueError:
+            query = query.where(
+                School.have_cctv_in_campus == cctv_value
+            )
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid have_cctv_in_campus value. Use: yes, no, only_where_required",
+                detail=str(exc),
             )
     if have_scholarship_opportunities is not None:
-        query = query.where(School.have_scholarship_opportunities == have_scholarship_opportunities)
+        try:
+            scholarship_value = normalize_school_facility_filter(
+                "have_scholarship_opportunities",
+                have_scholarship_opportunities,
+                ScholarshipAvailabilityEnum,
+                {"true": "available", "false": "not_available"},
+            )
+            query = query.where(School.have_scholarship_opportunities == scholarship_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if have_extra_curricular_activities is not None:
-        query = query.where(School.have_extra_curricular_activities == have_extra_curricular_activities)
+        try:
+            activities_value = normalize_school_facility_filter(
+                "have_extra_curricular_activities",
+                have_extra_curricular_activities,
+                FacilityAvailabilityEnum,
+                {"true": "available", "false": "not_available"},
+            )
+            query = query.where(School.have_extra_curricular_activities == activities_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if from_date:
         try:
             from_dt = datetime.strptime(from_date, "%Y-%m-%d")
@@ -1807,11 +1909,6 @@ def create_school_account(
         ).first()
         if not agent_profile:
             raise HTTPException(status_code=404, detail="Agent profile not found.")
-        if not agent_profile.can_onboard_school:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="School onboarding permission is disabled for your account.",
-            )
         config = db.query(AgentPaymentConfig).filter(
             AgentPaymentConfig.agent_profile_id == agent_profile.id
         ).first()
@@ -1872,11 +1969,9 @@ def create_school_account(
                 created_by_user_id=current_user.id,
                 created_by_name=creator_name,
                 created_by_agent_profile_id=agent_profile.id,
-                # Confirmation timestamps
-                confirms_educational_institution=True,
-                confirms_contact_information=True,
-                confirmation_educational_at=now,
-                confirmation_contact_at=now,
+                # Declarations are captured when the completed DRAFT is submitted.
+                confirms_educational_institution=False,
+                confirms_contact_information=False,
                 # Verification lifecycle — starts as DRAFT
                 institution_verification_status="DRAFT",
             )

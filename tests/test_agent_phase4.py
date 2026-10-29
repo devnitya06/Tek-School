@@ -300,7 +300,7 @@ def _make_school(db: _Session, agent_profile_id: int, status: str = "DRAFT") -> 
         "institution_verification_status, confirms_educational_institution, "
         "confirms_contact_information, confirmation_educational_at, confirmation_contact_at, "
         "created_at) VALUES (:id, :uid, :name, :email, :phone, 'listing', 0, 0, 0, 0, "
-        "'inactive', 'agent', :creator_uid, :apid, :status, 1, 1, :now, :now, :now)"
+        "'inactive', 'agent', :creator_uid, :apid, :status, 0, 0, NULL, NULL, :now)"
     ), {"id": sid, "uid": owner["id"], "name": f"School-{sid}", "email": f"{sid}@school.com",
         "phone": "8888888888", "creator_uid": creator_user_id,
         "apid": agent_profile_id, "status": status, "now": now})
@@ -425,7 +425,7 @@ class TestEditLockOnExistingEndpoints:
 # 4. CREATE institution (POST /agent/institutions/) — server-side tracking
 # ===========================================================================
 class TestCreateInstitution:
-    def test_create_stores_creator_and_confirmation_fields(self, db):
+    def test_create_stores_creator_and_unconfirmed_fields(self, db):
         agent = _make_agent(db)
         sid = _make_school(db, agent["agent_profile_id"], status="DRAFT")
         row = db.execute(text(
@@ -435,16 +435,47 @@ class TestCreateInstitution:
         ), {"sid": sid}).fetchone()
         assert row[0] == "agent"
         assert row[1] == agent["agent_profile_id"]
-        assert row[2] == 1
-        assert row[3] == 1
+        assert row[2] == 0
+        assert row[3] == 0
         assert row[4] == "DRAFT"
 
-    def test_confirmation_flags_mandatory(self, db):
-        # Route validates: both must be True before insert
-        confirms_educational = False
-        confirms_contact = True
-        blocked = not (confirms_educational and confirms_contact)
-        assert blocked
+    def test_submission_records_confirmations_and_timestamps(self):
+        from types import SimpleNamespace
+
+        from app.routes.agent import _apply_institution_submission_confirmations
+        from app.schemas.school import AgentSchoolSubmitRequest
+
+        submitted_at = datetime.now(timezone.utc)
+        school = SimpleNamespace(
+            confirms_educational_institution=False,
+            confirms_contact_information=False,
+            confirmation_educational_at=None,
+            confirmation_contact_at=None,
+        )
+        request = AgentSchoolSubmitRequest(
+            school_id="SCH-TEST",
+            confirms_educational_institution=True,
+            confirms_contact_information=True,
+        )
+
+        _apply_institution_submission_confirmations(school, request, submitted_at)
+
+        assert school.confirms_educational_institution is True
+        assert school.confirms_contact_information is True
+        assert school.confirmation_educational_at == submitted_at
+        assert school.confirmation_contact_at == submitted_at
+
+    def test_submission_requires_both_confirmation_flags(self):
+        from pydantic import ValidationError
+
+        from app.schemas.school import AgentSchoolSubmitRequest
+
+        with pytest.raises(ValidationError):
+            AgentSchoolSubmitRequest(
+                school_id="SCH-TEST",
+                confirms_educational_institution=False,
+                confirms_contact_information=True,
+            )
 
 
 # ===========================================================================
